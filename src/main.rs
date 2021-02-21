@@ -39,14 +39,19 @@ use crate::world::{
     get_body_mass,
     get_circle_volume,
     get_material_restitution,
-    GRAVITY_CONST,
     HEALTH_FACTOR,
     Id,
     Material,
     SHIFT_FACTOR,
+    WithActivity,
+    WithAura,
+    WithBody,
+    WithEffect,
+    WithHealth,
+    WithId,
+    WithPosition,
     World,
 };
-use graphics::ellipse::Border;
 
 mod vec2;
 mod world;
@@ -64,32 +69,58 @@ fn main() {
     let mut gl = GlGraphics::new(opengl);
     let mut rng = rand::thread_rng();
     let bounds = Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2));
-    let mut world = World::new(bounds, GRAVITY_CONST);
-    let (player_id, initial_player_index) = world.add_body(
+    let mut world = World::new(bounds);
+    let (player_id, initial_player_index) = world.add_actor(
         Body {
             mass: get_body_mass(get_circle_volume(1.0), &Material::Flesh),
             radius: 1.0,
             restitution: get_material_restitution(&Material::Flesh),
             material: Material::Flesh,
-        }
+        },
+        Vec2f::ZERO,
     );
-    world.set_position(initial_player_index, Vec2f::ZERO);
     for material in &[Material::Flesh, Material::Stone] {
         for _ in 0..20 {
-            let radius = rng.gen_range(0.8..1.2);
-            let (_, index) = world.add_body(
+            let radius = rng.gen_range(1.8..2.2);
+            world.add_static_body(
                 Body {
                     mass: get_body_mass(get_circle_volume(1.0), material),
                     radius,
                     restitution: get_material_restitution(material),
                     material: material.clone(),
-                }
+                },
+                Vec2f::new(rng.gen_range(-100.0..100.0), rng.gen_range(-100.0..100.0)),
             );
-            world.set_position(index, Vec2f::new(rng.gen_range(-100.0..100.0), rng.gen_range(-100.0..100.0)));
         }
     }
+    for material in &[Material::Flesh, Material::Stone] {
+        for _ in 0..20 {
+            let radius = rng.gen_range(0.8..1.2);
+            world.add_dynamic_body(
+                Body {
+                    mass: get_body_mass(get_circle_volume(1.0), material),
+                    radius,
+                    restitution: get_material_restitution(material),
+                    material: material.clone(),
+                },
+                Vec2f::new(rng.gen_range(-100.0..100.0), rng.gen_range(-100.0..100.0)),
+            );
+        }
+    }
+    for _ in 0..10 {
+        let radius = rng.gen_range(0.8..1.2);
+        world.add_actor(
+            Body {
+                mass: get_body_mass(get_circle_volume(1.0), &Material::Flesh),
+                radius,
+                restitution: get_material_restitution(&Material::Flesh),
+                material: Material::Flesh,
+            },
+            Vec2f::new(rng.gen_range(-100.0..100.0), rng.gen_range(-100.0..100.0)),
+        );
+    }
     let mut events = Events::new(EventSettings::new());
-    let mut scale = window.size().height / (world.bodies()[0].radius * 20.0);
+    let mut scale = window.size().height / (world.actors().get_body(initial_player_index).radius * 20.0);
     let time_step = 1.0 / 60.0;
     let mut last_mouse_pos = Vec2f::ZERO;
     let mut last_viewport_shift = Vec2f::ZERO;
@@ -108,7 +139,7 @@ fn main() {
             match v {
                 Button::Mouse(MouseButton::Left) => {
                     if let Some(player_index) = last_player_index {
-                        world.set_const_force(player_index, ((last_mouse_pos - last_viewport_shift) / scale).norm());
+                        world.set_actor_const_force(player_index, ((last_mouse_pos - last_viewport_shift) / scale).norm());
                     }
                 }
                 Button::Mouse(MouseButton::Right) => {
@@ -124,7 +155,7 @@ fn main() {
             match v {
                 Button::Mouse(MouseButton::Left) => {
                     if let Some(player_index) = last_player_index {
-                        world.set_const_force(player_index, 0.0);
+                        world.set_actor_const_force(player_index, 0.0);
                     }
                 }
                 Button::Mouse(MouseButton::Right) => {
@@ -139,44 +170,44 @@ fn main() {
                 }
                 Button::Keyboard(Key::Q) => {
                     if let Some(player_index) = last_player_index {
-                        world.add_spell_element(player_index, Element::Water);
+                        world.add_actor_spell_element(player_index, Element::Water);
                     }
-                },
+                }
                 Button::Keyboard(Key::A) => {
                     if let Some(player_index) = last_player_index {
-                        world.add_spell_element(player_index, Element::Lightning);
+                        world.add_actor_spell_element(player_index, Element::Lightning);
                     }
-                },
+                }
                 Button::Keyboard(Key::W) => {
                     if let Some(player_index) = last_player_index {
-                        world.add_spell_element(player_index, Element::Life);
+                        world.add_actor_spell_element(player_index, Element::Life);
                     }
-                },
+                }
                 Button::Keyboard(Key::S) => {
                     if let Some(player_index) = last_player_index {
-                        world.add_spell_element(player_index, Element::Arcane);
+                        world.add_actor_spell_element(player_index, Element::Arcane);
                     }
-                },
+                }
                 Button::Keyboard(Key::E) => {
                     if let Some(player_index) = last_player_index {
-                        world.add_spell_element(player_index, Element::Shield);
+                        world.add_actor_spell_element(player_index, Element::Shield);
                     }
-                },
+                }
                 Button::Keyboard(Key::D) => {
                     if let Some(player_index) = last_player_index {
-                        world.add_spell_element(player_index, Element::Earth);
+                        world.add_actor_spell_element(player_index, Element::Earth);
                     }
-                },
+                }
                 Button::Keyboard(Key::R) => {
                     if let Some(player_index) = last_player_index {
-                        world.add_spell_element(player_index, Element::Cold);
+                        world.add_actor_spell_element(player_index, Element::Cold);
                     }
-                },
+                }
                 Button::Keyboard(Key::F) => {
                     if let Some(player_index) = last_player_index {
-                        world.add_spell_element(player_index, Element::Fire);
+                        world.add_actor_spell_element(player_index, Element::Fire);
                     }
-                },
+                }
                 Button::Keyboard(Key::P) => pause = !pause,
                 _ => (),
             }
@@ -214,8 +245,8 @@ fn main() {
                         g,
                     );
 
-                    let current_target = world.get_position(player_index)
-                        + world.get_current_direction(player_index) * world.get_body(player_index).radius * 2.0;
+                    let current_target = world.actors().get_position(player_index)
+                        + world.actors().get_current_direction(player_index) * world.actors().get_body(player_index).radius * 2.0;
                     line_from_to(
                         [0.0, 0.0, 0.0, 0.5], 1.0 / scale,
                         [last_player_position.x, last_player_position.y],
@@ -225,67 +256,60 @@ fn main() {
                     );
                 }
 
-                for (index, beam) in world.beams().iter().enumerate() {
+                for index in 0..world.beams().ids().len() {
+                    let beam = world.beams().get_value(index);
                     let (begin, direction) = match beam.source {
-                        Id::Body(body_id) => {
-                            let body_index = world.get_index(body_id);
-                            let direction = world.get_current_direction(body_index);
-                            let begin = world.get_position(body_index) + direction * world.get_body(body_index).radius * SHIFT_FACTOR;
+                        Id::Actor(actor_id) => {
+                            let actor_index = world.actors().get_index(actor_id);
+                            let direction = world.actors().get_current_direction(actor_index);
+                            let begin = world.actors().get_position(actor_index)
+                                + direction * world.actors().get_body(actor_index).radius * SHIFT_FACTOR;
                             (begin, direction)
                         }
-                        Id::Beam(..) => {
-                            let temp_beam = world.get_temp_beam(index);
+                        Id::Beam => {
+                            let temp_beam = world.beams().get_reflected_beam(index);
                             (temp_beam.begin, temp_beam.direction)
                         }
                     };
-                    let end = begin + direction * world.get_beam_length(index);
+                    let end = begin + direction * world.beams().get_length(index);
                     let line = [begin.x, begin.y, end.x, end.y];
                     let color = get_magick_power_color(&beam.magick.power);
                     let sum_power = beam.magick.power.iter().sum::<f64>() / 20.0;
                     line::Line::new_round(color, sum_power).draw(line, &Default::default(), base_transform, g);
                 }
 
-                for (index, body) in world.bodies().iter().enumerate() {
-                    let position = world.get_position(index);
-                    let transform = base_transform.trans(position.x, position.y);
-                    let square = rectangle::centered_square(0.0, 0.0, body.radius);
-                    let border_radius = body.radius * 0.1;
-                    let effect = world.get_effect(index);
-                    ellipse::Ellipse::new(get_material_color(&body.material, if world.is_active(index) { 1.0 } else { 0.5 }))
-                        .border(ellipse::Border { color: get_magick_power_color(&effect.power), radius: border_radius })
-                        .draw(square, &ctx.draw_state, transform, g);
-                }
+                let mut draw_ellipse = |shape: ellipse::Ellipse, rect: [f64; 4], position: Vec2f| {
+                    shape.draw(rect, &ctx.draw_state, base_transform.trans(position.x, position.y), g);
+                };
 
-                for (index, body) in world.bodies().iter().enumerate() {
-                    let position = world.get_position(index);
-                    let health_position = position + Vec2f::only_y(body.radius + 0.5);
-                    let health_transform = base_transform.trans(health_position.x, health_position.y);
+                for_each_body_with_effect(world.actors(), &mut draw_ellipse);
+                for_each_body_with_effect(world.dynamic_bodies(), &mut draw_ellipse);
+                for_each_body_with_effect(world.static_bodies(), &mut draw_ellipse);
+
+                for_each_aura(world.actors(), &mut draw_ellipse);
+                for_each_aura(world.dynamic_bodies(), &mut draw_ellipse);
+                for_each_aura(world.static_bodies(), &mut draw_ellipse);
+
+                let mut draw_rectangle = |shape: rectangle::Rectangle, rect: [f64; 4], position: Vec2f| {
+                    shape.draw(rect, &ctx.draw_state, base_transform.trans(position.x, position.y), g);
+                };
+
+                for_each_body_with_health(world.actors(), &mut draw_rectangle);
+                for_each_body_with_health(world.dynamic_bodies(), &mut draw_rectangle);
+                for_each_body_with_health(world.static_bodies(), &mut draw_rectangle);
+
+                for index in 0..world.actors().ids().len() {
+                    let body = world.actors().get_body(index);
+                    let position = world.actors().get_position(index);
                     let half_width = body.radius * 0.66;
-                    let bar_right = -half_width + 2.0 * half_width * world.get_health(index) / (body.mass * HEALTH_FACTOR);
-                    rectangle::Rectangle::new([0.0, 0.0, 0.0, 0.8]).draw(
-                        rectangle::rectangle_by_corners(-half_width, -body.radius * 0.1, half_width, body.radius * 0.1),
-                        &ctx.draw_state,
-                        health_transform,
-                        g,
-                    );
-                    rectangle::Rectangle::new([1.0, 0.0, 0.0, 1.0]).draw(
-                        rectangle::rectangle_by_corners(-half_width, -body.radius * 0.1, bar_right, body.radius * 0.1),
-                        &ctx.draw_state,
-                        health_transform,
-                        g,
-                    );
-                    let aura = world.get_aura(index);
-                    let square = rectangle::centered_square(0.0, 0.0, body.radius * aura.power);
-                    ellipse::Ellipse::new(get_magick_power_color(&aura.elements))
-                        .draw(square, &ctx.draw_state, base_transform.trans(position.x, position.y), g);
                     let spell_position = position + Vec2f::new(-half_width, body.radius + 1.0);
                     let spell_transform = base_transform.trans(spell_position.x, spell_position.y);
                     let square = rectangle::centered_square(0.0, 0.0, body.radius * 0.1);
                     let element_width = (2.0 * half_width) / 5.0;
-                    for (i, element) in world.get_spell(index).elements().iter().enumerate() {
+                    for (i, element) in world.actors().get_spell(index).elements().iter().enumerate() {
                         let element_position = Vec2f::new((i as f64 + 0.5) * element_width, -body.radius * 0.1);
                         ellipse::Ellipse::new(get_element_color(*element))
-                            .border(Border { color: [0.0, 0.0, 0.0, 1.0], radius: body.radius * 0.01 })
+                            .border(ellipse::Border { color: [0.0, 0.0, 0.0, 1.0], radius: body.radius * 0.01 })
                             .draw(square, &ctx.draw_state, spell_transform.trans(element_position.x, element_position.y), g);
                     }
                 }
@@ -306,10 +330,10 @@ fn main() {
                 if let Some(player_index) = last_player_index {
                     let radius = 20.0;
                     let square = rectangle::centered_square(0.0, 0.0, radius);
-                    for (i, element) in world.get_spell(player_index).elements().iter().enumerate() {
+                    for (i, element) in world.actors().get_spell(player_index).elements().iter().enumerate() {
                         let position = last_viewport_shift + Vec2f::new(-5.0 * 2.0 * (radius + 10.0) * 0.5 + (i as f64 + 0.5) * 2.0 * (radius + 10.0), last_viewport_shift.y - 100.0);
                         ellipse::Ellipse::new(get_element_color(*element))
-                            .border(Border { color: [0.0, 0.0, 0.0, 1.0], radius: radius * 0.1 })
+                            .border(ellipse::Border { color: [0.0, 0.0, 0.0, 1.0], radius: radius * 0.1 })
                             .draw(square, &ctx.draw_state, ctx.transform.trans(position.x, position.y), g);
                     }
                 }
@@ -337,27 +361,74 @@ fn main() {
                     let target_direction = (last_mouse_pos - last_viewport_shift) / scale;
                     let norm = target_direction.norm();
                     if norm <= f64::EPSILON {
-                        world.set_target_direction(player_index, world.get_current_direction(player_index));
+                        world.set_actor_target_direction(player_index, world.actors().get_current_direction(player_index));
                     } else {
-                        world.set_target_direction(player_index, target_direction / norm);
+                        world.set_actor_target_direction(player_index, target_direction / norm);
                     }
-                    for i in 0..world.bodies().len() {
-                        if i != player_index && matches!(world.get_body(i).material, Material::Flesh) {
-                            world.add_spell_element(i, Element::Shield);
+                    for i in 0..world.actors().ids().len() {
+                        if i != player_index && matches!(world.actors().get_body(i).material, Material::Flesh) {
+                            world.add_actor_spell_element(i, Element::Shield);
                             world.self_magick(i);
                         }
                     }
                 }
                 world.update(time_step);
-                last_player_index = world.find_index(player_id);
+                last_player_index = world.actors().find_index(player_id);
                 if let Some(player_index) = last_player_index {
-                    last_player_position = world.get_position(player_index);
+                    last_player_position = world.actors().get_position(player_index);
                 }
             }
             update_duration.add(Instant::now() - start);
         }
 
         fps.add(Instant::now());
+    }
+}
+
+fn for_each_body_with_effect<T, F>(collection: &T, f: &mut F)
+    where T: WithId + WithBody + WithPosition + WithEffect + WithActivity,
+          F: FnMut(ellipse::Ellipse, [f64; 4], Vec2f)
+{
+    for index in 0..collection.ids().len() {
+        let body = collection.get_body(index);
+        let position = collection.get_position(index);
+        let effect = collection.get_effect(index);
+        let ellipse = ellipse::Ellipse::new(get_material_color(&body.material, if collection.is_active(index) { 1.0 } else { 0.5 }))
+            .border(ellipse::Border { color: get_magick_power_color(&effect.power), radius: 0.1 });
+        let square = rectangle::centered_square(0.0, 0.0, body.radius);
+        f(ellipse, square, position);
+    }
+}
+
+fn for_each_aura<T, F>(collection: &T, f: &mut F)
+    where T: WithId + WithPosition + WithAura + WithActivity,
+          F: FnMut(ellipse::Ellipse, [f64; 4], Vec2f)
+{
+    for index in 0..collection.ids().len() {
+        let position = collection.get_position(index);
+        let aura = collection.get_aura(index);
+        let ellipse = ellipse::Ellipse::new(get_magick_power_color(&aura.elements));
+        let square = rectangle::centered_square(0.0, 0.0, aura.radius);
+        f(ellipse, square, position);
+    }
+}
+
+fn for_each_body_with_health<T, F>(collection: &T, f: &mut F)
+    where T: WithId + WithBody + WithPosition + WithHealth,
+          F: FnMut(rectangle::Rectangle, [f64; 4], Vec2f)
+{
+    for index in 0..collection.ids().len() {
+        let body = collection.get_body(index);
+        let position = collection.get_position(index);
+        let rect_position = position + Vec2f::only_y(body.radius + 0.5);
+        let half_width = body.radius * 0.66;
+        let bar_right = -half_width + 2.0 * half_width * collection.get_health(index) / (body.mass * HEALTH_FACTOR);
+        let background = rectangle::Rectangle::new([0.0, 0.0, 0.0, 0.8]);
+        let background_rect = rectangle::rectangle_by_corners(-half_width, -body.radius * 0.1, half_width, body.radius * 0.1);
+        f(background, background_rect, rect_position);
+        let health_bar = rectangle::Rectangle::new([1.0, 0.0, 0.0, 1.0]);
+        let health_bar_rect = rectangle::rectangle_by_corners(-half_width, -body.radius * 0.1, bar_right, body.radius * 0.1);
+        f(health_bar, health_bar_rect, rect_position);
     }
 }
 

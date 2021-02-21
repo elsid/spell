@@ -5,7 +5,6 @@ use crate::rect::Rectf;
 use crate::segment::Segment;
 use crate::vec2::{Square, Vec2f};
 
-pub const GRAVITY_CONST: f64 = 6.67430e-11;
 pub const MAX_MAGIC_POWER: f64 = 5.0;
 pub const DECAY_FACTOR: f64 = 0.001;
 pub const HEALTH_FACTOR: f64 = 1000.0;
@@ -16,6 +15,116 @@ pub const MAX_ROTATION_SPEED: f64 = 2.0 * std::f64::consts::PI;
 pub const CONST_FORCE_MULTIPLIER: f64 = 2e3;
 pub const MAGIC_FORCE_MULTIPLIER: f64 = 5e6;
 pub const MAX_SPELL_ELEMENTS: usize = 5;
+
+pub trait WithId {
+    fn ids(&self) -> &Vec<u64>;
+
+    fn get_id(&self, index: usize) -> u64 {
+        self.ids()[index]
+    }
+
+    fn get_index(&self, id: u64) -> usize {
+        self.find_index(id).unwrap()
+    }
+
+    fn find_index(&self, id: u64) -> Option<usize> {
+        self.ids().iter().find_position(|v| **v == id).map(|(i, _)| i)
+    }
+}
+
+macro_rules! with_id_impl {
+    ($type: ty) => {
+        impl WithId for $type {
+            fn ids(&self) -> &Vec<u64> {
+                &self.ids
+            }
+        }
+    }
+}
+
+pub trait WithBody {
+    fn get_body(&self, index: usize) -> &Body;
+}
+
+macro_rules! with_body_impl {
+    ($type: ty) => {
+        impl WithBody for $type {
+            fn get_body(&self, index: usize) -> &Body {
+                &self.bodies[index]
+            }
+        }
+    }
+}
+
+pub trait WithPosition {
+    fn get_position(&self, index: usize) -> Vec2f;
+}
+
+macro_rules! with_position_impl {
+    ($type: ty) => {
+        impl WithPosition for $type {
+            fn get_position(&self, index: usize) -> Vec2f {
+                self.positions[index]
+            }
+        }
+    }
+}
+
+pub trait WithEffect {
+    fn get_effect(&self, index: usize) -> &Effect;
+}
+
+macro_rules! with_effect_impl {
+    ($type: ty) => {
+        impl WithEffect for $type {
+            fn get_effect(&self, index: usize) -> &Effect {
+                &self.effects[index]
+            }
+        }
+    }
+}
+
+pub trait WithAura {
+    fn get_aura(&self, index: usize) -> &Aura;
+}
+
+macro_rules! with_aura_impl {
+    ($type: ty) => {
+        impl WithAura for $type {
+            fn get_aura(&self, index: usize) -> &Aura {
+                &self.auras[index]
+            }
+        }
+    }
+}
+
+pub trait WithHealth {
+    fn get_health(&self, index: usize) -> f64;
+}
+
+macro_rules! with_health_impl {
+    ($type: ty) => {
+        impl WithHealth for $type {
+            fn get_health(&self, index: usize) -> f64 {
+                self.healths[index]
+            }
+        }
+    }
+}
+
+pub trait WithActivity {
+    fn is_active(&self, index: usize) -> bool;
+}
+
+macro_rules! with_activity_impl {
+    ($type: ty) => {
+        impl WithActivity for $type {
+            fn is_active(&self, index: usize) -> bool {
+                self.active[index]
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub enum Material {
@@ -108,21 +217,22 @@ pub struct Magick {
 
 #[derive(Debug, Clone, Default)]
 pub struct DelayedMagick {
-    pub body_id: u64,
+    pub actor_id: u64,
     pub started: f64,
     pub power: [f64; 11],
 }
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub enum Id {
-    Body(u64),
-    Beam(u64),
+    Actor(u64),
+    Beam,
 }
 
 #[derive(Debug, Copy, Clone)]
 pub enum Index {
-    Body(usize),
-    Beam(usize),
+    Actor(usize),
+    DynamicBody(usize),
+    StaticBody(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -133,8 +243,8 @@ pub struct Beam {
 
 #[derive(Debug, Clone)]
 pub struct Collision {
-    pub lhs: usize,
-    pub rhs: usize,
+    pub lhs: Index,
+    pub rhs: Index,
     pub lhs_physical_damage: f64,
     pub rhs_physical_damage: f64,
 }
@@ -149,6 +259,7 @@ pub struct Effect {
 pub struct Aura {
     pub applied: f64,
     pub power: f64,
+    pub radius: f64,
     pub elements: [bool; 11],
 }
 
@@ -166,18 +277,14 @@ impl IdCounter {
 }
 
 #[derive(Debug, Default)]
-pub struct TempBeam {
+pub struct ReflectedBeam {
     pub begin: Vec2f,
     pub direction: Vec2f,
 }
 
-#[derive(Debug)]
-pub struct World {
-    bounds: Rectf,
-    gravity_const: f64,
-    id_counter: IdCounter,
-    now: f64,
-    body_ids: Vec<u64>,
+#[derive(Default)]
+pub struct Actors {
+    ids: Vec<u64>,
     bodies: Vec<Body>,
     positions: Vec<Vec2f>,
     current_directions: Vec<Vec2f>,
@@ -190,65 +297,9 @@ pub struct World {
     healths: Vec<f64>,
     spells: Vec<Spell>,
     active: Vec<bool>,
-    collisions: Vec<Collision>,
-    beams: Vec<Beam>,
-    beam_ids: Vec<u64>,
-    beam_lengths: Vec<f64>,
-    delayed_magics: Vec<DelayedMagick>,
-    temp_beams: Vec<TempBeam>,
-    temp_beam_shift: usize,
 }
 
-impl World {
-    pub fn new(bounds: Rectf, gravity_const: f64) -> Self {
-        World {
-            bounds,
-            gravity_const,
-            id_counter: IdCounter::default(),
-            now: 0.0,
-            body_ids: Vec::new(),
-            bodies: Vec::new(),
-            positions: Vec::new(),
-            current_directions: Vec::new(),
-            target_directions: Vec::new(),
-            velocities: Vec::new(),
-            const_forces: Vec::new(),
-            dynamic_forces: Vec::new(),
-            effects: Vec::new(),
-            auras: Vec::new(),
-            healths: Vec::new(),
-            spells: Vec::new(),
-            active: Vec::new(),
-            collisions: Vec::new(),
-            beams: Vec::new(),
-            beam_ids: Vec::new(),
-            beam_lengths: Vec::new(),
-            delayed_magics: Vec::new(),
-            temp_beams: Vec::new(),
-            temp_beam_shift: 0,
-        }
-    }
-
-    pub fn bounds(&self) -> &Rectf {
-        &self.bounds
-    }
-
-    pub fn bodies(&self) -> &Vec<Body> {
-        &self.bodies
-    }
-
-    pub fn collisions(&self) -> &Vec<Collision> {
-        &self.collisions
-    }
-
-    pub fn beams(&self) -> &Vec<Beam> {
-        &self.beams
-    }
-
-    pub fn get_body(&self, index: usize) -> &Body {
-        &self.bodies[index]
-    }
-
+impl Actors {
     pub fn get_position(&self, index: usize) -> Vec2f {
         self.positions[index]
     }
@@ -257,73 +308,16 @@ impl World {
         self.current_directions[index]
     }
 
-    pub fn get_target_direction(&self, index: usize) -> Vec2f {
-        self.target_directions[index]
-    }
-
-    pub fn get_velocity(&self, index: usize) -> Vec2f {
-        self.velocities[index]
-    }
-
-    pub fn get_const_force(&self, index: usize) -> f64 {
-        self.const_forces[index]
-    }
-
-    pub fn get_dynamic_force(&self, index: usize) -> Vec2f {
-        self.dynamic_forces[index]
-    }
-
-    pub fn get_effect(&self, index: usize) -> &Effect {
-        &self.effects[index]
-    }
-
-    pub fn get_aura(&self, index: usize) -> &Aura {
-        &self.auras[index]
-    }
-
-    pub fn get_health(&self, index: usize) -> f64 {
-        self.healths[index]
-    }
-
     pub fn get_spell(&self, index: usize) -> &Spell {
         &self.spells[index]
     }
 
-    pub fn is_active(&self, index: usize) -> bool {
-        self.active[index]
+    pub fn add_spell_element(&mut self, index: usize, element: Element) {
+        self.spells[index].add(element);
     }
 
-    pub fn get_beam_length(&self, index: usize) -> f64 {
-        self.beam_lengths[index]
-    }
-
-    pub fn get_temp_beam(&self, index: usize) -> &TempBeam {
-        &self.temp_beams[index - self.temp_beam_shift]
-    }
-
-    pub fn get_index(&self, id: u64) -> usize {
-        self.find_index(id).unwrap()
-    }
-
-    pub fn find_index(&self, id: u64) -> Option<usize> {
-        self.body_ids.iter().find_position(|v| **v == id).map(|(i, _)| i)
-    }
-
-    pub fn set_position(&mut self, index: usize, value: Vec2f) {
-        self.positions[index] = value;
-    }
-
-    pub fn set_target_direction(&mut self, index: usize, value: Vec2f) {
-        self.target_directions[index] = value;
-    }
-
-    pub fn set_const_force(&mut self, index: usize, value: f64) {
-        self.const_forces[index] = value;
-    }
-
-    pub fn add_body(&mut self, value: Body) -> (u64, usize) {
-        let id = self.id_counter.next();
-        self.body_ids.push(id);
+    pub fn add(&mut self, id: u64, value: Body) -> usize {
+        self.ids.push(id);
         self.healths.push(value.mass * HEALTH_FACTOR);
         self.bodies.push(value);
         self.positions.push(Vec2f::ZERO);
@@ -336,10 +330,10 @@ impl World {
         self.auras.push(Aura::default());
         self.spells.push(Spell::default());
         self.active.push(true);
-        (id, self.bodies.len() - 1)
+        self.ids.len() - 1
     }
 
-    pub fn remove_body(&mut self, index: usize) {
+    pub fn remove(&mut self, index: usize) {
         self.active.remove(index);
         self.spells.remove(index);
         self.healths.remove(index);
@@ -352,242 +346,14 @@ impl World {
         self.current_directions.remove(index);
         self.positions.remove(index);
         self.bodies.remove(index);
-        self.body_ids.remove(index);
+        self.ids.remove(index);
     }
 
-    pub fn add_spell_element(&mut self, index: usize, element: Element) {
-        self.spells[index].add(element)
-    }
-
-    pub fn start_directed_magick(&mut self, index: usize) {
-        let magick = self.spells[index].cast();
-        if magick.power[Element::Shield as usize] > 0.0 {
-            return;
-        } else if magick.power[Element::Earth as usize] > 0.0 {
-            self.delayed_magics.push(DelayedMagick {
-                body_id: self.body_ids[index],
-                started: self.now,
-                power: magick.power,
-            });
-        } else if magick.power[Element::Ice as usize] > 0.0 {
-            return;
-        } else if magick.power[Element::Arcane as usize] > 0.0
-            || magick.power[Element::Life as usize] > 0.0 {
-            self.beams.push(Beam { magick, source: Id::Body(self.body_ids[index]) });
-            self.beam_ids.push(self.id_counter.next());
-            self.beam_lengths.push(MAX_BEAM_LENGTH);
-        } else if magick.power[Element::Lightning as usize] > 0.0 {
-            return;
-        } else if magick.power[Element::Water as usize] > 0.0
-            || magick.power[Element::Cold as usize] > 0.0
-            || magick.power[Element::Fire as usize] > 0.0
-            || magick.power[Element::Steam as usize] > 0.0
-            || magick.power[Element::Poison as usize] > 0.0 {
-            return;
-        }
-    }
-
-    pub fn complete_directed_magick(&mut self, index: usize) {
-        let body_id = self.body_ids[index];
-        if let Some((index, _)) = self.beams.iter()
-            .find_position(|beam| beam.source == Id::Body(body_id)) {
-            self.beams.remove(index);
-            self.beam_lengths.remove(index);
-            self.temp_beam_shift -= 1;
-        } else if let Some(magick_index) = self.delayed_magics.iter()
-            .find_position(|v| v.body_id == body_id).map(|(v, _)| v) {
-            let delayed_magick = self.delayed_magics.remove(magick_index);
-            let source_body_radius = self.bodies[index].radius;
-            let radius = delayed_magick.power.iter().sum::<f64>() * source_body_radius / MAX_MAGIC_POWER;
-            let material = Material::Stone;
-            let (_, new_body_index) = self.add_body(Body {
-                radius,
-                mass: get_body_mass(get_circle_volume(radius), &material),
-                restitution: get_material_restitution(&material),
-                material,
-            });
-            let direction = self.current_directions[index];
-            self.positions[new_body_index] = self.positions[index]
-                + direction * (self.bodies[index].radius + radius) * SHIFT_FACTOR;
-            self.velocities[new_body_index] = self.velocities[index];
-            self.dynamic_forces[new_body_index] = self.current_directions[index]
-                * (self.now - delayed_magick.started).min(MAX_MAGIC_POWER) * MAGIC_FORCE_MULTIPLIER;
-            self.effects[new_body_index].power = delayed_magick.power.clone();
-            for applied in self.effects[new_body_index].applied.iter_mut() {
-                *applied = self.now;
-            }
-        }
-    }
-
-    pub fn self_magick(&mut self, index: usize) {
-        let magick = self.spells[index].cast();
-        if magick.power[Element::Shield as usize] == 0.0 {
-            self.effects[index] = add_magick_power_to_effect(self.now, &self.effects[index], &magick.power);
-        } else {
-            let mut elements = [false; 11];
-            for i in 0..magick.power.len() {
-                elements[i] = magick.power[i] > 0.0;
-            }
-            self.auras[index] = Aura {
-                applied: self.now,
-                power: magick.power.iter().sum(),
-                elements,
-            };
-        }
-    }
-
-    pub fn update(&mut self, duration: f64) {
-        self.now += duration;
-        self.retain_active_bodies();
-        self.retain_beams();
-        self.collisions.clear();
-        self.temp_beams.clear();
-        self.temp_beam_shift = self.beams.len();
-        if self.bodies.is_empty() {
-            return;
-        }
-        for i in 0..self.bodies.len() {
-            self.current_directions[i] = get_current_direction(self.current_directions[i], self.target_directions[i], duration);
-            self.dynamic_forces[i] += self.current_directions[i] * (self.const_forces[i] * CONST_FORCE_MULTIPLIER);
-            decay_effect(self.now, duration, &mut self.effects[i]);
-            decay_aura(self.now, duration, &mut self.auras[i]);
-        }
-        let temp_beam_shift = self.temp_beam_shift;
-        let mut beam_index = 0;
-        while beam_index < self.beams.len() {
-            let i = beam_index;
-            let (length, hit_index, reflection) = match self.beams[i].source {
-                Id::Body(body_id) => {
-                    let body_index = self.get_index(body_id);
-                    let direction = self.current_directions[body_index];
-                    let begin = self.positions[body_index] + direction * SHIFT_FACTOR;
-                    self.collide_beams(begin, direction)
-                }
-                Id::Beam(..) => {
-                    let temp_beam = &self.temp_beams[i - temp_beam_shift];
-                    let add_length = SHIFT_FACTOR - 1.0;
-                    let result = self.collide_beams(temp_beam.begin + temp_beam.direction * add_length, temp_beam.direction);
-                    (result.0 + add_length, result.1, result.2)
-                }
-            };
-            self.beam_lengths[i] = length;
-            match hit_index {
-                Some(Index::Body(body_index)) => {
-                    if let Some(temp_beam) = reflection {
-                        self.beams.push(Beam { magick: self.beams[i].magick.clone(), source: Id::Beam(self.beam_ids[i]) });
-                        self.beam_ids.push(self.id_counter.next());
-                        self.beam_lengths.push(MAX_BEAM_LENGTH);
-                        self.temp_beams.push(temp_beam);
-                    } else {
-                        self.effects[body_index] = add_magick_power_to_effect(self.now, &self.effects[body_index], &self.beams[i].magick.power);
-                    }
-                }
-                Some(Index::Beam(..)) => {}
-                None => (),
-            }
-            beam_index += 1;
-        }
-        for i in 0..self.bodies.len() - 1 {
-            for j in i + 1..self.bodies.len() {
-                if !self.has_body_collision(i, j) {
-                    let (lhs_gravity, rhs_gravity) = gravity_force(
-                        &self.make_gravitational_body(i),
-                        &self.make_gravitational_body(j),
-                        self.gravity_const,
-                    );
-                    self.dynamic_forces[i] += lhs_gravity;
-                    self.dynamic_forces[j] += rhs_gravity;
-                }
-            }
-        }
-        for i in 0..self.bodies.len() {
-            self.positions[i] += self.velocities[i] * duration;
-            self.velocities[i] += self.dynamic_forces[i] / self.bodies[i].mass * duration;
-        }
-        for i in 0..self.bodies.len() - 1 {
-            for j in i + 1..self.bodies.len() {
-                self.collide_bodies(i, j);
-            }
-        }
-        for collision in self.collisions.iter() {
-            let new_lhs_effect = add_magick_power_to_effect(self.now, &self.effects[collision.lhs], &self.effects[collision.rhs].power);
-            let new_rhs_effect = add_magick_power_to_effect(self.now, &self.effects[collision.rhs], &self.effects[collision.lhs].power);
-            self.effects[collision.lhs] = new_lhs_effect;
-            self.effects[collision.rhs] = new_rhs_effect;
-            if !can_absorb_physical_damage(&self.auras[collision.lhs].elements) {
-                self.healths[collision.lhs] -= collision.lhs_physical_damage;
-            }
-            if !can_absorb_physical_damage(&self.auras[collision.rhs].elements) {
-                self.healths[collision.rhs] -= collision.rhs_physical_damage;
-            }
-        }
-        for i in 0..self.bodies.len() {
-            self.dynamic_forces[i] = Vec2f::ZERO;
-            self.healths[i] -= get_damage(&self.effects[i].power) * self.bodies[i].mass * DAMAGE_FACTOR;
-        }
-        for i in 0..self.bodies.len() {
-            self.active[i] = self.healths[i] > 0.0
-                && self.bounds.overlaps(&self.make_body_rect(i));
-        }
-    }
-
-    fn make_body_rect(&self, index: usize) -> Rectf {
-        let radius = self.bodies[index].radius;
-        let position = self.positions[index];
-        Rectf::new(
-            position - Vec2f::both(radius),
-            position + Vec2f::both(radius),
-        )
-    }
-
-    fn make_colliding_body(&self, index: usize) -> CollidingBody {
-        let body = &self.bodies[index];
-        CollidingBody {
-            radius: body.radius,
-            mass: body.mass,
-            restitution: body.restitution,
-            position: self.positions[index],
-            velocity: self.velocities[index],
-        }
-    }
-
-    fn make_gravitational_body(&self, index: usize) -> GravitationalBody {
-        let body = &self.bodies[index];
-        GravitationalBody {
-            mass: body.mass,
-            position: self.positions[index],
-        }
-    }
-
-    fn has_body_collision(&self, lhs: usize, rhs: usize) -> bool {
-        has_collision(
-            &PenetratingBody { radius: self.bodies[lhs].radius, position: self.positions[lhs] },
-            &PenetratingBody { radius: self.bodies[rhs].radius, position: self.positions[rhs] },
-        )
-    }
-
-    fn collide_bodies(&mut self, lhs: usize, rhs: usize) {
-        let lhs_body = self.make_colliding_body(lhs);
-        let rhs_body = self.make_colliding_body(rhs);
-        if let Some((lhs_collided, rhs_collided)) = collide(&lhs_body, &rhs_body) {
-            self.positions[lhs] = lhs_collided.position;
-            self.velocities[lhs] = lhs_collided.velocity;
-            self.positions[rhs] = rhs_collided.position;
-            self.velocities[rhs] = rhs_collided.velocity;
-            self.collisions.push(Collision {
-                lhs,
-                rhs,
-                lhs_physical_damage: lhs_collided.physical_damage,
-                rhs_physical_damage: rhs_collided.physical_damage,
-            });
-        }
-    }
-
-    fn retain_active_bodies(&mut self) {
-        let len = self.body_ids.len();
+    fn retain(&mut self) {
+        let len = self.ids.len();
         let mut del = 0;
         {
-            let body_ids = &mut *self.body_ids;
+            let ids = &mut *self.ids;
             let bodies = &mut *self.bodies;
             let positions = &mut *self.positions;
             let current_directions = &mut *self.current_directions;
@@ -604,7 +370,7 @@ impl World {
                 if !active[i] {
                     del += 1;
                 } else if del > 0 {
-                    body_ids.swap(i - del, i);
+                    ids.swap(i - del, i);
                     bodies.swap(i - del, i);
                     positions.swap(i - del, i);
                     current_directions.swap(i - del, i);
@@ -621,7 +387,7 @@ impl World {
             }
         }
         if del > 0 {
-            self.body_ids.truncate(len - del);
+            self.ids.truncate(len - del);
             self.bodies.truncate(len - del);
             self.positions.truncate(len - del);
             self.current_directions.truncate(len - del);
@@ -636,59 +402,702 @@ impl World {
             self.active.truncate(len - del);
         }
     }
+}
 
-    fn retain_beams(&mut self) {
-        let len = self.beams.len();
+with_id_impl!(Actors);
+with_body_impl!(Actors);
+with_position_impl!(Actors);
+with_effect_impl!(Actors);
+with_aura_impl!(Actors);
+with_health_impl!(Actors);
+with_activity_impl!(Actors);
+
+#[derive(Default)]
+pub struct DynamicBodies {
+    ids: Vec<u64>,
+    bodies: Vec<Body>,
+    positions: Vec<Vec2f>,
+    velocities: Vec<Vec2f>,
+    dynamic_forces: Vec<Vec2f>,
+    effects: Vec<Effect>,
+    auras: Vec<Aura>,
+    healths: Vec<f64>,
+    active: Vec<bool>,
+}
+
+impl DynamicBodies {
+    pub fn add(&mut self, id: u64, value: Body) -> usize {
+        self.ids.push(id);
+        self.healths.push(value.mass * HEALTH_FACTOR);
+        self.bodies.push(value);
+        self.positions.push(Vec2f::ZERO);
+        self.velocities.push(Vec2f::ZERO);
+        self.dynamic_forces.push(Vec2f::ZERO);
+        self.effects.push(Effect::default());
+        self.auras.push(Aura::default());
+        self.active.push(true);
+        self.ids.len() - 1
+    }
+
+    pub fn remove(&mut self, index: usize) {
+        self.active.remove(index);
+        self.healths.remove(index);
+        self.auras.remove(index);
+        self.effects.remove(index);
+        self.dynamic_forces.remove(index);
+        self.velocities.remove(index);
+        self.positions.remove(index);
+        self.bodies.remove(index);
+        self.ids.remove(index);
+    }
+
+    fn retain(&mut self) {
+        let len = self.ids.len();
         let mut del = 0;
         {
-            let beams = &mut *self.beams;
-            let beam_ids = &mut *self.beam_ids;
-            let beam_lengths = &mut *self.beam_lengths;
+            let ids = &mut *self.ids;
+            let bodies = &mut *self.bodies;
+            let positions = &mut *self.positions;
+            let velocities = &mut *self.velocities;
+            let dynamic_forces = &mut *self.dynamic_forces;
+            let effects = &mut *self.effects;
+            let auras = &mut *self.auras;
+            let healths = &mut *self.healths;
+            let active = &mut *self.active;
             for i in 0..len {
-                match beams[i].source {
-                    Id::Body(body_id) => if !self.body_ids.contains(&body_id) {
-                        del += 1;
-                    } else if del > 0 {
-                        beams.swap(i - del, i);
-                        beam_ids.swap(i - del, i);
-                        beam_lengths.swap(i - del, i);
-                    }
-                    Id::Beam(..) => del += 1,
+                if !active[i] {
+                    del += 1;
+                } else if del > 0 {
+                    ids.swap(i - del, i);
+                    bodies.swap(i - del, i);
+                    positions.swap(i - del, i);
+                    velocities.swap(i - del, i);
+                    dynamic_forces.swap(i - del, i);
+                    effects.swap(i - del, i);
+                    auras.swap(i - del, i);
+                    healths.swap(i - del, i);
+                    active.swap(i - del, i);
                 }
             }
         }
         if del > 0 {
-            self.beams.truncate(len - del);
-            self.beam_ids.truncate(len - del);
-            self.beam_lengths.truncate(len - del);
+            self.ids.truncate(len - del);
+            self.bodies.truncate(len - del);
+            self.positions.truncate(len - del);
+            self.velocities.truncate(len - del);
+            self.dynamic_forces.truncate(len - del);
+            self.effects.truncate(len - del);
+            self.auras.truncate(len - del);
+            self.healths.truncate(len - del);
+            self.active.truncate(len - del);
+        }
+    }
+}
+
+with_id_impl!(DynamicBodies);
+with_body_impl!(DynamicBodies);
+with_position_impl!(DynamicBodies);
+with_effect_impl!(DynamicBodies);
+with_aura_impl!(DynamicBodies);
+with_health_impl!(DynamicBodies);
+with_activity_impl!(DynamicBodies);
+
+#[derive(Default)]
+pub struct StaticBodies {
+    ids: Vec<u64>,
+    bodies: Vec<Body>,
+    positions: Vec<Vec2f>,
+    effects: Vec<Effect>,
+    auras: Vec<Aura>,
+    healths: Vec<f64>,
+    active: Vec<bool>,
+}
+
+impl StaticBodies {
+    pub fn add(&mut self, id: u64, value: Body) -> usize {
+        self.ids.push(id);
+        self.healths.push(value.mass * HEALTH_FACTOR);
+        self.bodies.push(value);
+        self.positions.push(Vec2f::ZERO);
+        self.effects.push(Effect::default());
+        self.auras.push(Aura::default());
+        self.active.push(true);
+        self.ids.len() - 1
+    }
+
+    pub fn remove(&mut self, index: usize) {
+        self.active.remove(index);
+        self.healths.remove(index);
+        self.auras.remove(index);
+        self.effects.remove(index);
+        self.positions.remove(index);
+        self.bodies.remove(index);
+        self.ids.remove(index);
+    }
+
+    fn retain(&mut self) {
+        let len = self.ids.len();
+        let mut del = 0;
+        {
+            let ids = &mut *self.ids;
+            let bodies = &mut *self.bodies;
+            let positions = &mut *self.positions;
+            let effects = &mut *self.effects;
+            let auras = &mut *self.auras;
+            let healths = &mut *self.healths;
+            let active = &mut *self.active;
+            for i in 0..len {
+                if !active[i] {
+                    del += 1;
+                } else if del > 0 {
+                    ids.swap(i - del, i);
+                    bodies.swap(i - del, i);
+                    positions.swap(i - del, i);
+                    effects.swap(i - del, i);
+                    auras.swap(i - del, i);
+                    healths.swap(i - del, i);
+                    active.swap(i - del, i);
+                }
+            }
+        }
+        if del > 0 {
+            self.ids.truncate(len - del);
+            self.bodies.truncate(len - del);
+            self.positions.truncate(len - del);
+            self.effects.truncate(len - del);
+            self.auras.truncate(len - del);
+            self.healths.truncate(len - del);
+            self.active.truncate(len - del);
+        }
+    }
+}
+
+with_id_impl!(StaticBodies);
+with_body_impl!(StaticBodies);
+with_position_impl!(StaticBodies);
+with_effect_impl!(StaticBodies);
+with_aura_impl!(StaticBodies);
+with_health_impl!(StaticBodies);
+with_activity_impl!(StaticBodies);
+
+#[derive(Default)]
+pub struct Beams {
+    ids: Vec<u64>,
+    values: Vec<Beam>,
+    lengths: Vec<f64>,
+    reflected_beams: Vec<ReflectedBeam>,
+    reflected_shift: usize,
+}
+
+impl Beams {
+    pub fn get_value(&self, index: usize) -> &Beam {
+        &self.values[index]
+    }
+
+    pub fn get_length(&self, index: usize) -> f64 {
+        self.lengths[index]
+    }
+
+    pub fn get_reflected_beam(&self, index: usize) -> &ReflectedBeam {
+        &self.reflected_beams[index - self.reflected_shift]
+    }
+
+    pub fn find_by_actor_id(&self, actor_id: u64) -> Option<usize> {
+        self.values.iter()
+            .find_position(|beam| beam.source == Id::Actor(actor_id))
+            .map(|(i, _)| i)
+    }
+
+    pub fn add(&mut self, id: u64, value: Beam) -> usize {
+        self.ids.push(id);
+        self.values.push(value);
+        self.lengths.push(MAX_BEAM_LENGTH);
+        self.ids.len() - 1
+    }
+
+    pub fn add_reflected(&mut self, id: u64, value: Beam, temp_beam: ReflectedBeam) -> usize {
+        self.reflected_beams.push(temp_beam);
+        self.add(id, value)
+    }
+
+    pub fn remove(&mut self, index: usize) {
+        self.ids.remove(index);
+        self.values.remove(index);
+        self.lengths.remove(index);
+        self.reflected_shift -= 1;
+    }
+
+    fn retain(&mut self, actor_ids: &Vec<u64>) {
+        let len = self.values.len();
+        let mut del = 0;
+        {
+            let ids = &mut *self.ids;
+            let values = &mut *self.values;
+            let lengths = &mut *self.lengths;
+            for i in 0..len {
+                match values[i].source {
+                    Id::Actor(actor_id) => if !actor_ids.contains(&actor_id) {
+                        del += 1;
+                    } else if del > 0 {
+                        ids.swap(i - del, i);
+                        values.swap(i - del, i);
+                        lengths.swap(i - del, i);
+                    }
+                    Id::Beam => del += 1,
+                }
+            }
+        }
+        if del > 0 {
+            self.ids.truncate(len - del);
+            self.values.truncate(len - del);
+            self.lengths.truncate(len - del);
+        }
+    }
+}
+
+with_id_impl!(Beams);
+
+pub struct World {
+    bounds: Rectf,
+    id_counter: IdCounter,
+    now: f64,
+    actors: Actors,
+    dynamic_bodies: DynamicBodies,
+    static_bodies: StaticBodies,
+    beams: Beams,
+    delayed_magics: Vec<DelayedMagick>,
+}
+
+impl World {
+    pub fn new(bounds: Rectf) -> Self {
+        World {
+            bounds,
+            id_counter: IdCounter::default(),
+            now: 0.0,
+            actors: Actors::default(),
+            dynamic_bodies: DynamicBodies::default(),
+            static_bodies: StaticBodies::default(),
+            beams: Beams::default(),
+            delayed_magics: Vec::new(),
         }
     }
 
-    fn collide_beams(&self, begin: Vec2f, direction: Vec2f) -> (f64, Option<Index>, Option<TempBeam>) {
-        let mut length = MAX_BEAM_LENGTH;
-        let mut nearest_hit: Option<usize> = None;
-        for j in 0..self.bodies.len() {
-            let segment = Segment::new(begin, begin + direction * length);
-            let circle = Circle::new(self.positions[j], self.bodies[j].radius);
-            if let Some(intersection) = circle.get_first_intersection_with_segment(&segment) {
-                length = begin.distance(intersection);
-                nearest_hit = Some(j);
+    pub fn bounds(&self) -> &Rectf {
+        &self.bounds
+    }
+
+    pub fn actors(&self) -> &Actors {
+        &self.actors
+    }
+
+    pub fn dynamic_bodies(&self) -> &DynamicBodies {
+        &self.dynamic_bodies
+    }
+
+    pub fn static_bodies(&self) -> &StaticBodies {
+        &self.static_bodies
+    }
+
+    pub fn beams(&self) -> &Beams {
+        &self.beams
+    }
+
+    pub fn set_actor_target_direction(&mut self, index: usize, value: Vec2f) {
+        self.actors.target_directions[index] = value;
+    }
+
+    pub fn set_actor_const_force(&mut self, index: usize, value: f64) {
+        self.actors.const_forces[index] = value;
+    }
+
+    pub fn add_actor(&mut self, value: Body, position: Vec2f) -> (u64, usize) {
+        let id = self.id_counter.next();
+        let index = self.actors.add(id, value);
+        self.actors.positions[index] = position;
+        (id, index)
+    }
+
+    pub fn add_dynamic_body(&mut self, value: Body, position: Vec2f) -> (u64, usize) {
+        let id = self.id_counter.next();
+        let index = self.dynamic_bodies.add(id, value);
+        self.dynamic_bodies.positions[index] = position;
+        (id, index)
+    }
+
+    pub fn add_static_body(&mut self, value: Body, position: Vec2f) -> (u64, usize) {
+        let id = self.id_counter.next();
+        let index = self.static_bodies.add(id, value);
+        self.static_bodies.positions[index] = position;
+        (id, index)
+    }
+
+    pub fn add_actor_spell_element(&mut self, index: usize, element: Element) {
+        self.actors.add_spell_element(index, element);
+    }
+
+    pub fn start_directed_magick(&mut self, index: usize) {
+        let magick = self.actors.spells[index].cast();
+        if magick.power[Element::Shield as usize] > 0.0 {
+            return;
+        } else if magick.power[Element::Earth as usize] > 0.0 {
+            self.delayed_magics.push(DelayedMagick {
+                actor_id: self.actors.ids[index],
+                started: self.now,
+                power: magick.power,
+            });
+        } else if magick.power[Element::Ice as usize] > 0.0 {
+            return;
+        } else if magick.power[Element::Arcane as usize] > 0.0
+            || magick.power[Element::Life as usize] > 0.0 {
+            self.beams.add(
+                self.id_counter.next(),
+                Beam { magick, source: Id::Actor(self.actors.ids[index]) },
+            );
+        } else if magick.power[Element::Lightning as usize] > 0.0 {
+            return;
+        } else if magick.power[Element::Water as usize] > 0.0
+            || magick.power[Element::Cold as usize] > 0.0
+            || magick.power[Element::Fire as usize] > 0.0
+            || magick.power[Element::Steam as usize] > 0.0
+            || magick.power[Element::Poison as usize] > 0.0 {
+            return;
+        }
+    }
+
+    pub fn complete_directed_magick(&mut self, index: usize) {
+        let actor_id = self.actors.get_id(index);
+        if let Some(index) = self.beams.find_by_actor_id(actor_id) {
+            self.beams.remove(index);
+        } else if let Some(magick_index) = self.delayed_magics.iter()
+            .find_position(|v| v.actor_id == actor_id).map(|(v, _)| v) {
+            let delayed_magick = self.delayed_magics.remove(magick_index);
+            let actor_radius = self.actors.get_body(index).radius;
+            let radius = delayed_magick.power.iter().sum::<f64>() * actor_radius / MAX_MAGIC_POWER;
+            let material = Material::Stone;
+            let direction = self.actors.current_directions[index];
+            let position = self.actors.positions[index]
+                + direction * (self.actors.bodies[index].radius + radius) * SHIFT_FACTOR;
+            let (_, new_body_index) = self.add_dynamic_body(
+                Body {
+                    radius,
+                    mass: get_body_mass(get_circle_volume(radius), &material),
+                    restitution: get_material_restitution(&material),
+                    material,
+                },
+                position,
+            );
+            self.dynamic_bodies.velocities[new_body_index] = self.actors.velocities[index];
+            self.dynamic_bodies.dynamic_forces[new_body_index] = self.actors.current_directions[index]
+                * (self.now - delayed_magick.started).min(MAX_MAGIC_POWER) * MAGIC_FORCE_MULTIPLIER;
+            self.dynamic_bodies.effects[new_body_index].power = delayed_magick.power.clone();
+            for applied in self.dynamic_bodies.effects[new_body_index].applied.iter_mut() {
+                *applied = self.now;
             }
         }
+    }
+
+    pub fn self_magick(&mut self, index: usize) {
+        let magick = self.actors.spells[index].cast();
+        if magick.power[Element::Shield as usize] == 0.0 {
+            self.actors.effects[index] = add_magick_power_to_effect(self.now, &self.actors.effects[index], &magick.power);
+        } else {
+            let mut elements = [false; 11];
+            for i in 0..magick.power.len() {
+                elements[i] = magick.power[i] > 0.0;
+            }
+            let power = magick.power.iter().sum();
+            let radius = if elements[Element::Earth as usize] || elements[Element::Ice as usize]
+                || (elements[Element::Shield as usize] && elements.iter().filter(|v| **v).count() == 1) {
+                self.actors.bodies[index].radius
+            } else {
+                self.actors.bodies[index].radius * power
+            };
+            self.actors.auras[index] = Aura { applied: self.now, power, radius, elements };
+        }
+    }
+
+    pub fn update(&mut self, duration: f64) {
+        self.now += duration;
+        self.actors.retain();
+        self.dynamic_bodies.retain();
+        self.static_bodies.retain();
+        self.beams.retain(&self.actors.ids);
+        self.beams.reflected_beams.clear();
+        self.beams.reflected_shift = self.beams.ids.len();
+        update_current_directions(duration, &self.actors.target_directions, &mut self.actors.current_directions);
+        update_dynamic_forces(&self.actors.current_directions, &self.actors.const_forces, &mut self.actors.dynamic_forces);
+        decay_effects(self.now, duration, &mut self.actors.effects);
+        decay_effects(self.now, duration, &mut self.dynamic_bodies.effects);
+        decay_effects(self.now, duration, &mut self.static_bodies.effects);
+        decay_auras(self.now, duration, &mut self.actors.auras);
+        decay_auras(self.now, duration, &mut self.dynamic_bodies.auras);
+        decay_auras(self.now, duration, &mut self.static_bodies.auras);
+        self.collide_beams();
+        update_positions(duration, &self.actors.velocities, &mut self.actors.positions);
+        update_positions(duration, &self.dynamic_bodies.velocities, &mut self.dynamic_bodies.positions);
+        update_velocities(duration, &self.actors.bodies, &self.actors.dynamic_forces, &mut self.actors.velocities);
+        update_velocities(duration, &self.dynamic_bodies.bodies, &self.dynamic_bodies.dynamic_forces, &mut self.dynamic_bodies.velocities);
+        if !self.actors.ids.is_empty() {
+            for i in 0..self.actors.ids.len() {
+                for j in 0..self.static_bodies.ids.len() {
+                    self.collide_actor_and_static_body(i, j);
+                }
+            }
+        }
+        if !self.actors.ids.is_empty() {
+            for i in 0..self.actors.ids.len() - 1 {
+                for j in i + 1..self.actors.ids.len() {
+                    self.collide_actors(i, j);
+                }
+            }
+        }
+        for i in 0..self.dynamic_bodies.ids.len() {
+            for j in 0..self.static_bodies.ids.len() {
+                self.collide_dynamic_body_and_static_body(i, j);
+            }
+            for j in 0..self.actors.ids.len() {
+                self.collide_dynamic_body_and_actor(i, j);
+            }
+        }
+        if !self.dynamic_bodies.ids.is_empty() {
+            for i in 0..self.dynamic_bodies.ids.len() - 1 {
+                for j in i + 1..self.dynamic_bodies.ids.len() {
+                    self.collide_dynamic_bodies(i, j);
+                }
+            }
+        }
+        self.actors.dynamic_forces.fill(Vec2f::ZERO);
+        self.dynamic_bodies.dynamic_forces.fill(Vec2f::ZERO);
+        damage_health(&self.actors.bodies, &self.actors.effects, &mut self.actors.healths);
+        damage_health(&self.dynamic_bodies.bodies, &self.dynamic_bodies.effects, &mut self.dynamic_bodies.healths);
+        damage_health(&self.static_bodies.bodies, &self.static_bodies.effects, &mut self.static_bodies.healths);
+        mark_inactive(&self.bounds, &self.actors.bodies, &self.actors.positions, &self.actors.healths, &mut self.actors.active);
+        mark_inactive(&self.bounds, &self.dynamic_bodies.bodies, &self.dynamic_bodies.positions, &self.dynamic_bodies.healths, &mut self.dynamic_bodies.active);
+        for i in 0..self.static_bodies.active.len() {
+            self.static_bodies.active[i] = self.static_bodies.healths[i] > 0.0;
+        }
+    }
+
+    fn collide_actors(&mut self, lhs: usize, rhs: usize) {
+        let (lhs_positions, rhs_positions) = self.actors.positions.split_at_mut(rhs);
+        let (lhs_velocities, rhs_velocities) = self.actors.velocities.split_at_mut(rhs);
+        let (lhs_effects, rhs_effects) = self.actors.effects.split_at_mut(rhs);
+        let (lhs_healths, rhs_healths) = self.actors.healths.split_at_mut(rhs);
+        collide_dynamic(
+            self.now,
+            &mut DynamicCollidingBody {
+                body: &self.actors.bodies[lhs],
+                position: &mut lhs_positions[lhs],
+                velocity: &mut lhs_velocities[lhs],
+                effect: &mut lhs_effects[lhs],
+                health: &mut lhs_healths[lhs],
+                aura: &self.actors.auras[lhs],
+            },
+            &mut DynamicCollidingBody {
+                body: &self.actors.bodies[rhs],
+                position: &mut rhs_positions[0],
+                velocity: &mut rhs_velocities[0],
+                effect: &mut rhs_effects[0],
+                health: &mut rhs_healths[0],
+                aura: &self.actors.auras[rhs],
+            },
+        );
+    }
+
+    fn collide_actor_and_static_body(&mut self, actor: usize, static_body: usize) {
+        collide_with_static(
+            self.now,
+            &mut DynamicCollidingBody {
+                body: &self.actors.bodies[actor],
+                position: &mut self.actors.positions[actor],
+                velocity: &mut self.actors.velocities[actor],
+                effect: &mut self.actors.effects[actor],
+                health: &mut self.actors.healths[actor],
+                aura: &self.actors.auras[actor],
+            },
+            &mut StaticCollidingBody {
+                body: &self.static_bodies.bodies[static_body],
+                position: &self.static_bodies.positions[static_body],
+                effect: &mut self.static_bodies.effects[static_body],
+                health: &mut self.static_bodies.healths[static_body],
+                aura: &self.static_bodies.auras[static_body],
+            },
+        );
+    }
+
+    fn collide_dynamic_body_and_static_body(&mut self, dynamic_body: usize, static_body: usize) {
+        collide_with_static(
+            self.now,
+            &mut DynamicCollidingBody {
+                body: &self.dynamic_bodies.bodies[dynamic_body],
+                position: &mut self.dynamic_bodies.positions[dynamic_body],
+                velocity: &mut self.dynamic_bodies.velocities[dynamic_body],
+                effect: &mut self.dynamic_bodies.effects[dynamic_body],
+                health: &mut self.dynamic_bodies.healths[dynamic_body],
+                aura: &self.dynamic_bodies.auras[dynamic_body],
+            },
+            &mut StaticCollidingBody {
+                body: &self.static_bodies.bodies[static_body],
+                position: &self.static_bodies.positions[static_body],
+                effect: &mut self.static_bodies.effects[static_body],
+                health: &mut self.static_bodies.healths[static_body],
+                aura: &self.static_bodies.auras[static_body],
+            },
+        );
+    }
+
+    fn collide_dynamic_body_and_actor(&mut self, dynamic_body: usize, actor: usize) {
+        collide_dynamic(
+            self.now,
+            &mut DynamicCollidingBody {
+                body: &self.dynamic_bodies.bodies[dynamic_body],
+                position: &mut self.dynamic_bodies.positions[dynamic_body],
+                velocity: &mut self.dynamic_bodies.velocities[dynamic_body],
+                effect: &mut self.dynamic_bodies.effects[dynamic_body],
+                health: &mut self.dynamic_bodies.healths[dynamic_body],
+                aura: &self.dynamic_bodies.auras[dynamic_body],
+            },
+            &mut DynamicCollidingBody {
+                body: &self.actors.bodies[actor],
+                position: &mut self.actors.positions[actor],
+                velocity: &mut self.actors.velocities[actor],
+                effect: &mut self.actors.effects[actor],
+                health: &mut self.actors.healths[actor],
+                aura: &self.actors.auras[actor],
+            },
+        );
+    }
+
+    fn collide_dynamic_bodies(&mut self, lhs: usize, rhs: usize) {
+        let (lhs_positions, rhs_positions) = self.dynamic_bodies.positions.split_at_mut(rhs);
+        let (lhs_velocities, rhs_velocities) = self.dynamic_bodies.velocities.split_at_mut(rhs);
+        let (lhs_effects, rhs_effects) = self.dynamic_bodies.effects.split_at_mut(rhs);
+        let (lhs_healths, rhs_healths) = self.dynamic_bodies.healths.split_at_mut(rhs);
+        collide_dynamic(
+            self.now,
+            &mut DynamicCollidingBody {
+                body: &self.dynamic_bodies.bodies[lhs],
+                position: &mut lhs_positions[lhs],
+                velocity: &mut lhs_velocities[lhs],
+                effect: &mut lhs_effects[lhs],
+                health: &mut lhs_healths[lhs],
+                aura: &self.dynamic_bodies.auras[lhs],
+            },
+            &mut DynamicCollidingBody {
+                body: &self.dynamic_bodies.bodies[rhs],
+                position: &mut rhs_positions[0],
+                velocity: &mut rhs_velocities[0],
+                effect: &mut rhs_effects[0],
+                health: &mut rhs_healths[0],
+                aura: &self.dynamic_bodies.auras[rhs],
+            },
+        );
+    }
+
+    fn collide_beams(&mut self) {
+        let temp_beam_shift = self.beams.reflected_shift;
+        let mut beam_index = 0;
+        while beam_index < self.beams.ids.len() {
+            let i = beam_index;
+            let (length, hit_index, reflection) = match self.beams.values[i].source {
+                Id::Actor(actor_id) => {
+                    let actor_index = self.actors.get_index(actor_id);
+                    let direction = self.actors.current_directions[actor_index];
+                    let begin = self.actors.positions[actor_index] + direction * SHIFT_FACTOR;
+                    self.collide_beam(begin, direction)
+                }
+                Id::Beam => {
+                    let temp_beam = &self.beams.reflected_beams[i - temp_beam_shift];
+                    let add_length = SHIFT_FACTOR - 1.0;
+                    let result = self.collide_beam(temp_beam.begin + temp_beam.direction * add_length, temp_beam.direction);
+                    (result.0 + add_length, result.1, result.2)
+                }
+            };
+            self.beams.lengths[i] = length;
+            if let Some(hit_index) = hit_index {
+                if let Some(temp_beam) = reflection {
+                    self.beams.add_reflected(
+                        self.id_counter.next(),
+                        Beam { magick: self.beams.values[i].magick.clone(), source: Id::Beam },
+                        temp_beam,
+                    );
+                } else {
+                    match hit_index {
+                        Index::Actor(index) => {
+                            self.actors.effects[index] = add_magick_power_to_effect(
+                                self.now,
+                                &self.actors.effects[index],
+                                &self.beams.values[i].magick.power,
+                            );
+                        }
+                        Index::DynamicBody(index) => {
+                            self.dynamic_bodies.effects[index] = add_magick_power_to_effect(
+                                self.now,
+                                &self.dynamic_bodies.effects[index],
+                                &self.beams.values[i].magick.power,
+                            );
+                        }
+                        Index::StaticBody(index) => {
+                            self.static_bodies.effects[index] = add_magick_power_to_effect(
+                                self.now,
+                                &self.static_bodies.effects[index],
+                                &self.beams.values[i].magick.power,
+                            );
+                        }
+                    }
+                }
+            }
+            beam_index += 1;
+        }
+    }
+
+    fn collide_beam(&self, begin: Vec2f, direction: Vec2f) -> (f64, Option<Index>, Option<ReflectedBeam>) {
+        let mut length = MAX_BEAM_LENGTH;
+        let mut nearest_hit = collide_beam_with_bodies(
+            begin, direction,
+            &self.actors.bodies, &self.actors.positions,
+            &mut length,
+        ).map(|v| Index::Actor(v));
+        nearest_hit = collide_beam_with_bodies(
+            begin, direction,
+            &self.dynamic_bodies.bodies, &self.dynamic_bodies.positions,
+            &mut length,
+        ).map(|v| Index::DynamicBody(v)).or(nearest_hit);
+        nearest_hit = collide_beam_with_bodies(
+            begin, direction,
+            &self.static_bodies.bodies, &self.static_bodies.positions,
+            &mut length,
+        ).map(|v| Index::StaticBody(v)).or(nearest_hit);
         if let Some(hit_body_index) = nearest_hit {
-            if can_reflect_beams(&self.auras[hit_body_index].elements) {
+            if can_reflect_beams(&self.get_aura(hit_body_index).elements) {
                 let end = begin + direction * length;
-                let normal = (self.positions[hit_body_index] - end).normalized();
-                let temp_beam = TempBeam {
+                let normal = (self.get_position(hit_body_index) - end).normalized();
+                let temp_beam = ReflectedBeam {
                     begin: end,
                     direction: direction - normal * 2.0 * direction.cos(normal),
                 };
-                (length, Some(Index::Body(hit_body_index)), Some(temp_beam))
+                (length, Some(hit_body_index), Some(temp_beam))
             } else {
-                (length, Some(Index::Body(hit_body_index)), None)
+                (length, Some(hit_body_index), None)
             }
         } else {
             (length, None, None)
+        }
+    }
+
+    fn get_aura(&self, index: Index) -> &Aura {
+        match index {
+            Index::Actor(v) => &self.actors.auras[v],
+            Index::DynamicBody(v) => &self.dynamic_bodies.auras[v],
+            Index::StaticBody(v) => &self.static_bodies.auras[v],
+        }
+    }
+
+    fn get_position(&self, index: Index) -> Vec2f {
+        match index {
+            Index::Actor(v) => self.actors.positions[v],
+            Index::DynamicBody(v) => self.dynamic_bodies.positions[v],
+            Index::StaticBody(v) => self.static_bodies.positions[v],
         }
     }
 }
@@ -746,6 +1155,24 @@ fn can_cancel_element(target: Element, element: Element) -> bool {
         || (target == Element::Poison && element == Element::Life)
 }
 
+fn update_current_directions(duration: f64, target_directions: &Vec<Vec2f>, current_directions: &mut Vec<Vec2f>) {
+    for i in 0..current_directions.len() {
+        current_directions[i] = get_current_direction(current_directions[i], target_directions[i], duration);
+    }
+}
+
+fn update_dynamic_forces(current_directions: &Vec<Vec2f>, const_forces: &Vec<f64>, dynamic_forces: &mut Vec<Vec2f>) {
+    for i in 0..dynamic_forces.len() {
+        dynamic_forces[i] += current_directions[i] * (const_forces[i] * CONST_FORCE_MULTIPLIER);
+    }
+}
+
+fn decay_effects(now: f64, duration: f64, effects: &mut Vec<Effect>) {
+    for effect in effects.iter_mut() {
+        decay_effect(now, duration, effect);
+    }
+}
+
 fn decay_effect(now: f64, duration: f64, effect: &mut Effect) {
     for i in 0..effect.power.len() {
         if is_instant_effect_element(Element::from(i)) {
@@ -755,6 +1182,12 @@ fn decay_effect(now: f64, duration: f64, effect: &mut Effect) {
             let initial = effect.power[i] - DECAY_FACTOR * (passed - duration).square();
             effect.power[i] = (initial - DECAY_FACTOR * passed.square()).max(0.0);
         }
+    }
+}
+
+fn decay_auras(now: f64, duration: f64, auras: &mut Vec<Aura>) {
+    for aura in auras.iter_mut() {
+        decay_aura(now, duration, aura);
     }
 }
 
@@ -840,85 +1273,123 @@ fn normalize_angle(angle: f64) -> f64 {
     return (turns - turns.floor() - 0.5) * (2.0 * std::f64::consts::PI);
 }
 
-struct GravitationalBody {
-    mass: f64,
-    position: Vec2f,
-}
-
-fn gravity_force(lhs: &GravitationalBody, rhs: &GravitationalBody, gravity_const: f64) -> (Vec2f, Vec2f) {
-    if lhs.position == rhs.position {
-        return (Vec2f::ZERO, Vec2f::ZERO);
+fn collide_beam_with_bodies(begin: Vec2f, direction: Vec2f, bodies: &Vec<Body>, positions: &Vec<Vec2f>, length: &mut f64) -> Option<usize> {
+    let mut nearest_hit = None;
+    for i in 0..bodies.len() {
+        let segment = Segment::new(begin, begin + direction * *length);
+        let circle = Circle::new(positions[i], bodies[i].radius);
+        if let Some(intersection) = circle.get_first_intersection_with_segment(&segment) {
+            *length = begin.distance(intersection);
+            nearest_hit = Some(i);
+        }
     }
-    let scalar = scalar_gravity_force(lhs, rhs, gravity_const);
-    let mass_center = (lhs.position * lhs.mass + rhs.position * rhs.mass) / (lhs.mass + rhs.mass);
-    (
-        (mass_center - lhs.position).normalized() * scalar,
-        (mass_center - rhs.position).normalized() * scalar,
-    )
+    nearest_hit
 }
 
-fn scalar_gravity_force(lhs: &GravitationalBody, rhs: &GravitationalBody, gravity_const: f64) -> f64 {
-    let distance = lhs.position.distance(rhs.position);
-    gravity_const * (lhs.mass + rhs.mass) / (distance * distance)
+fn update_positions(duration: f64, velocities: &Vec<Vec2f>, positions: &mut Vec<Vec2f>) {
+    for i in 0..positions.len() {
+        positions[i] += velocities[i] * duration;
+    }
 }
 
-struct PenetratingBody {
-    radius: f64,
-    position: Vec2f,
+fn update_velocities(duration: f64, bodies: &Vec<Body>, dynamic_forces: &Vec<Vec2f>, velocities: &mut Vec<Vec2f>) {
+    for i in 0..velocities.len() {
+        velocities[i] += dynamic_forces[i] * (duration / bodies[i].mass);
+    }
 }
 
-fn has_collision(lhs: &PenetratingBody, rhs: &PenetratingBody) -> bool {
-    get_penetration(lhs, rhs) > 0.0
+struct DynamicCollidingBody<'a> {
+    body: &'a Body,
+    position: &'a mut Vec2f,
+    velocity: &'a mut Vec2f,
+    effect: &'a mut Effect,
+    health: &'a mut f64,
+    aura: &'a Aura,
 }
 
-fn get_penetration(lhs: &PenetratingBody, rhs: &PenetratingBody) -> f64 {
-    let delta_position = rhs.position - lhs.position;
+fn collide_dynamic(now: f64, lhs: &mut DynamicCollidingBody, rhs: &mut DynamicCollidingBody) {
+    let delta_position = *rhs.position - *lhs.position;
     let distance = delta_position.norm();
-    lhs.radius + rhs.radius - distance
-}
-
-struct CollidingBody {
-    mass: f64,
-    radius: f64,
-    restitution: f64,
-    position: Vec2f,
-    velocity: Vec2f,
-}
-
-struct CollidedBody {
-    position: Vec2f,
-    velocity: Vec2f,
-    physical_damage: f64,
-}
-
-fn collide(lhs: &CollidingBody, rhs: &CollidingBody) -> Option<(CollidedBody, CollidedBody)> {
-    let delta_position = rhs.position - lhs.position;
-    let distance = delta_position.norm();
-    let penetration = lhs.radius + rhs.radius - distance;
+    let penetration = lhs.body.radius + rhs.body.radius - distance;
     if penetration <= 0.0 {
-        return None;
+        return;
     }
-    let mass_sum = lhs.mass + rhs.mass;
+    let mass_sum = lhs.body.mass + rhs.body.mass;
     let normal = delta_position.normalized();
-    let delta_velocity = lhs.velocity - rhs.velocity;
-    let lhs_kinetic_energy = get_kinetic_energy(lhs.mass, lhs.velocity);
-    let rhs_kinetic_energy = get_kinetic_energy(rhs.mass, rhs.velocity);
-    let lhs_velocity = lhs.velocity - delta_velocity * rhs.mass * (1.0 + lhs.restitution) / mass_sum;
-    let rhs_velocity = rhs.velocity + delta_velocity * lhs.mass * (1.0 + rhs.restitution) / mass_sum;
-    Some((
-        CollidedBody {
-            position: lhs.position - normal * (penetration * rhs.mass / mass_sum),
-            velocity: lhs_velocity,
-            physical_damage: (get_kinetic_energy(lhs.mass, lhs_velocity) - lhs_kinetic_energy).abs(),
-        },
-        CollidedBody {
-            position: rhs.position + normal * (penetration * lhs.mass / mass_sum),
-            velocity: rhs_velocity,
-            physical_damage: (get_kinetic_energy(rhs.mass, rhs_velocity) - rhs_kinetic_energy).abs(),
-        },
-    ))
+    let delta_velocity = *lhs.velocity - *rhs.velocity;
+    let lhs_kinetic_energy = get_kinetic_energy(lhs.body.mass, *lhs.velocity);
+    let rhs_kinetic_energy = get_kinetic_energy(rhs.body.mass, *rhs.velocity);
+    let lhs_velocity = *lhs.velocity - delta_velocity * rhs.body.mass * (1.0 + lhs.body.restitution) / mass_sum;
+    let rhs_velocity = *rhs.velocity + delta_velocity * lhs.body.mass * (1.0 + rhs.body.restitution) / mass_sum;
+    *lhs.position = *lhs.position - normal * (penetration * rhs.body.mass / mass_sum);
+    *lhs.velocity = lhs_velocity;
+    *rhs.position = *rhs.position + normal * (penetration * lhs.body.mass / mass_sum);
+    *rhs.velocity = rhs_velocity;
+    let new_lhs_effect = add_magick_power_to_effect(now, lhs.effect, &rhs.effect.power);
+    let new_rhs_effect = add_magick_power_to_effect(now, rhs.effect, &lhs.effect.power);
+    *lhs.effect = new_lhs_effect;
+    *rhs.effect = new_rhs_effect;
+    if !can_absorb_physical_damage(&lhs.aura.elements) {
+        *lhs.health -= (get_kinetic_energy(lhs.body.mass, lhs_velocity) - lhs_kinetic_energy).abs();
+    }
+    if !can_absorb_physical_damage(&rhs.aura.elements) {
+        *rhs.health -= (get_kinetic_energy(rhs.body.mass, rhs_velocity) - rhs_kinetic_energy).abs();
+    }
+}
+
+struct StaticCollidingBody<'a> {
+    body: &'a Body,
+    position: &'a Vec2f,
+    effect: &'a mut Effect,
+    health: &'a mut f64,
+    aura: &'a Aura,
+}
+
+fn collide_with_static(now: f64, lhs: &mut DynamicCollidingBody, rhs: &mut StaticCollidingBody) {
+    let delta_position = *rhs.position - *lhs.position;
+    let distance = delta_position.norm();
+    let penetration = lhs.body.radius + rhs.body.radius - distance;
+    if penetration <= 0.0 {
+        return;
+    }
+    let mass_sum = lhs.body.mass + rhs.body.mass;
+    let normal = delta_position.normalized();
+    let delta_velocity = *lhs.velocity;
+    let lhs_kinetic_energy = get_kinetic_energy(lhs.body.mass, *lhs.velocity);
+    let lhs_velocity = *lhs.velocity - delta_velocity * rhs.body.mass * (1.0 + lhs.body.restitution) / mass_sum;
+    let rhs_velocity = delta_velocity * lhs.body.mass * (1.0 + rhs.body.restitution) / mass_sum;
+    *lhs.position = *lhs.position - normal * (penetration * rhs.body.mass / mass_sum);
+    *lhs.velocity = lhs_velocity;
+    let new_lhs_effect = add_magick_power_to_effect(now, lhs.effect, &rhs.effect.power);
+    let new_rhs_effect = add_magick_power_to_effect(now, rhs.effect, &lhs.effect.power);
+    *lhs.effect = new_lhs_effect;
+    *rhs.effect = new_rhs_effect;
+    if !can_absorb_physical_damage(&lhs.aura.elements) {
+        *lhs.health -= (get_kinetic_energy(lhs.body.mass, lhs_velocity) - lhs_kinetic_energy).abs();
+    }
+    if !can_absorb_physical_damage(&rhs.aura.elements) {
+        *rhs.health -= get_kinetic_energy(rhs.body.mass, rhs_velocity);
+    }
 }
 
 fn get_kinetic_energy(mass: f64, velocity: Vec2f) -> f64 {
     mass * velocity.dot_self() / 2.0
+}
+
+fn damage_health(bodies: &Vec<Body>, effects: &Vec<Effect>, healths: &mut Vec<f64>) {
+    for i in 0..healths.len() {
+        healths[i] -= get_damage(&effects[i].power) * bodies[i].mass * DAMAGE_FACTOR;
+    }
+}
+
+fn mark_inactive(bounds: &Rectf, bodies: &Vec<Body>, positions: &Vec<Vec2f>, healths: &Vec<f64>, active: &mut Vec<bool>) {
+    for i in 0..active.len() {
+        let radius = bodies[i].radius;
+        let position = positions[i];
+        let rect = Rectf::new(
+            position - Vec2f::both(radius),
+            position + Vec2f::both(radius),
+        );
+        active[i] = healths[i] > 0.0 && bounds.overlaps(&rect);
+    }
 }
