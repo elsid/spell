@@ -15,6 +15,7 @@ pub const MAX_ROTATION_SPEED: f64 = 2.0 * std::f64::consts::PI;
 pub const CONST_FORCE_MULTIPLIER: f64 = 2e3;
 pub const MAGIC_FORCE_MULTIPLIER: f64 = 5e6;
 pub const MAX_SPELL_ELEMENTS: usize = 5;
+pub const MAX_BEAM_DEPTH: usize = 4;
 
 pub trait WithId {
     fn ids(&self) -> &Vec<u64>;
@@ -280,6 +281,7 @@ impl IdCounter {
 pub struct ReflectedBeam {
     pub begin: Vec2f,
     pub direction: Vec2f,
+    pub depth: usize,
 }
 
 #[derive(Default)]
@@ -1004,12 +1006,12 @@ impl World {
                     let actor_index = self.actors.get_index(actor_id);
                     let direction = self.actors.current_directions[actor_index];
                     let begin = self.actors.positions[actor_index] + direction * SHIFT_FACTOR;
-                    self.collide_beam(begin, direction)
+                    self.collide_beam(begin, direction, 0)
                 }
                 Id::Beam => {
                     let temp_beam = &self.beams.reflected_beams[i - temp_beam_shift];
                     let add_length = SHIFT_FACTOR - 1.0;
-                    let result = self.collide_beam(temp_beam.begin + temp_beam.direction * add_length, temp_beam.direction);
+                    let result = self.collide_beam(temp_beam.begin + temp_beam.direction * add_length, temp_beam.direction, temp_beam.depth);
                     (result.0 + add_length, result.1, result.2)
                 }
             };
@@ -1051,7 +1053,7 @@ impl World {
         }
     }
 
-    fn collide_beam(&self, begin: Vec2f, direction: Vec2f) -> (f64, Option<Index>, Option<ReflectedBeam>) {
+    fn collide_beam(&self, begin: Vec2f, direction: Vec2f, depth: usize) -> (f64, Option<Index>, Option<ReflectedBeam>) {
         let mut length = MAX_BEAM_LENGTH;
         let mut nearest_hit = collide_beam_with_bodies(
             begin, direction,
@@ -1069,12 +1071,13 @@ impl World {
             &mut length,
         ).map(|v| Index::StaticBody(v)).or(nearest_hit);
         if let Some(hit_body_index) = nearest_hit {
-            if can_reflect_beams(&self.get_aura(hit_body_index).elements) {
+            if depth < MAX_BEAM_DEPTH && can_reflect_beams(&self.get_aura(hit_body_index).elements) {
                 let end = begin + direction * length;
                 let normal = (self.get_position(hit_body_index) - end).normalized();
                 let temp_beam = ReflectedBeam {
                     begin: end,
                     direction: direction - normal * 2.0 * direction.cos(normal),
+                    depth: depth + 1,
                 };
                 (length, Some(hit_body_index), Some(temp_beam))
             } else {
