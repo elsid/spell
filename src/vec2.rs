@@ -33,10 +33,6 @@ impl Vec2f {
         (self.x.square() + self.y.square()).sqrt()
     }
 
-    pub fn distance(&self, other: Self) -> f64 {
-        (other - *self).norm()
-    }
-
     pub fn normalize(&mut self) {
         *self /= self.norm()
     }

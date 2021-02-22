@@ -1,8 +1,11 @@
 use itertools::Itertools;
 
-use crate::circle::Circle;
+use parry2d_f64::math::Isometry;
+use parry2d_f64::na::{Point2, Vector2};
+use parry2d_f64::query::{Ray, RayCast};
+use parry2d_f64::shape::Ball;
+
 use crate::rect::Rectf;
-use crate::segment::Segment;
 use crate::vec2::{Square, Vec2f};
 
 pub const MAX_MAGIC_POWER: f64 = 5.0;
@@ -1279,10 +1282,14 @@ fn normalize_angle(angle: f64) -> f64 {
 fn collide_beam_with_bodies(begin: Vec2f, direction: Vec2f, bodies: &Vec<Body>, positions: &Vec<Vec2f>, length: &mut f64) -> Option<usize> {
     let mut nearest_hit = None;
     for i in 0..bodies.len() {
-        let segment = Segment::new(begin, begin + direction * *length);
-        let circle = Circle::new(positions[i], bodies[i].radius);
-        if let Some(intersection) = circle.get_first_intersection_with_segment(&segment) {
-            *length = begin.distance(intersection);
+        let intersection = Ball::new(bodies[i].radius).cast_ray(
+            &Isometry::translation(positions[i].x, positions[i].y),
+            &Ray::new(Point2::new(begin.x, begin.y), Vector2::new(direction.x, direction.y)),
+            *length,
+            true,
+        );
+        if let Some(toi) = intersection {
+            *length = toi;
             nearest_hit = Some(i);
         }
     }

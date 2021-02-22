@@ -56,8 +56,6 @@ use crate::world::{
 mod vec2;
 mod world;
 mod rect;
-mod circle;
-mod segment;
 
 fn main() {
     let opengl = OpenGL::V4_5;
