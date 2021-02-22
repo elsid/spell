@@ -1,8 +1,7 @@
 use itertools::Itertools;
-
 use parry2d_f64::math::Isometry;
 use parry2d_f64::na::{Point2, Vector2};
-use parry2d_f64::query::{Ray, RayCast};
+use parry2d_f64::query::{Ray, RayCast, time_of_impact, TOIStatus};
 use parry2d_f64::shape::Ball;
 
 use crate::rect::Rectf;
@@ -845,29 +844,29 @@ impl World {
         if !self.actors.ids.is_empty() {
             for i in 0..self.actors.ids.len() {
                 for j in 0..self.static_bodies.ids.len() {
-                    self.collide_actor_and_static_body(i, j);
+                    self.collide_actor_and_static_body(duration, i, j);
                 }
             }
         }
         if !self.actors.ids.is_empty() {
             for i in 0..self.actors.ids.len() - 1 {
                 for j in i + 1..self.actors.ids.len() {
-                    self.collide_actors(i, j);
+                    self.collide_actors(duration, i, j);
                 }
             }
         }
         for i in 0..self.dynamic_bodies.ids.len() {
             for j in 0..self.static_bodies.ids.len() {
-                self.collide_dynamic_body_and_static_body(i, j);
+                self.collide_dynamic_body_and_static_body(duration, i, j);
             }
             for j in 0..self.actors.ids.len() {
-                self.collide_dynamic_body_and_actor(i, j);
+                self.collide_dynamic_body_and_actor(duration, i, j);
             }
         }
         if !self.dynamic_bodies.ids.is_empty() {
             for i in 0..self.dynamic_bodies.ids.len() - 1 {
                 for j in i + 1..self.dynamic_bodies.ids.len() {
-                    self.collide_dynamic_bodies(i, j);
+                    self.collide_dynamic_bodies(duration, i, j);
                 }
             }
         }
@@ -883,13 +882,13 @@ impl World {
         }
     }
 
-    fn collide_actors(&mut self, lhs: usize, rhs: usize) {
+    fn collide_actors(&mut self, duration: f64, lhs: usize, rhs: usize) {
         let (lhs_positions, rhs_positions) = self.actors.positions.split_at_mut(rhs);
         let (lhs_velocities, rhs_velocities) = self.actors.velocities.split_at_mut(rhs);
         let (lhs_effects, rhs_effects) = self.actors.effects.split_at_mut(rhs);
         let (lhs_healths, rhs_healths) = self.actors.healths.split_at_mut(rhs);
         collide_dynamic(
-            self.now,
+            self.now, duration,
             &mut DynamicCollidingBody {
                 body: &self.actors.bodies[lhs],
                 position: &mut lhs_positions[lhs],
@@ -909,9 +908,9 @@ impl World {
         );
     }
 
-    fn collide_actor_and_static_body(&mut self, actor: usize, static_body: usize) {
+    fn collide_actor_and_static_body(&mut self, duration: f64, actor: usize, static_body: usize) {
         collide_with_static(
-            self.now,
+            self.now, duration,
             &mut DynamicCollidingBody {
                 body: &self.actors.bodies[actor],
                 position: &mut self.actors.positions[actor],
@@ -930,9 +929,9 @@ impl World {
         );
     }
 
-    fn collide_dynamic_body_and_static_body(&mut self, dynamic_body: usize, static_body: usize) {
+    fn collide_dynamic_body_and_static_body(&mut self, duration: f64, dynamic_body: usize, static_body: usize) {
         collide_with_static(
-            self.now,
+            self.now, duration,
             &mut DynamicCollidingBody {
                 body: &self.dynamic_bodies.bodies[dynamic_body],
                 position: &mut self.dynamic_bodies.positions[dynamic_body],
@@ -951,9 +950,9 @@ impl World {
         );
     }
 
-    fn collide_dynamic_body_and_actor(&mut self, dynamic_body: usize, actor: usize) {
+    fn collide_dynamic_body_and_actor(&mut self, duration: f64, dynamic_body: usize, actor: usize) {
         collide_dynamic(
-            self.now,
+            self.now, duration,
             &mut DynamicCollidingBody {
                 body: &self.dynamic_bodies.bodies[dynamic_body],
                 position: &mut self.dynamic_bodies.positions[dynamic_body],
@@ -973,13 +972,13 @@ impl World {
         );
     }
 
-    fn collide_dynamic_bodies(&mut self, lhs: usize, rhs: usize) {
+    fn collide_dynamic_bodies(&mut self, duration: f64, lhs: usize, rhs: usize) {
         let (lhs_positions, rhs_positions) = self.dynamic_bodies.positions.split_at_mut(rhs);
         let (lhs_velocities, rhs_velocities) = self.dynamic_bodies.velocities.split_at_mut(rhs);
         let (lhs_effects, rhs_effects) = self.dynamic_bodies.effects.split_at_mut(rhs);
         let (lhs_healths, rhs_healths) = self.dynamic_bodies.healths.split_at_mut(rhs);
         collide_dynamic(
-            self.now,
+            self.now, duration,
             &mut DynamicCollidingBody {
                 body: &self.dynamic_bodies.bodies[lhs],
                 position: &mut lhs_positions[lhs],
@@ -1317,33 +1316,47 @@ struct DynamicCollidingBody<'a> {
     aura: &'a Aura,
 }
 
-fn collide_dynamic(now: f64, lhs: &mut DynamicCollidingBody, rhs: &mut DynamicCollidingBody) {
-    let delta_position = *rhs.position - *lhs.position;
-    let distance = delta_position.norm();
-    let penetration = lhs.body.radius + rhs.body.radius - distance;
-    if penetration <= 0.0 {
-        return;
-    }
-    let mass_sum = lhs.body.mass + rhs.body.mass;
-    let normal = delta_position.normalized();
-    let delta_velocity = *lhs.velocity - *rhs.velocity;
-    let lhs_kinetic_energy = get_kinetic_energy(lhs.body.mass, *lhs.velocity);
-    let rhs_kinetic_energy = get_kinetic_energy(rhs.body.mass, *rhs.velocity);
-    let lhs_velocity = *lhs.velocity - delta_velocity * rhs.body.mass * (1.0 + lhs.body.restitution) / mass_sum;
-    let rhs_velocity = *rhs.velocity + delta_velocity * lhs.body.mass * (1.0 + rhs.body.restitution) / mass_sum;
-    *lhs.position = *lhs.position - normal * (penetration * rhs.body.mass / mass_sum);
-    *lhs.velocity = lhs_velocity;
-    *rhs.position = *rhs.position + normal * (penetration * lhs.body.mass / mass_sum);
-    *rhs.velocity = rhs_velocity;
-    let new_lhs_effect = add_magick_power_to_effect(now, lhs.effect, &rhs.effect.power);
-    let new_rhs_effect = add_magick_power_to_effect(now, rhs.effect, &lhs.effect.power);
-    *lhs.effect = new_lhs_effect;
-    *rhs.effect = new_rhs_effect;
-    if !can_absorb_physical_damage(&lhs.aura.elements) {
-        *lhs.health -= (get_kinetic_energy(lhs.body.mass, lhs_velocity) - lhs_kinetic_energy).abs();
-    }
-    if !can_absorb_physical_damage(&rhs.aura.elements) {
-        *rhs.health -= (get_kinetic_energy(rhs.body.mass, rhs_velocity) - rhs_kinetic_energy).abs();
+fn collide_dynamic(now: f64, duration: f64, lhs: &mut DynamicCollidingBody, rhs: &mut DynamicCollidingBody) {
+    let collision = time_of_impact(
+        &Isometry::translation(lhs.position.x, lhs.position.y),
+        &Vector2::new(lhs.velocity.x, lhs.velocity.y),
+        &Ball::new(lhs.body.radius),
+        &Isometry::translation(rhs.position.x, rhs.position.y),
+        &Vector2::new(rhs.velocity.x, rhs.velocity.y),
+        &Ball::new(rhs.body.radius),
+        duration,
+        0.0,
+    ).unwrap();
+    if let Some(collision) = collision {
+        let lhs_kinetic_energy = get_kinetic_energy(lhs.body.mass, *lhs.velocity);
+        let rhs_kinetic_energy = get_kinetic_energy(rhs.body.mass, *rhs.velocity);
+        let delta_velocity = *lhs.velocity - *rhs.velocity;
+        let mass_sum = lhs.body.mass + rhs.body.mass;
+        if matches!(collision.status, TOIStatus::Penetrating) {
+            let delta_position = *rhs.position - *lhs.position;
+            let distance = delta_position.norm();
+            let penetration = lhs.body.radius + rhs.body.radius - distance;
+            let normal = delta_position.normalized();
+            *lhs.position = *lhs.position - normal * (penetration * rhs.body.mass / mass_sum);
+            *rhs.position = *rhs.position + normal * (penetration * lhs.body.mass / mass_sum);
+        } else {
+            *lhs.position = *lhs.position + *lhs.velocity * collision.toi;
+            *rhs.position = *rhs.position + *rhs.velocity * collision.toi;
+        }
+        let lhs_velocity = *lhs.velocity - delta_velocity * rhs.body.mass * (1.0 + lhs.body.restitution) / mass_sum;
+        let rhs_velocity = *rhs.velocity + delta_velocity * lhs.body.mass * (1.0 + rhs.body.restitution) / mass_sum;
+        *lhs.velocity = lhs_velocity;
+        *rhs.velocity = rhs_velocity;
+        let new_lhs_effect = add_magick_power_to_effect(now, lhs.effect, &rhs.effect.power);
+        let new_rhs_effect = add_magick_power_to_effect(now, rhs.effect, &lhs.effect.power);
+        *lhs.effect = new_lhs_effect;
+        *rhs.effect = new_rhs_effect;
+        if !can_absorb_physical_damage(&lhs.aura.elements) {
+            *lhs.health -= (get_kinetic_energy(lhs.body.mass, lhs_velocity) - lhs_kinetic_energy).abs();
+        }
+        if !can_absorb_physical_damage(&rhs.aura.elements) {
+            *rhs.health -= (get_kinetic_energy(rhs.body.mass, rhs_velocity) - rhs_kinetic_energy).abs();
+        }
     }
 }
 
@@ -1355,30 +1368,44 @@ struct StaticCollidingBody<'a> {
     aura: &'a Aura,
 }
 
-fn collide_with_static(now: f64, lhs: &mut DynamicCollidingBody, rhs: &mut StaticCollidingBody) {
-    let delta_position = *rhs.position - *lhs.position;
-    let distance = delta_position.norm();
-    let penetration = lhs.body.radius + rhs.body.radius - distance;
-    if penetration <= 0.0 {
-        return;
-    }
-    let mass_sum = lhs.body.mass + rhs.body.mass;
-    let normal = delta_position.normalized();
-    let delta_velocity = *lhs.velocity;
-    let lhs_kinetic_energy = get_kinetic_energy(lhs.body.mass, *lhs.velocity);
-    let lhs_velocity = *lhs.velocity - delta_velocity * rhs.body.mass * (1.0 + lhs.body.restitution) / mass_sum;
-    let rhs_velocity = delta_velocity * lhs.body.mass * (1.0 + rhs.body.restitution) / mass_sum;
-    *lhs.position = *lhs.position - normal * (penetration * rhs.body.mass / mass_sum);
-    *lhs.velocity = lhs_velocity;
-    let new_lhs_effect = add_magick_power_to_effect(now, lhs.effect, &rhs.effect.power);
-    let new_rhs_effect = add_magick_power_to_effect(now, rhs.effect, &lhs.effect.power);
-    *lhs.effect = new_lhs_effect;
-    *rhs.effect = new_rhs_effect;
-    if !can_absorb_physical_damage(&lhs.aura.elements) {
-        *lhs.health -= (get_kinetic_energy(lhs.body.mass, lhs_velocity) - lhs_kinetic_energy).abs();
-    }
-    if !can_absorb_physical_damage(&rhs.aura.elements) {
-        *rhs.health -= get_kinetic_energy(rhs.body.mass, rhs_velocity);
+fn collide_with_static(now: f64, duration: f64, lhs: &mut DynamicCollidingBody, rhs: &mut StaticCollidingBody) {
+    let collision = time_of_impact(
+        &Isometry::translation(lhs.position.x, lhs.position.y),
+        &Vector2::new(lhs.velocity.x, lhs.velocity.y),
+        &Ball::new(lhs.body.radius),
+        &Isometry::translation(rhs.position.x, rhs.position.y),
+        &Vector2::new(0.0, 0.0),
+        &Ball::new(rhs.body.radius),
+        duration,
+        0.0,
+    ).unwrap();
+    if let Some(collision) = collision {
+        let mass_sum = lhs.body.mass + rhs.body.mass;
+        if matches!(collision.status, TOIStatus::Penetrating) {
+            let delta_position = *rhs.position - *lhs.position;
+            let distance = delta_position.norm();
+            let penetration = lhs.body.radius + rhs.body.radius - distance;
+            let mass_sum = lhs.body.mass + rhs.body.mass;
+            let normal = delta_position.normalized();
+            *lhs.position = *lhs.position - normal * (penetration * rhs.body.mass / mass_sum);
+        } else {
+            *lhs.position = *lhs.position + *lhs.velocity * collision.toi;
+        }
+        let delta_velocity = *lhs.velocity;
+        let lhs_kinetic_energy = get_kinetic_energy(lhs.body.mass, *lhs.velocity);
+        let lhs_velocity = *lhs.velocity - delta_velocity * rhs.body.mass * (1.0 + lhs.body.restitution) / mass_sum;
+        *lhs.velocity = lhs_velocity;
+        let new_lhs_effect = add_magick_power_to_effect(now, lhs.effect, &rhs.effect.power);
+        let new_rhs_effect = add_magick_power_to_effect(now, rhs.effect, &lhs.effect.power);
+        *lhs.effect = new_lhs_effect;
+        *rhs.effect = new_rhs_effect;
+        if !can_absorb_physical_damage(&lhs.aura.elements) {
+            *lhs.health -= (get_kinetic_energy(lhs.body.mass, lhs_velocity) - lhs_kinetic_energy).abs();
+        }
+        if !can_absorb_physical_damage(&rhs.aura.elements) {
+            let rhs_velocity = delta_velocity * lhs.body.mass * (1.0 + rhs.body.restitution) / mass_sum;
+            *rhs.health -= get_kinetic_energy(rhs.body.mass, rhs_velocity);
+        }
     }
 }
 
