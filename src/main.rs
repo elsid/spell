@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use glfw_window::GlfwWindow;
 use graphics::*;
+use itertools::Itertools;
 use opengl_graphics::{
     Filter,
     GlGraphics,
@@ -29,33 +30,24 @@ use piston::window::{
     Window,
     WindowSettings,
 };
-use rand::Rng;
 
+use crate::engine::Engine;
+use crate::generators::generate_world;
 use crate::rect::Rectf;
 use crate::vec2::Vec2f;
 use crate::world::{
+    Aura,
     Body,
+    Effect,
     Element,
-    get_body_mass,
-    get_circle_volume,
-    get_material_restitution,
-    HEALTH_FACTOR,
-    Id,
     Material,
-    SHIFT_FACTOR,
-    WithActivity,
-    WithAura,
-    WithBody,
-    WithEffect,
-    WithHealth,
-    WithId,
-    WithPosition,
-    World,
 };
 
 mod vec2;
 mod world;
 mod rect;
+mod engine;
+mod generators;
 
 fn main() {
     let opengl = OpenGL::V4_5;
@@ -66,59 +58,12 @@ fn main() {
         .unwrap();
     let mut gl = GlGraphics::new(opengl);
     let mut rng = rand::thread_rng();
-    let bounds = Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2));
-    let mut world = World::new(bounds);
-    let (player_id, initial_player_index) = world.add_actor(
-        Body {
-            mass: get_body_mass(get_circle_volume(1.0), &Material::Flesh),
-            radius: 1.0,
-            restitution: get_material_restitution(&Material::Flesh),
-            material: Material::Flesh,
-        },
-        Vec2f::ZERO,
-    );
-    for material in &[Material::Flesh, Material::Stone] {
-        for _ in 0..20 {
-            let radius = rng.gen_range(1.8..2.2);
-            world.add_static_body(
-                Body {
-                    mass: get_body_mass(get_circle_volume(1.0), material),
-                    radius,
-                    restitution: get_material_restitution(material),
-                    material: material.clone(),
-                },
-                Vec2f::new(rng.gen_range(-100.0..100.0), rng.gen_range(-100.0..100.0)),
-            );
-        }
-    }
-    for material in &[Material::Flesh, Material::Stone] {
-        for _ in 0..20 {
-            let radius = rng.gen_range(0.8..1.2);
-            world.add_dynamic_body(
-                Body {
-                    mass: get_body_mass(get_circle_volume(1.0), material),
-                    radius,
-                    restitution: get_material_restitution(material),
-                    material: material.clone(),
-                },
-                Vec2f::new(rng.gen_range(-100.0..100.0), rng.gen_range(-100.0..100.0)),
-            );
-        }
-    }
-    for _ in 0..10 {
-        let radius = rng.gen_range(0.8..1.2);
-        world.add_actor(
-            Body {
-                mass: get_body_mass(get_circle_volume(1.0), &Material::Flesh),
-                radius,
-                restitution: get_material_restitution(&Material::Flesh),
-                material: Material::Flesh,
-            },
-            Vec2f::new(rng.gen_range(-100.0..100.0), rng.gen_range(-100.0..100.0)),
-        );
-    }
+    let mut world = generate_world(Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)), &mut rng);
+    let player_id = 0;
+    let initial_player_index = 0;
+    let mut engine = Engine::default();
     let mut events = Events::new(EventSettings::new());
-    let mut scale = window.size().height / (world.actors().get_body(initial_player_index).radius * 20.0);
+    let mut scale = window.size().height / (world.actors[initial_player_index].body.radius * 20.0);
     let time_step = 1.0 / 60.0;
     let mut last_mouse_pos = Vec2f::ZERO;
     let mut last_viewport_shift = Vec2f::ZERO;
@@ -137,12 +82,12 @@ fn main() {
             match v {
                 Button::Mouse(MouseButton::Left) => {
                     if let Some(player_index) = last_player_index {
-                        world.set_actor_const_force(player_index, ((last_mouse_pos - last_viewport_shift) / scale).norm());
+                        engine.set_actor_moving(player_index, true, &mut world);
                     }
                 }
                 Button::Mouse(MouseButton::Right) => {
                     if let Some(player_index) = last_player_index {
-                        world.start_directed_magick(player_index);
+                        engine.start_directed_magick(player_index, &mut world);
                     }
                 }
                 _ => (),
@@ -153,57 +98,57 @@ fn main() {
             match v {
                 Button::Mouse(MouseButton::Left) => {
                     if let Some(player_index) = last_player_index {
-                        world.set_actor_const_force(player_index, 0.0);
+                        engine.set_actor_moving(player_index, false, &mut world);
                     }
                 }
                 Button::Mouse(MouseButton::Right) => {
                     if let Some(player_index) = last_player_index {
-                        world.complete_directed_magick(player_index);
+                        engine.complete_directed_magick(player_index, &mut world);
                     }
                 }
                 Button::Mouse(MouseButton::Middle) => {
                     if let Some(player_index) = last_player_index {
-                        world.self_magick(player_index);
+                        engine.self_magick(player_index, &mut world);
                     }
                 }
                 Button::Keyboard(Key::Q) => {
                     if let Some(player_index) = last_player_index {
-                        world.add_actor_spell_element(player_index, Element::Water);
+                        engine.add_actor_spell_element(player_index, Element::Water, &mut world);
                     }
                 }
                 Button::Keyboard(Key::A) => {
                     if let Some(player_index) = last_player_index {
-                        world.add_actor_spell_element(player_index, Element::Lightning);
+                        engine.add_actor_spell_element(player_index, Element::Lightning, &mut world);
                     }
                 }
                 Button::Keyboard(Key::W) => {
                     if let Some(player_index) = last_player_index {
-                        world.add_actor_spell_element(player_index, Element::Life);
+                        engine.add_actor_spell_element(player_index, Element::Life, &mut world);
                     }
                 }
                 Button::Keyboard(Key::S) => {
                     if let Some(player_index) = last_player_index {
-                        world.add_actor_spell_element(player_index, Element::Arcane);
+                        engine.add_actor_spell_element(player_index, Element::Arcane, &mut world);
                     }
                 }
                 Button::Keyboard(Key::E) => {
                     if let Some(player_index) = last_player_index {
-                        world.add_actor_spell_element(player_index, Element::Shield);
+                        engine.add_actor_spell_element(player_index, Element::Shield, &mut world);
                     }
                 }
                 Button::Keyboard(Key::D) => {
                     if let Some(player_index) = last_player_index {
-                        world.add_actor_spell_element(player_index, Element::Earth);
+                        engine.add_actor_spell_element(player_index, Element::Earth, &mut world);
                     }
                 }
                 Button::Keyboard(Key::R) => {
                     if let Some(player_index) = last_player_index {
-                        world.add_actor_spell_element(player_index, Element::Cold);
+                        engine.add_actor_spell_element(player_index, Element::Cold, &mut world);
                     }
                 }
                 Button::Keyboard(Key::F) => {
                     if let Some(player_index) = last_player_index {
-                        world.add_actor_spell_element(player_index, Element::Fire);
+                        engine.add_actor_spell_element(player_index, Element::Fire, &mut world);
                     }
                 }
                 Button::Keyboard(Key::P) => pause = !pause,
@@ -217,6 +162,35 @@ fn main() {
 
         if let Some(args) = e.mouse_cursor_args() {
             last_mouse_pos = Vec2f::new(args[0], args[1]);
+        }
+
+        if let Some(_) = e.update_args() {
+            let start = Instant::now();
+            if !pause {
+                if let Some(player_index) = last_player_index {
+                    let target_direction = (last_mouse_pos - last_viewport_shift) / scale;
+                    let norm = target_direction.norm();
+                    if norm <= f64::EPSILON {
+                        world.actors[player_index].target_direction = world.actors[player_index].current_direction;
+                    } else {
+                        world.actors[player_index].target_direction = target_direction / norm;
+                    }
+                    for i in 0..world.actors.len() {
+                        if i != player_index {
+                            engine.add_actor_spell_element(i, Element::Shield, &mut world);
+                            engine.self_magick(i, &mut world);
+                        }
+                    }
+                }
+                engine.update(time_step, &mut world);
+                last_player_index = world.actors.iter()
+                    .find_position(|v| v.id == player_id)
+                    .map(|(i, _)| i);
+                if let Some(player_index) = last_player_index {
+                    last_player_position = world.actors[player_index].position;
+                }
+            }
+            update_duration.add(Instant::now() - start);
         }
 
         if let Some(args) = e.render_args() {
@@ -243,8 +217,8 @@ fn main() {
                         g,
                     );
 
-                    let current_target = world.actors().get_position(player_index)
-                        + world.actors().get_current_direction(player_index) * world.actors().get_body(player_index).radius * 2.0;
+                    let player = &world.actors[player_index];
+                    let current_target = player.position + player.current_direction * player.body.radius * 2.0;
                     line_from_to(
                         [0.0, 0.0, 0.0, 0.5], 1.0 / scale,
                         [last_player_position.x, last_player_position.y],
@@ -254,71 +228,88 @@ fn main() {
                     );
                 }
 
-                for index in 0..world.beams().ids().len() {
-                    let beam = world.beams().get_value(index);
-                    let (begin, direction) = match beam.source {
-                        Id::Actor(actor_id) => {
-                            let actor_index = world.actors().get_index(actor_id);
-                            let direction = world.actors().get_current_direction(actor_index);
-                            let begin = world.actors().get_position(actor_index)
-                                + direction * world.actors().get_body(actor_index).radius * SHIFT_FACTOR;
-                            (begin, direction)
-                        }
-                        Id::Beam => {
-                            let temp_beam = world.beams().get_reflected_beam(index);
-                            (temp_beam.begin, temp_beam.direction)
-                        }
-                    };
-                    let end = begin + direction * world.beams().get_length(index);
-                    let line = [begin.x, begin.y, end.x, end.y];
+                for beam in engine.initial_emitted_beams().iter().chain(engine.reflected_emitted_beams().iter()) {
+                    let end = beam.origin + beam.direction * beam.length;
+                    let line = [beam.origin.x, beam.origin.y, end.x, end.y];
                     let color = get_magick_power_color(&beam.magick.power);
                     let sum_power = beam.magick.power.iter().sum::<f64>() / 20.0;
                     line::Line::new_round(color, sum_power).draw(line, &Default::default(), base_transform, g);
                 }
 
-                let mut draw_ellipse = |shape: ellipse::Ellipse, rect: [f64; 4], position: Vec2f| {
-                    shape.draw(rect, &ctx.draw_state, base_transform.trans(position.x, position.y), g);
-                };
+                for v in world.actors.iter() {
+                    draw_body_and_effect(&v.body, &v.effect, |shape, rect| {
+                        shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
+                    });
+                }
 
-                for_each_body_with_effect(world.actors(), &mut draw_ellipse);
-                for_each_body_with_effect(world.dynamic_bodies(), &mut draw_ellipse);
-                for_each_body_with_effect(world.static_bodies(), &mut draw_ellipse);
+                for v in world.dynamic_objects.iter() {
+                    draw_body_and_effect(&v.body, &v.effect, |shape, rect| {
+                        shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
+                    });
+                }
 
-                for_each_aura(world.actors(), &mut draw_ellipse);
-                for_each_aura(world.dynamic_bodies(), &mut draw_ellipse);
-                for_each_aura(world.static_bodies(), &mut draw_ellipse);
+                for v in world.static_objects.iter() {
+                    draw_body_and_effect(&v.body, &v.effect, |shape, rect| {
+                        shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
+                    });
+                }
 
-                let mut draw_rectangle = |shape: rectangle::Rectangle, rect: [f64; 4], position: Vec2f| {
-                    shape.draw(rect, &ctx.draw_state, base_transform.trans(position.x, position.y), g);
-                };
+                for v in world.actors.iter() {
+                    draw_aura(&v.aura, |shape, rect| {
+                        shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
+                    });
+                }
 
-                for_each_body_with_health(world.actors(), &mut draw_rectangle);
-                for_each_body_with_health(world.dynamic_bodies(), &mut draw_rectangle);
-                for_each_body_with_health(world.static_bodies(), &mut draw_rectangle);
+                for v in world.dynamic_objects.iter() {
+                    draw_aura(&v.aura, |shape, rect| {
+                        shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
+                    });
+                }
 
-                for index in 0..world.actors().ids().len() {
-                    let body = world.actors().get_body(index);
-                    let position = world.actors().get_position(index);
-                    let half_width = body.radius * 0.66;
-                    let spell_position = position + Vec2f::new(-half_width, body.radius + 1.0);
+                for v in world.static_objects.iter() {
+                    draw_aura(&v.aura, |shape, rect| {
+                        shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
+                    });
+                }
+
+                for v in world.actors.iter() {
+                    draw_health(&v.body, v.health, world.settings.health_factor, |shape, rect| {
+                        shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
+                    });
+                }
+
+                for v in world.dynamic_objects.iter() {
+                    draw_health(&v.body, v.health, world.settings.health_factor, |shape, rect| {
+                        shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
+                    });
+                }
+
+                for v in world.static_objects.iter() {
+                    draw_health(&v.body, v.health, world.settings.health_factor, |shape, rect| {
+                        shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
+                    });
+                }
+
+                for actor in world.actors.iter() {
+                    let half_width = actor.body.radius * 0.66;
+                    let spell_position = actor.position + Vec2f::new(-half_width, actor.body.radius + 1.0);
                     let spell_transform = base_transform.trans(spell_position.x, spell_position.y);
-                    let square = rectangle::centered_square(0.0, 0.0, body.radius * 0.1);
+                    let square = rectangle::centered_square(0.0, 0.0, actor.body.radius * 0.1);
                     let element_width = (2.0 * half_width) / 5.0;
-                    for (i, element) in world.actors().get_spell(index).elements().iter().enumerate() {
-                        let element_position = Vec2f::new((i as f64 + 0.5) * element_width, -body.radius * 0.1);
+                    for (i, element) in actor.spell_elements.iter().enumerate() {
+                        let element_position = Vec2f::new((i as f64 + 0.5) * element_width, -actor.body.radius * 0.1);
                         ellipse::Ellipse::new(get_element_color(*element))
-                            .border(ellipse::Border { color: [0.0, 0.0, 0.0, 1.0], radius: body.radius * 0.01 })
+                            .border(ellipse::Border { color: [0.0, 0.0, 0.0, 1.0], radius: actor.body.radius * 0.01 })
                             .draw(square, &ctx.draw_state, spell_transform.trans(element_position.x, element_position.y), g);
                     }
                 }
 
-                let bounds = world.bounds();
                 rectangle::Rectangle::new_border([1.0, 0.0, 0.0, 0.5], 1.0).draw(
                     rectangle::rectangle_by_corners(
-                        bounds.min.x - 1.0,
-                        bounds.min.y - 1.0,
-                        bounds.max.x + 1.0,
-                        bounds.max.y + 1.0,
+                        world.bounds.min.x - 1.0,
+                        world.bounds.min.y - 1.0,
+                        world.bounds.max.x + 1.0,
+                        world.bounds.max.y + 1.0,
                     ),
                     &ctx.draw_state,
                     base_transform,
@@ -328,7 +319,7 @@ fn main() {
                 if let Some(player_index) = last_player_index {
                     let radius = 20.0;
                     let square = rectangle::centered_square(0.0, 0.0, radius);
-                    for (i, element) in world.actors().get_spell(player_index).elements().iter().enumerate() {
+                    for (i, element) in world.actors[player_index].spell_elements.iter().enumerate() {
                         let position = last_viewport_shift + Vec2f::new(-5.0 * 2.0 * (radius + 10.0) * 0.5 + (i as f64 + 0.5) * 2.0 * (radius + 10.0), last_viewport_shift.y - 100.0);
                         ellipse::Ellipse::new(get_element_color(*element))
                             .border(ellipse::Border { color: [0.0, 0.0, 0.0, 1.0], radius: radius * 0.1 })
@@ -341,93 +332,44 @@ fn main() {
                     .unwrap();
 
                 text::Text::new_color([0.5, 0.5, 0.5, 1.0], 20)
-                    .draw(&format!("Render: {}", render_duration.get())[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 44.0), g)
+                    .draw(&format!("Render: {}", render_duration.get())[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 20.0 + 24.0), g)
                     .unwrap();
 
                 text::Text::new_color([0.5, 0.5, 0.5, 1.0], 20)
-                    .draw(&format!("Update: {}", update_duration.get())[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 68.0), g)
+                    .draw(&format!("Update: {}", update_duration.get())[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 20.0 + 2.0 * 24.0), g)
                     .unwrap();
             });
 
             render_duration.add(Instant::now() - start);
         }
 
-        if let Some(_) = e.update_args() {
-            let start = Instant::now();
-            if !pause {
-                if let Some(player_index) = last_player_index {
-                    let target_direction = (last_mouse_pos - last_viewport_shift) / scale;
-                    let norm = target_direction.norm();
-                    if norm <= f64::EPSILON {
-                        world.set_actor_target_direction(player_index, world.actors().get_current_direction(player_index));
-                    } else {
-                        world.set_actor_target_direction(player_index, target_direction / norm);
-                    }
-                    for i in 0..world.actors().ids().len() {
-                        if i != player_index && matches!(world.actors().get_body(i).material, Material::Flesh) {
-                            world.add_actor_spell_element(i, Element::Shield);
-                            world.self_magick(i);
-                        }
-                    }
-                }
-                world.update(time_step);
-                last_player_index = world.actors().find_index(player_id);
-                if let Some(player_index) = last_player_index {
-                    last_player_position = world.actors().get_position(player_index);
-                }
-            }
-            update_duration.add(Instant::now() - start);
-        }
-
         fps.add(Instant::now());
     }
 }
 
-fn for_each_body_with_effect<T, F>(collection: &T, f: &mut F)
-    where T: WithId + WithBody + WithPosition + WithEffect + WithActivity,
-          F: FnMut(ellipse::Ellipse, [f64; 4], Vec2f)
-{
-    for index in 0..collection.ids().len() {
-        let body = collection.get_body(index);
-        let position = collection.get_position(index);
-        let effect = collection.get_effect(index);
-        let ellipse = ellipse::Ellipse::new(get_material_color(&body.material, if collection.is_active(index) { 1.0 } else { 0.5 }))
-            .border(ellipse::Border { color: get_magick_power_color(&effect.power), radius: 0.1 });
-        let square = rectangle::centered_square(0.0, 0.0, body.radius);
-        f(ellipse, square, position);
-    }
+fn draw_body_and_effect<F: FnMut(ellipse::Ellipse, [f64; 4])>(body: &Body, effect: &Effect, mut f: F) {
+    let shape = ellipse::Ellipse::new(get_material_color(&body.material, 1.0))
+        .border(ellipse::Border { color: get_magick_power_color(&effect.power), radius: 0.1 });
+    let rect = rectangle::centered_square(0.0, 0.0, body.radius);
+    f(shape, rect);
 }
 
-fn for_each_aura<T, F>(collection: &T, f: &mut F)
-    where T: WithId + WithPosition + WithAura + WithActivity,
-          F: FnMut(ellipse::Ellipse, [f64; 4], Vec2f)
-{
-    for index in 0..collection.ids().len() {
-        let position = collection.get_position(index);
-        let aura = collection.get_aura(index);
-        let ellipse = ellipse::Ellipse::new(get_magick_power_color(&aura.elements));
-        let square = rectangle::centered_square(0.0, 0.0, aura.radius);
-        f(ellipse, square, position);
-    }
+fn draw_aura<F: FnMut(ellipse::Ellipse, [f64; 4])>(aura: &Aura, mut f: F) {
+    let shape = ellipse::Ellipse::new(get_magick_power_color(&aura.elements));
+    let rect = rectangle::centered_square(0.0, 0.0, aura.radius);
+    f(shape, rect);
 }
 
-fn for_each_body_with_health<T, F>(collection: &T, f: &mut F)
-    where T: WithId + WithBody + WithPosition + WithHealth,
-          F: FnMut(rectangle::Rectangle, [f64; 4], Vec2f)
-{
-    for index in 0..collection.ids().len() {
-        let body = collection.get_body(index);
-        let position = collection.get_position(index);
-        let rect_position = position + Vec2f::only_y(body.radius + 0.5);
-        let half_width = body.radius * 0.66;
-        let bar_right = -half_width + 2.0 * half_width * collection.get_health(index) / (body.mass * HEALTH_FACTOR);
-        let background = rectangle::Rectangle::new([0.0, 0.0, 0.0, 0.8]);
-        let background_rect = rectangle::rectangle_by_corners(-half_width, -body.radius * 0.1, half_width, body.radius * 0.1);
-        f(background, background_rect, rect_position);
-        let health_bar = rectangle::Rectangle::new([1.0, 0.0, 0.0, 1.0]);
-        let health_bar_rect = rectangle::rectangle_by_corners(-half_width, -body.radius * 0.1, bar_right, body.radius * 0.1);
-        f(health_bar, health_bar_rect, rect_position);
-    }
+fn draw_health<F: FnMut(rectangle::Rectangle, [f64; 4])>(body: &Body, health: f64, health_factor: f64, mut f: F) {
+    let shift = body.radius + 0.5;
+    let half_width = body.radius * 0.66;
+    let bar_right = -half_width + 2.0 * half_width * health / (body.mass * health_factor);
+    let background = rectangle::Rectangle::new([0.0, 0.0, 0.0, 0.8]);
+    let background_rect = rectangle::rectangle_by_corners(-half_width, shift - body.radius * 0.1, half_width, shift + body.radius * 0.1);
+    f(background, background_rect);
+    let health_bar = rectangle::Rectangle::new([1.0, 0.0, 0.0, 1.0]);
+    let health_bar_rect = rectangle::rectangle_by_corners(-half_width, shift - body.radius * 0.1, bar_right, shift + body.radius * 0.1);
+    f(health_bar, health_bar_rect);
 }
 
 fn get_material_color(material: &Material, alpha: f32) -> [f32; 4] {

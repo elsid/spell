@@ -21,10 +21,6 @@ impl Vec2f {
         Self { x, y }
     }
 
-    pub const fn only_y(y: f64) -> Self {
-        Self { x: 0.0, y }
-    }
-
     pub const fn both(value: f64) -> Self {
         Self { x: value, y: value }
     }
