@@ -3,7 +3,9 @@ use parry2d_f64::math::{Isometry, Real};
 use parry2d_f64::na::{Point2, Vector2};
 use parry2d_f64::query::{Ray, RayCast, RayIntersection, time_of_impact, TOIStatus};
 use parry2d_f64::shape::Ball;
+use rand::Rng;
 
+use crate::generators::generate_player_actor;
 use crate::rect::Rectf;
 use crate::vec2::{Square, Vec2f};
 use crate::world::{Actor, Aura, Beam, BeamObject, Body, DelayedMagick, DynamicObject, Effect,
@@ -104,12 +106,24 @@ pub struct Engine {
 }
 
 impl Engine {
+    #[cfg(feature = "render")]
     pub fn initial_emitted_beams(&self) -> &Vec<EmittedBeam> {
         &self.beam_collider.initial_beams
     }
 
+    #[cfg(feature = "render")]
     pub fn reflected_emitted_beams(&self) -> &Vec<EmittedBeam> {
         &self.beam_collider.reflected_beams
+    }
+
+    pub fn add_player_actor<R: Rng>(&mut self, world: &mut World, rng: &mut R) -> u64 {
+        let id = get_next_id(&mut world.id_counter);
+        world.actors.push(generate_player_actor(id, &world.bounds, &world.settings, rng));
+        id
+    }
+
+    pub fn remove_actor(&mut self, actor_index: usize, world: &mut World) {
+        world.actors.remove(actor_index);
     }
 
     pub fn set_actor_moving(&mut self, actor_index: usize, value: bool, world: &mut World) {
@@ -188,6 +202,7 @@ impl Engine {
     }
 
     pub fn update(&mut self, duration: f64, world: &mut World) {
+        world.revision += 1;
         world.time += duration;
         update_actors(world.time, duration, &world.settings, &mut world.actors);
         update_dynamic_objects(world.time, duration, &world.settings, &mut world.dynamic_objects);

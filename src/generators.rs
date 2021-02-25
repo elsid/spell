@@ -17,17 +17,46 @@ use crate::world::{
 
 pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
     let settings = WorldSettings::default();
-    let player_mass = get_body_mass(get_circle_volume(1.0), Material::Flesh);
-    let mut actors = vec![Actor {
-        id: 0,
+    let mut id_counter = 1;
+    let mut actors = Vec::new();
+    generate_actors(&Material::Flesh, 10, &bounds, &settings, &mut id_counter, &mut actors, rng);
+    let mut dynamic_objects = Vec::new();
+    let mut static_objects = Vec::new();
+    for material in &[Material::Flesh, Material::Stone] {
+        generate_dynamic_objects(material, 10, &bounds, &settings, &mut id_counter, &mut dynamic_objects, rng);
+        generate_static_objects(material, 10, &bounds, &settings, &mut id_counter, &mut static_objects, rng);
+    }
+    World {
+        revision: 0,
+        settings,
+        bounds,
+        time: 0.0,
+        id_counter,
+        actors,
+        dynamic_objects,
+        static_objects,
+        beam_objects: Vec::new(),
+    }
+}
+
+pub fn generate_player_actor<R: Rng>(id: u64, bounds: &Rectf, settings: &WorldSettings, rng: &mut R) -> Actor {
+    let material = Material::Flesh;
+    let mass = get_body_mass(get_circle_volume(1.0), material);
+    let delta = bounds.max - bounds.min;
+    let middle = (bounds.max + bounds.min) / 2.0;
+    Actor {
+        id,
         body: Body {
-            mass: player_mass,
+            mass,
             radius: 1.0,
-            restitution: get_material_restitution(Material::Flesh),
-            material: Material::Flesh,
+            restitution: get_material_restitution(material),
+            material,
         },
-        position: Vec2f::ZERO,
-        health: player_mass * settings.health_factor,
+        position: Vec2f::new(
+            rng.gen_range(middle.x - delta.x * 0.25..middle.x + delta.x * 0.25),
+            rng.gen_range(middle.y - delta.y * 0.25..middle.y + delta.y * 0.25),
+        ),
+        health: mass * settings.health_factor,
         effect: Effect::default(),
         aura: Aura::default(),
         velocity: Vec2f::ZERO,
@@ -37,24 +66,6 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
         spell_elements: Vec::new(),
         moving: false,
         delayed_magick: None,
-    }];
-    let mut id_counter = 1;
-    generate_actors(&Material::Flesh, 10, &bounds, &settings, &mut id_counter, &mut actors, rng);
-    let mut dynamic_objects = Vec::new();
-    let mut static_objects = Vec::new();
-    for material in &[Material::Flesh, Material::Stone] {
-        generate_dynamic_objects(material, 20, &bounds, &settings, &mut id_counter, &mut dynamic_objects, rng);
-        generate_static_objects(material, 20, &bounds, &settings, &mut id_counter, &mut static_objects, rng);
-    }
-    World {
-        settings,
-        bounds,
-        time: 0.0,
-        id_counter,
-        actors,
-        dynamic_objects,
-        static_objects,
-        beam_objects: Vec::new(),
     }
 }
 

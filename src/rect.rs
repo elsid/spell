@@ -1,6 +1,8 @@
+use serde::{Deserialize, Serialize};
+
 use crate::vec2::Vec2f;
 
-#[derive(Default, Clone, Debug, PartialOrd)]
+#[derive(Default, Clone, Debug, Deserialize, Serialize, PartialOrd)]
 pub struct Rectf {
     pub min: Vec2f,
     pub max: Vec2f,

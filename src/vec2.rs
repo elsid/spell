@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 pub trait Square: std::ops::Mul + Copy {
     fn square(self) -> Self::Output {
         self * self
@@ -6,7 +8,7 @@ pub trait Square: std::ops::Mul + Copy {
 
 impl Square for f64 {}
 
-#[derive(Default, Clone, Copy, Debug, PartialOrd)]
+#[derive(Default, Clone, Copy, Debug, Deserialize, Serialize, PartialOrd)]
 pub struct Vec2f {
     pub x: f64,
     pub y: f64,

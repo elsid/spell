@@ -1,8 +1,11 @@
+use serde::{Deserialize, Serialize};
+
 use crate::rect::Rectf;
 use crate::vec2::Vec2f;
 
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone, Deserialize, Serialize)]
 pub struct World {
+    pub revision: u64,
     pub settings: WorldSettings,
     pub bounds: Rectf,
     pub time: f64,
@@ -13,7 +16,7 @@ pub struct World {
     pub beam_objects: Vec<BeamObject>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WorldSettings {
     pub max_magic_power: f64,
     pub decay_factor: f64,
@@ -46,7 +49,7 @@ impl Default for WorldSettings {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Actor {
     pub id: u64,
     pub body: Body,
@@ -63,7 +66,7 @@ pub struct Actor {
     pub delayed_magick: Option<DelayedMagick>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DynamicObject {
     pub id: u64,
     pub body: Body,
@@ -75,7 +78,7 @@ pub struct DynamicObject {
     pub dynamic_force: Vec2f,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StaticObject {
     pub id: u64,
     pub body: Body,
@@ -85,13 +88,13 @@ pub struct StaticObject {
     pub aura: Aura,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BeamObject {
     pub id: u64,
     pub beam: Beam,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Body {
     pub radius: f64,
     pub mass: f64,
@@ -99,24 +102,24 @@ pub struct Body {
     pub material: Material,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Magick {
     pub power: [f64; 11],
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Beam {
     pub actor_id: u64,
     pub magick: Magick,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Effect {
     pub applied: [f64; 11],
     pub power: [f64; 11],
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Aura {
     pub applied: f64,
     pub power: f64,
@@ -124,7 +127,7 @@ pub struct Aura {
     pub elements: [bool; 11],
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DelayedMagick {
     pub actor_id: u64,
     pub started: f64,
@@ -132,13 +135,13 @@ pub struct DelayedMagick {
     pub power: [f64; 11],
 }
 
-#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Deserialize, Serialize)]
 pub enum Material {
     Flesh,
     Stone,
 }
 
-#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Deserialize, Serialize)]
 pub enum Element {
     Water,
     Lightning,
