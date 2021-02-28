@@ -14,6 +14,8 @@ pub struct World {
     pub dynamic_objects: Vec<DynamicObject>,
     pub static_objects: Vec<StaticObject>,
     pub beam_objects: Vec<BeamObject>,
+    pub static_areas: Vec<StaticArea>,
+    pub temp_areas: Vec<TempArea>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -28,6 +30,7 @@ pub struct WorldSettings {
     pub magic_force_multiplier: f64,
     pub max_spell_elements: u8,
     pub max_beam_depth: u8,
+    pub gravitational_acceleration: f64,
 }
 
 impl Default for WorldSettings {
@@ -43,6 +46,7 @@ impl Default for WorldSettings {
             magic_force_multiplier: 5e6,
             max_spell_elements: 5,
             max_beam_depth: 4,
+            gravitational_acceleration: 9.8,
         }
     }
 }
@@ -62,6 +66,8 @@ pub struct Actor {
     pub spell_elements: Vec<Element>,
     pub moving: bool,
     pub delayed_magick: Option<DelayedMagick>,
+    pub position_z: f64,
+    pub velocity_z: f64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -74,6 +80,8 @@ pub struct DynamicObject {
     pub aura: Aura,
     pub velocity: Vec2f,
     pub dynamic_force: Vec2f,
+    pub position_z: f64,
+    pub velocity_z: f64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -90,6 +98,22 @@ pub struct StaticObject {
 pub struct BeamObject {
     pub id: u64,
     pub beam: Beam,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct StaticArea {
+    pub id: u64,
+    pub body: Body,
+    pub position: Vec2f,
+    pub magick: Magick,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TempArea {
+    pub id: u64,
+    pub body: Body,
+    pub position: Vec2f,
+    pub effect: Effect,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -135,6 +159,9 @@ pub struct DelayedMagick {
 pub enum Material {
     Flesh,
     Stone,
+    Grass,
+    Dirt,
+    Water,
 }
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Deserialize, Serialize)]

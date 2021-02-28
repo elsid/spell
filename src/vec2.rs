@@ -61,6 +61,10 @@ impl Vec2f {
     pub fn angle(&self) -> f64 {
         self.y.atan2(self.x)
     }
+
+    pub fn distance(&self, other: Self) -> f64 {
+        (other - *self).norm()
+    }
 }
 
 impl std::ops::Add for Vec2f {

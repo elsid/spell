@@ -38,7 +38,6 @@ use crate::vec2::Vec2f;
 use crate::world::{
     Aura,
     Body,
-    Effect,
     Element,
     Material,
     World,
@@ -219,7 +218,19 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
                     .scale(scale, scale)
                     .trans(-last_player_position.x, -last_player_position.y);
 
-                clear([1.0, 1.0, 1.0, 1.0], g);
+                clear([0.0, 0.0, 0.0, 1.0], g);
+
+                for v in world.static_areas.iter() {
+                    draw_body_and_magick(&v.body, &v.magick.power, |shape, rect| {
+                        shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
+                    });
+                }
+
+                for v in world.temp_areas.iter() {
+                    draw_body_and_magick(&v.body, &v.effect.power, |shape, rect| {
+                        shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
+                    });
+                }
 
                 if let Some(player_index) = last_player_index {
                     let target = last_player_position + (last_mouse_pos - last_viewport_shift) / scale;
@@ -251,19 +262,19 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
                 }
 
                 for v in world.actors.iter() {
-                    draw_body_and_effect(&v.body, &v.effect, |shape, rect| {
+                    draw_body_and_magick(&v.body, &v.effect.power, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for v in world.dynamic_objects.iter() {
-                    draw_body_and_effect(&v.body, &v.effect, |shape, rect| {
+                    draw_body_and_magick(&v.body, &v.effect.power, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for v in world.static_objects.iter() {
-                    draw_body_and_effect(&v.body, &v.effect, |shape, rect| {
+                    draw_body_and_magick(&v.body, &v.effect.power, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
@@ -341,28 +352,28 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
                     }
                 }
 
-                text::Text::new_color([0.5, 0.5, 0.5, 1.0], 20)
-                    .draw(&format!("EPS: {0:.3}", eps.get())[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 20.0 + 0.0 * 24.0), g)
+                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
+                    .draw(&format!("EPS: {0:.3}", eps.get())[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 1.0 * 24.0), g)
                     .unwrap();
 
-                text::Text::new_color([0.5, 0.5, 0.5, 1.0], 20)
-                    .draw(&format!("Render: {0:.3} ms", render_duration.get() * 1000.0)[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 20.0 + 1.0 * 24.0), g)
+                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
+                    .draw(&format!("Render: {0:.3} ms", render_duration.get() * 1000.0)[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 2.0 * 24.0), g)
                     .unwrap();
 
-                text::Text::new_color([0.5, 0.5, 0.5, 1.0], 20)
-                    .draw(&format!("Update: {0:.3} ms", update_duration.get() * 1000.0)[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 20.0 + 2.0 * 24.0), g)
+                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
+                    .draw(&format!("Update: {0:.3} ms", update_duration.get() * 1000.0)[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 3.0 * 24.0), g)
                     .unwrap();
 
-                text::Text::new_color([0.5, 0.5, 0.5, 1.0], 20)
-                    .draw(&format!("Player: {:?} {:?}", player_id, last_player_index)[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 20.0 + 3.0 * 24.0), g)
+                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
+                    .draw(&format!("Player: {:?} {:?}", player_id, last_player_index)[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 4.0 * 24.0), g)
                     .unwrap();
 
-                text::Text::new_color([0.5, 0.5, 0.5, 1.0], 20)
-                    .draw(&format!("World revision: {} (+{})", world.revision, world.revision - last_received_world_revision)[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 20.0 + 4.0 * 24.0), g)
+                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
+                    .draw(&format!("World revision: {} (+{})", world.revision, world.revision - last_received_world_revision)[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 5.0 * 24.0), g)
                     .unwrap();
 
-                text::Text::new_color([0.5, 0.5, 0.5, 1.0], 20)
-                    .draw(&format!("World time: {:.3} (+{:.3})", world.time, world.time - last_received_world_time)[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 20.0 + 5.0 * 24.0), g)
+                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
+                    .draw(&format!("World time: {:.3} (+{:.3})", world.time, world.time - last_received_world_time)[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 6.0 * 24.0), g)
                     .unwrap();
 
                 text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
@@ -380,6 +391,14 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
                 text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
                     .draw(&format!("Beams: {}", world.beam_objects.len())[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 10.0 * 24.0), g)
                     .unwrap();
+
+                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
+                    .draw(&format!("Static areas: {}", world.static_areas.len())[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 11.0 * 24.0), g)
+                    .unwrap();
+
+                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
+                    .draw(&format!("Temp areas: {}", world.temp_areas.len())[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 12.0 * 24.0), g)
+                    .unwrap();
             });
 
             render_duration.add(Instant::now() - start);
@@ -389,9 +408,11 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
     }
 }
 
-fn draw_body_and_effect<F: FnMut(ellipse::Ellipse, [f64; 4])>(body: &Body, effect: &Effect, mut f: F) {
-    let shape = ellipse::Ellipse::new(get_material_color(&body.material, 1.0))
-        .border(ellipse::Border { color: get_magick_power_color(&effect.power), radius: 0.1 });
+fn draw_body_and_magick<F: FnMut(ellipse::Ellipse, [f64; 4])>(body: &Body, power: &[f64; 11], mut f: F) {
+    let mut shape = ellipse::Ellipse::new(get_material_color(&body.material, 1.0));
+    if power.iter().sum::<f64>() > 0.0 {
+        shape = shape.border(ellipse::Border { color: get_magick_power_color(power), radius: 0.1 });
+    }
     let rect = rectangle::centered_square(0.0, 0.0, body.radius);
     f(shape, rect);
 }
@@ -418,6 +439,9 @@ fn get_material_color(material: &Material, alpha: f32) -> [f32; 4] {
     match material {
         Material::Flesh => [0.93, 0.89, 0.69, alpha],
         Material::Stone => [0.76, 0.76, 0.76, alpha],
+        Material::Dirt => [0.5, 0.38, 0.26, alpha],
+        Material::Grass => [0.44, 0.69, 0.15, alpha],
+        Material::Water => [0.1, 0.1, 0.9, alpha],
     }
 }
 
