@@ -89,7 +89,7 @@ fn run_single_player() {
     let mut rng = thread_rng();
     let mut world = generate_world(Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)), &mut rng);
     let id = get_next_id(&mut world.id_counter);
-    world.actors.push(generate_player_actor(id, &world.bounds, &world.settings, &mut rng));
+    world.actors.push(generate_player_actor(id, &world.bounds, &mut rng));
     let (sender, receiver) = channel();
     sender.send(GameUpdate::SetPlayerId(id)).unwrap();
     #[cfg(feature = "render")] { run_game(world, None, receiver); }

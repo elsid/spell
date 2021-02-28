@@ -292,19 +292,19 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
                 }
 
                 for v in world.actors.iter() {
-                    draw_health(&v.body, v.health, world.settings.health_factor, |shape, rect| {
+                    draw_health(&v.body, v.health, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for v in world.dynamic_objects.iter() {
-                    draw_health(&v.body, v.health, world.settings.health_factor, |shape, rect| {
+                    draw_health(&v.body, v.health, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for v in world.static_objects.iter() {
-                    draw_health(&v.body, v.health, world.settings.health_factor, |shape, rect| {
+                    draw_health(&v.body, v.health, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
@@ -391,10 +391,10 @@ fn draw_aura<F: FnMut(ellipse::Ellipse, [f64; 4])>(aura: &Aura, mut f: F) {
     f(shape, rect);
 }
 
-fn draw_health<F: FnMut(rectangle::Rectangle, [f64; 4])>(body: &Body, health: f64, health_factor: f64, mut f: F) {
+fn draw_health<F: FnMut(rectangle::Rectangle, [f64; 4])>(body: &Body, health: f64, mut f: F) {
     let shift = body.radius + 0.5;
     let half_width = body.radius * 0.66;
-    let bar_right = -half_width + 2.0 * half_width * health / (body.mass * health_factor);
+    let bar_right = -half_width + 2.0 * half_width * health;
     let background = rectangle::Rectangle::new([0.0, 0.0, 0.0, 0.8]);
     let background_rect = rectangle::rectangle_by_corners(-half_width, shift - body.radius * 0.1, half_width, shift + body.radius * 0.1);
     f(background, background_rect);

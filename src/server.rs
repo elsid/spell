@@ -148,7 +148,8 @@ impl UdpServer {
                         }
                         info!("New UDP session {} from {}", session_id, peer);
                         self.sessions.push(UdpSession {
-                            session_id, peer,
+                            session_id,
+                            peer,
                             last_recv_time: Instant::now(),
                             state: UdpSessionState::New,
                         });

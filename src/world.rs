@@ -20,7 +20,6 @@ pub struct World {
 pub struct WorldSettings {
     pub max_magic_power: f64,
     pub decay_factor: f64,
-    pub health_factor: f64,
     pub beam_origin_margin: f64,
     pub damage_factor: f64,
     pub max_beam_length: f64,
@@ -36,9 +35,8 @@ impl Default for WorldSettings {
         Self {
             max_magic_power: 5.0,
             decay_factor: 1e-3,
-            health_factor: 1e3,
             beam_origin_margin: 0.1,
-            damage_factor: 0.1,
+            damage_factor: 1e-3,
             max_beam_length: 1e3,
             max_rotation_speed: 2.0 * std::f64::consts::PI,
             move_force: 5e4,
@@ -97,8 +95,6 @@ pub struct BeamObject {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Body {
     pub radius: f64,
-    pub mass: f64,
-    pub restitution: f64,
     pub material: Material,
 }
 
