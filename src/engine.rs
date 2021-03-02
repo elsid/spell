@@ -152,7 +152,7 @@ pub fn add_actor_spell_element(actor_index: usize, element: Element, world: &mut
 pub fn start_directed_magick(actor_index: usize, world: &mut World) {
     let magick = Spell::on(world.settings.max_spell_elements as usize, &mut world.actors[actor_index].spell_elements).cast();
     if magick.power[Element::Shield as usize] > 0.0 {
-        return;
+        cast_shield(magick, actor_index, world);
     } else if magick.power[Element::Earth as usize] > 0.0 {
         add_delayed_magick(magick, actor_index, world);
     } else if magick.power[Element::Ice as usize] > 0.0 {
@@ -168,6 +168,30 @@ pub fn start_directed_magick(actor_index: usize, world: &mut World) {
         || magick.power[Element::Steam as usize] > 0.0
         || magick.power[Element::Poison as usize] > 0.0 {
         return;
+    }
+}
+
+fn cast_shield(magick: Magick, actor_index: usize, world: &mut World) {
+    if magick.power[Element::Earth as usize] > 0.0 {
+        cast_earth_based_shield(magick, actor_index, world);
+    }
+}
+
+fn cast_earth_based_shield(magick: Magick, actor_index: usize, world: &mut World) {
+    let actor = &world.actors[actor_index];
+    let distance = 5.0;
+    for i in -2..=2 {
+        world.static_objects.push(StaticObject {
+            id: get_next_id(&mut world.id_counter),
+            body: Body {
+                radius: distance * std::f64::consts::PI / (2 * 5 * 2) as f64,
+                material: Material::Stone,
+            },
+            position: actor.position + actor.current_direction.rotated(i as f64 * std::f64::consts::PI / (2 * 5) as f64) * distance,
+            health: 1.0,
+            effect: add_magick_power_to_effect(world.time, &Effect::default(), &magick.power),
+            aura: Aura::default(),
+        });
     }
 }
 
