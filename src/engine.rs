@@ -179,6 +179,17 @@ pub fn start_directed_magick(actor_index: usize, world: &mut World) {
 fn cast_shield(magick: Magick, actor_index: usize, world: &mut World) {
     if magick.power[Element::Earth as usize] > 0.0 {
         cast_earth_based_shield(magick, actor_index, world);
+    } else if magick.power[Element::Arcane as usize] > 0.0
+        || magick.power[Element::Life as usize] > 0.0 {
+        return;
+    } else if magick.power[Element::Lightning as usize] > 0.0 {
+        return;
+    } else if magick.power[Element::Water as usize] > 0.0
+        || magick.power[Element::Cold as usize] > 0.0
+        || magick.power[Element::Fire as usize] > 0.0
+        || magick.power[Element::Steam as usize] > 0.0
+        || magick.power[Element::Poison as usize] > 0.0 {
+        cast_spray_based_shield(magick, actor_index, world);
     }
 }
 
@@ -196,6 +207,22 @@ fn cast_earth_based_shield(magick: Magick, actor_index: usize, world: &mut World
             health: 1.0,
             effect: add_magick_power_to_effect(world.time, &Effect::default(), &magick.power),
             aura: Aura::default(),
+        });
+    }
+}
+
+fn cast_spray_based_shield(magick: Magick, actor_index: usize, world: &mut World) {
+    let actor = &world.actors[actor_index];
+    let distance = 5.0;
+    for i in -2..=2 {
+        world.temp_areas.push(TempArea {
+            id: get_next_id(&mut world.id_counter),
+            body: Body {
+                radius: distance * std::f64::consts::PI / (2 * 5 * 2) as f64,
+                material: Material::Dirt,
+            },
+            position: actor.position + actor.current_direction.rotated(i as f64 * std::f64::consts::PI / (2 * 5) as f64) * distance,
+            effect: add_magick_power_to_effect(world.time, &Effect::default(), &magick.power),
         });
     }
 }
