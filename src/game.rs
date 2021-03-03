@@ -35,13 +35,7 @@ use crate::engine::{add_actor_spell_element, complete_directed_magick, Engine, s
 use crate::meters::{DurationMovingAverage, FpsMovingAverage};
 use crate::protocol::{GameUpdate, PlayerAction};
 use crate::vec2::Vec2f;
-use crate::world::{
-    Aura,
-    Body,
-    Element,
-    Material,
-    World,
-};
+use crate::world::{Aura, Body, Element, Material, RingSector, World};
 
 pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver: Receiver<GameUpdate>) {
     info!("Run game");
@@ -232,6 +226,15 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
                     });
                 }
 
+                for area in world.bounded_areas.iter() {
+                    let owner = world.actors.iter().find(|v| v.id == area.actor_id).unwrap();
+                    draw_ring_sector_body_and_magick(&area.body, &area.effect.power, |shape, rect| {
+                        let transform = base_transform.trans(owner.position.x, owner.position.y)
+                            .orient(owner.current_direction.x, owner.current_direction.y);
+                        shape.draw(rect, &ctx.draw_state, transform, g);
+                    });
+                }
+
                 if let Some(player_index) = last_player_index {
                     let target = last_player_position + (last_mouse_pos - last_viewport_shift) / scale;
                     line_from_to(
@@ -399,6 +402,10 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
                 text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
                     .draw(&format!("Temp areas: {}", world.temp_areas.len())[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 12.0 * 24.0), g)
                     .unwrap();
+
+                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
+                    .draw(&format!("Bounded areas: {}", world.bounded_areas.len())[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 13.0 * 24.0), g)
+                    .unwrap();
             });
 
             render_duration.add(Instant::now() - start);
@@ -415,6 +422,21 @@ fn draw_body_and_magick<F: FnMut(ellipse::Ellipse, [f64; 4])>(body: &Body, power
     }
     let rect = rectangle::centered_square(0.0, 0.0, body.radius);
     f(shape, rect);
+}
+
+fn draw_ring_sector_body_and_magick<F: FnMut(polygon::Polygon, types::Polygon)>(body: &RingSector, power: &[f64; 11], mut f: F) {
+    let shape = polygon::Polygon::new(get_magick_power_color(power));
+    const RESOLUTION: usize = 10;
+    let mut polygon: [[f64; 2]; 2 * RESOLUTION + 1] = [[0.0; 2]; 2 * RESOLUTION + 1];
+    let max_angle_step = body.angle / RESOLUTION as f64;
+    let min_angle_step = body.angle / (RESOLUTION - 1) as f64;
+    for i in 0..RESOLUTION + 1 {
+        polygon[i] = Vec2f::only_x(body.max_radius).rotated(i as f64 * max_angle_step - body.angle / 2.0).into();
+    }
+    for i in 0..RESOLUTION {
+        polygon[i + RESOLUTION + 1] = Vec2f::only_x(body.min_radius).rotated(body.angle / 2.0 - i as f64 * min_angle_step).into();
+    }
+    f(shape, &polygon);
 }
 
 fn draw_aura<F: FnMut(ellipse::Ellipse, [f64; 4])>(aura: &Aura, mut f: F) {

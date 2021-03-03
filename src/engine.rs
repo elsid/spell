@@ -2,13 +2,13 @@ use parry2d_f64::math::{Isometry, Real};
 use parry2d_f64::na::{Point2, Vector2};
 use parry2d_f64::query;
 use parry2d_f64::query::{Ray, RayCast, RayIntersection, TOIStatus};
-use parry2d_f64::shape::{Ball, Shape};
+use parry2d_f64::shape::{Ball, Shape, Triangle};
 
 use crate::rect::Rectf;
 use crate::vec2::{Square, Vec2f};
-use crate::world::{Actor, Aura, Beam, BeamObject, Body, DelayedMagick, DynamicObject, Effect,
-                   Element, Magick, Material, StaticArea, StaticObject, TempArea,
-                   World, WorldSettings};
+use crate::world::{Actor, Aura, Beam, BeamObject, Body, BoundedArea, DelayedMagick, DynamicObject,
+                   Effect, Element, Magick, Material, RingSector, StaticArea, StaticObject,
+                   TempArea, World, WorldSettings};
 
 #[derive(Debug, Copy, Clone)]
 pub enum Index {
@@ -119,6 +119,8 @@ impl Engine {
         world.revision += 1;
         world.time += duration;
         world.temp_areas.retain(|v| v.effect.power.iter().sum::<f64>() > 0.0);
+        let now = world.time;
+        world.bounded_areas.retain(|v| v.deadline >= now);
         intersect_objects_with_areas(world);
         update_temp_areas(world.time, duration, &world.settings, &mut world.temp_areas);
         update_actors(world.time, duration, &world.settings, &mut world.actors);
@@ -172,7 +174,7 @@ pub fn start_directed_magick(actor_index: usize, world: &mut World) {
         || magick.power[Element::Fire as usize] > 0.0
         || magick.power[Element::Steam as usize] > 0.0
         || magick.power[Element::Poison as usize] > 0.0 {
-        return;
+        cast_spray(&magick, actor_index, world);
     }
 }
 
@@ -248,6 +250,9 @@ pub fn complete_directed_magick(actor_index: usize, world: &mut World) {
     if remove_count(&mut world.beam_objects, |v| v.beam.actor_id == actor_id) > 0 {
         return;
     }
+    if remove_count(&mut world.bounded_areas, |v| v.actor_id == actor_id) > 0 {
+        return;
+    }
     if let Some(delayed_magick) = world.actors[actor_index].delayed_magick.as_mut() {
         delayed_magick.completed = true;
     }
@@ -276,6 +281,22 @@ pub fn self_magick(actor_index: usize, world: &mut World) {
             elements,
         };
     }
+}
+
+fn cast_spray(magick: &Magick, actor_index: usize, world: &mut World) {
+    let actor = &world.actors[actor_index];
+    let effect = add_magick_power_to_effect(world.time, &Effect::default(), &magick.power);
+    world.bounded_areas.push(BoundedArea {
+        id: get_next_id(&mut world.id_counter),
+        actor_id: actor.id,
+        body: RingSector {
+            min_radius: actor.body.radius + world.settings.margin,
+            max_radius: actor.body.radius * (1.0 + effect.power.iter().sum::<f64>()) * world.settings.spray_distance_factor,
+            angle: world.settings.spray_angle,
+        },
+        effect,
+        deadline: world.time + world.settings.directed_magick_duration,
+    });
 }
 
 impl Body {
@@ -352,7 +373,9 @@ fn can_cancel_element(target: Element, element: Element) -> bool {
 }
 
 fn intersect_objects_with_areas(world: &mut World) {
-    for actor in world.actors.iter_mut() {
+    for i in 0..world.actors.len() {
+        intersect_actor_with_all_bounded_areas(world.time, i, &world.bounded_areas, &mut world.actors);
+        let actor = &mut world.actors[i];
         intersect_with_temp_and_static_areas(world.time, world.settings.gravitational_acceleration, &world.temp_areas, &world.static_areas, &mut IntersectingDynamicObject {
             shape: &Ball::new(actor.body.radius),
             velocity: actor.velocity,
@@ -364,6 +387,11 @@ fn intersect_objects_with_areas(world: &mut World) {
         });
     }
     for object in world.dynamic_objects.iter_mut() {
+        intersect_static_object_with_all_bounded_areas(world.time, &world.bounded_areas, &mut world.actors, &mut IntersectingStaticObject {
+            shape: &Ball::new(object.body.radius),
+            isometry: Isometry::translation(object.position.x, object.position.y),
+            effect: &mut object.effect,
+        });
         intersect_with_temp_and_static_areas(world.time, world.settings.gravitational_acceleration, &world.temp_areas, &world.static_areas, &mut IntersectingDynamicObject {
             shape: &Ball::new(object.body.radius),
             velocity: object.velocity,
@@ -371,6 +399,13 @@ fn intersect_objects_with_areas(world: &mut World) {
             levitating: (object.position_z - object.body.radius) > f64::EPSILON,
             mass: object.body.mass(),
             dynamic_force: &mut object.dynamic_force,
+            effect: &mut object.effect,
+        });
+    }
+    for object in world.static_objects.iter_mut() {
+        intersect_static_object_with_all_bounded_areas(world.time, &world.bounded_areas, &world.actors, &mut IntersectingStaticObject {
+            shape: &Ball::new(object.body.radius),
+            isometry: Isometry::translation(object.position.x, object.position.y),
             effect: &mut object.effect,
         });
     }
@@ -412,6 +447,42 @@ fn intersect_with_last_static_area(now: f64, gravitational_acceleration: f64, st
         }) {
         add_dry_friction_force(object.mass, object.velocity, static_area.body.material, gravitational_acceleration, object.dynamic_force);
         *object.effect = add_magick_power_to_effect(now, object.effect, &static_area.magick.power);
+    }
+}
+
+struct IntersectingStaticObject<'a> {
+    shape: &'a dyn Shape,
+    isometry: Isometry<Real>,
+    effect: &'a mut Effect,
+}
+
+fn intersect_actor_with_all_bounded_areas(now: f64, actor_index: usize, bounded_areas: &[BoundedArea], actors: &mut [Actor]) {
+    let (left, right) = actors.split_at_mut(actor_index);
+    intersect_static_object_with_all_bounded_areas(now, bounded_areas, left, &mut IntersectingStaticObject {
+        shape: &Ball::new(right[0].body.radius),
+        isometry: Isometry::translation(right[0].position.x, right[0].position.y),
+        effect: &mut right[0].effect,
+    });
+    let (left, right) = actors.split_at_mut(actor_index + 1);
+    intersect_static_object_with_all_bounded_areas(now, bounded_areas, right, &mut IntersectingStaticObject {
+        shape: &Ball::new(left[actor_index].body.radius),
+        isometry: Isometry::translation(left[actor_index].position.x, left[actor_index].position.y),
+        effect: &mut left[actor_index].effect,
+    });
+}
+
+fn intersect_static_object_with_all_bounded_areas(now: f64, bounded_areas: &[BoundedArea], actors: &[Actor], object: &mut IntersectingStaticObject) {
+    for bounded_area in bounded_areas {
+        if let Some(owner) = actors.iter().find(|v| v.id == bounded_area.actor_id) {
+            intersect_static_object_with_bounded_area(now, bounded_area, owner, object);
+        }
+    }
+}
+
+fn intersect_static_object_with_bounded_area(now: f64, area: &BoundedArea, owner: &Actor, object: &mut IntersectingStaticObject) {
+    let isometry = Isometry::translation(owner.position.x, owner.position.y);
+    if intersection_test(&object.isometry, object.shape, &isometry, &area.body, owner.current_direction) {
+        *object.effect = add_magick_power_to_effect(now, object.effect, &area.effect.power);
     }
 }
 
@@ -650,12 +721,6 @@ impl WithIsometry for DynamicObject {
 }
 
 impl WithIsometry for StaticObject {
-    fn get_isometry(&self) -> Isometry<Real> {
-        Isometry::translation(self.position.x, self.position.y)
-    }
-}
-
-impl WithIsometry for StaticArea {
     fn get_isometry(&self) -> Isometry<Real> {
         Isometry::translation(self.position.x, self.position.y)
     }
@@ -946,6 +1011,18 @@ fn remove_count<T, F>(vec: &mut Vec<T>, mut f: F) -> usize
         retain
     });
     removed
+}
+
+fn intersection_test(shape_pos: &Isometry<Real>, shape: &dyn Shape, body_pos: &Isometry<Real>, body: &RingSector, direction: Vec2f) -> bool {
+    if query::intersection_test(shape_pos, shape, body_pos, &Ball::new(body.min_radius)).unwrap()
+        || !query::intersection_test(shape_pos, shape, body_pos, &Ball::new(body.max_radius)).unwrap() {
+        return false;
+    }
+    let radius = direction * body.max_radius;
+    let left = radius.rotated(body.angle / 2.0);
+    let right = radius.rotated(-body.angle / 2.0);
+    let triangle = Triangle::new(Point2::new(0.0, 0.0), Point2::new(left.x, left.y), Point2::new(right.x, right.y));
+    query::intersection_test(shape_pos, shape, body_pos, &triangle).unwrap()
 }
 
 #[cfg(test)]

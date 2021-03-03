@@ -46,6 +46,7 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
         beam_objects: Vec::new(),
         static_areas,
         temp_areas: Vec::new(),
+        bounded_areas: Vec::new(),
     }
 }
 

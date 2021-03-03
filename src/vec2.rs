@@ -27,6 +27,10 @@ impl Vec2f {
         Self { x: value, y: value }
     }
 
+    pub const fn only_x(x: f64) -> Self {
+        Self { x, y: 0.0 }
+    }
+
     pub fn norm(&self) -> f64 {
         (self.x.square() + self.y.square()).sqrt()
     }
@@ -142,3 +146,9 @@ impl PartialEq for Vec2f {
 }
 
 impl Eq for Vec2f {}
+
+impl Into<[f64; 2]> for Vec2f {
+    fn into(self) -> [f64; 2] {
+        [self.x, self.y]
+    }
+}
