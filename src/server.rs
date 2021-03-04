@@ -12,7 +12,8 @@ use rand::{CryptoRng, Rng, SeedableRng};
 use rand::rngs::StdRng;
 use tokio::net::UdpSocket;
 
-use crate::engine::Engine;
+use crate::engine::{add_actor_spell_element, complete_directed_magick, Engine, get_next_id, remove_actor, self_magick, start_directed_magick};
+use crate::generators::generate_player_actor;
 use crate::protocol::{ClientMessage, ClientMessageData, GameUpdate, PlayerAction, ServerMessage, ServerMessageData};
 use crate::world::World;
 
@@ -200,7 +201,7 @@ pub fn run_game_server(mut world: World, settings: GameServerSettings, sender: S
         for session in sessions.iter_mut() {
             session.messages_per_frame = 0;
             while let Some(message) = session.delayed_messages.pop_front() {
-                handle_existing_session(message, session, &mut engine, &mut world);
+                handle_existing_session(message, session, &mut world);
                 session.messages_per_frame += 1;
                 if session.messages_per_frame > 3 {
                     break;
@@ -219,9 +220,9 @@ pub fn run_game_server(mut world: World, settings: GameServerSettings, sender: S
         while let Ok(message) = receiver.try_recv() {
             if let Some(session) = sessions.iter_mut()
                 .find(|v| v.session_id == message.session_id) {
-                handle_existing_session(message, session, &mut engine, &mut world);
+                handle_existing_session(message, session, &mut world);
             } else if sessions.len() < settings.max_players {
-                if let Some(session) = create_new_session(settings.update_period, &sender, message, &sessions, &mut engine, &mut world, &mut rng) {
+                if let Some(session) = create_new_session(settings.update_period, &sender, message, &sessions, &mut world, &mut rng) {
                     info!("New player has joined: session_id={} actor_id={}", session.session_id, session.actor_id);
                     sessions.push(session);
                 }
@@ -267,7 +268,7 @@ struct GameSession {
     delayed_messages: VecDeque<ClientMessage>,
 }
 
-fn handle_existing_session(message: ClientMessage, session: &mut GameSession, engine: &mut Engine, world: &mut World) {
+fn handle_existing_session(message: ClientMessage, session: &mut GameSession, world: &mut World) {
     if message.number <= session.last_message_number {
         return;
     }
@@ -281,7 +282,7 @@ fn handle_existing_session(message: ClientMessage, session: &mut GameSession, en
     match message.data {
         ClientMessageData::Quit => {
             if let Some(actor_index) = session.actor_index {
-                engine.remove_actor(actor_index, world);
+                remove_actor(actor_index, world);
                 session.actor_index = None;
             }
             session.active = false;
@@ -291,22 +292,22 @@ fn handle_existing_session(message: ClientMessage, session: &mut GameSession, en
             if let Some(actor_index) = session.actor_index {
                 match player_action {
                     PlayerAction::Move(moving) => {
-                        engine.set_actor_moving(actor_index, moving, world);
+                        world.actors[actor_index].moving = moving;
                     }
                     PlayerAction::SetTargetDirection(target_direction) => {
                         world.actors[actor_index].target_direction = target_direction;
                     }
                     PlayerAction::AddSpellElement(element) => {
-                        engine.add_actor_spell_element(actor_index, element, world);
+                        add_actor_spell_element(actor_index, element, world);
                     }
                     PlayerAction::StartDirectedMagick => {
-                        engine.start_directed_magick(actor_index, world);
+                        start_directed_magick(actor_index, world);
                     }
                     PlayerAction::CompleteDirectedMagick => {
-                        engine.complete_directed_magick(actor_index, world);
+                        complete_directed_magick(actor_index, world);
                     }
                     PlayerAction::SelfMagick => {
-                        engine.self_magick(actor_index, world);
+                        self_magick(actor_index, world);
                     }
                 }
             } else {
@@ -317,7 +318,7 @@ fn handle_existing_session(message: ClientMessage, session: &mut GameSession, en
     }
 }
 
-fn create_new_session<R: CryptoRng + Rng>(update_period: Duration, sender: &Sender<ServerMessage>, message: ClientMessage, sessions: &Vec<GameSession>, engine: &mut Engine, world: &mut World, rng: &mut R) -> Option<GameSession> {
+fn create_new_session<R: CryptoRng + Rng>(update_period: Duration, sender: &Sender<ServerMessage>, message: ClientMessage, sessions: &Vec<GameSession>, world: &mut World, rng: &mut R) -> Option<GameSession> {
     match message.data {
         ClientMessageData::Join => {
             let session_id = if message.session_id == 0 {
@@ -335,7 +336,7 @@ fn create_new_session<R: CryptoRng + Rng>(update_period: Duration, sender: &Send
                 number: 0,
                 data: ServerMessageData::Settings { update_period },
             }).unwrap();
-            let actor_id = engine.add_player_actor(world, rng);
+            let actor_id = add_player_actor(world, rng);
             sender.send(ServerMessage {
                 session_id,
                 number: 0,
@@ -379,4 +380,10 @@ impl FrameRateLimiter {
             self.last_measurement = now;
         }
     }
+}
+
+fn add_player_actor<R: Rng>(world: &mut World, rng: &mut R) -> u64 {
+    let actor_id = get_next_id(&mut world.id_counter);
+    world.actors.push(generate_player_actor(actor_id, &world.bounds, rng));
+    actor_id
 }

@@ -3,9 +3,7 @@ use parry2d_f64::math::{Isometry, Real};
 use parry2d_f64::na::{Point2, Vector2};
 use parry2d_f64::query::{Ray, RayCast, RayIntersection, time_of_impact, TOIStatus};
 use parry2d_f64::shape::Ball;
-use rand::Rng;
 
-use crate::generators::generate_player_actor;
 use crate::rect::Rectf;
 use crate::vec2::{Square, Vec2f};
 use crate::world::{Actor, Aura, Beam, BeamObject, Body, DelayedMagick, DynamicObject, Effect,
@@ -116,91 +114,6 @@ impl Engine {
         &self.beam_collider.reflected_beams
     }
 
-    pub fn add_player_actor<R: Rng>(&mut self, world: &mut World, rng: &mut R) -> u64 {
-        let id = get_next_id(&mut world.id_counter);
-        world.actors.push(generate_player_actor(id, &world.bounds, rng));
-        id
-    }
-
-    pub fn remove_actor(&mut self, actor_index: usize, world: &mut World) {
-        world.actors.remove(actor_index);
-    }
-
-    pub fn set_actor_moving(&mut self, actor_index: usize, value: bool, world: &mut World) {
-        world.actors[actor_index].moving = value;
-    }
-
-    pub fn add_actor_spell_element(&mut self, actor_index: usize, element: Element, world: &mut World) {
-        Spell::on(world.settings.max_spell_elements as usize, &mut world.actors[actor_index].spell_elements).add(element);
-    }
-
-    pub fn start_directed_magick(&self, actor_index: usize, world: &mut World) {
-        let magick = Spell::on(world.settings.max_spell_elements as usize, &mut world.actors[actor_index].spell_elements).cast();
-        if magick.power[Element::Shield as usize] > 0.0 {
-            return;
-        } else if magick.power[Element::Earth as usize] > 0.0 {
-            world.actors[actor_index].delayed_magick = Some(DelayedMagick {
-                actor_id: world.actors[actor_index].id,
-                started: world.time,
-                completed: false,
-                power: magick.power,
-            });
-        } else if magick.power[Element::Ice as usize] > 0.0 {
-            return;
-        } else if magick.power[Element::Arcane as usize] > 0.0
-            || magick.power[Element::Life as usize] > 0.0 {
-            let id = get_next_id(&mut world.id_counter);
-            world.beam_objects.push(BeamObject {
-                id,
-                beam: Beam { actor_id: world.actors[actor_index].id, magick },
-            });
-        } else if magick.power[Element::Lightning as usize] > 0.0 {
-            return;
-        } else if magick.power[Element::Water as usize] > 0.0
-            || magick.power[Element::Cold as usize] > 0.0
-            || magick.power[Element::Fire as usize] > 0.0
-            || magick.power[Element::Steam as usize] > 0.0
-            || magick.power[Element::Poison as usize] > 0.0 {
-            return;
-        }
-    }
-
-    pub fn complete_directed_magick(&self, actor_index: usize, world: &mut World) {
-        let actor_id = world.actors[actor_index].id;
-        if let Some(index) = world.beam_objects.iter()
-            .find_position(|v| v.beam.actor_id == actor_id)
-            .map(|(i, _)| i) {
-            world.beam_objects.remove(index);
-        } else if let Some(delayed_magick) = world.actors[actor_index].delayed_magick.as_mut() {
-            delayed_magick.completed = true;
-        }
-    }
-
-    pub fn self_magick(&mut self, actor_index: usize, world: &mut World) {
-        let magick = Spell::on(world.settings.max_spell_elements as usize, &mut world.actors[actor_index].spell_elements).cast();
-        if magick.power[Element::Shield as usize] == 0.0 {
-            world.actors[actor_index].effect = add_magick_power_to_effect(world.time, &world.actors[actor_index].effect, &magick.power);
-        } else {
-            let mut elements = [false; 11];
-            for i in 0..magick.power.len() {
-                elements[i] = magick.power[i] > 0.0;
-            }
-            let power = magick.power.iter().sum();
-            let radius_factor = if elements[Element::Earth as usize] || elements[Element::Ice as usize]
-                || (elements[Element::Shield as usize] && elements.iter().filter(|v| **v).count() == 1) {
-                1.0
-            } else {
-                power
-            };
-            world.actors[actor_index].aura = Aura {
-                applied: world.time,
-                power,
-                radius: radius_factor * world.actors[actor_index].body.radius,
-                elements,
-            };
-        }
-    }
-
     pub fn update(&mut self, duration: f64, world: &mut World) {
         world.revision += 1;
         world.time += duration;
@@ -223,6 +136,92 @@ pub fn get_next_id(counter: &mut u64) -> u64 {
     let result = *counter;
     *counter += 1;
     result
+}
+
+pub fn remove_actor(actor_index: usize, world: &mut World) {
+    world.actors.remove(actor_index);
+}
+
+pub fn set_actor_moving(actor_index: usize, value: bool, world: &mut World) {
+    world.actors[actor_index].moving = value;
+}
+
+pub fn add_actor_spell_element(actor_index: usize, element: Element, world: &mut World) {
+    Spell::on(world.settings.max_spell_elements as usize, &mut world.actors[actor_index].spell_elements).add(element);
+}
+
+pub fn start_directed_magick(actor_index: usize, world: &mut World) {
+    let magick = Spell::on(world.settings.max_spell_elements as usize, &mut world.actors[actor_index].spell_elements).cast();
+    if magick.power[Element::Shield as usize] > 0.0 {
+        return;
+    } else if magick.power[Element::Earth as usize] > 0.0 {
+        add_delayed_magick(magick, actor_index, world);
+    } else if magick.power[Element::Ice as usize] > 0.0 {
+        return;
+    } else if magick.power[Element::Arcane as usize] > 0.0
+        || magick.power[Element::Life as usize] > 0.0 {
+        add_beam_object(magick, actor_index, world);
+    } else if magick.power[Element::Lightning as usize] > 0.0 {
+        return;
+    } else if magick.power[Element::Water as usize] > 0.0
+        || magick.power[Element::Cold as usize] > 0.0
+        || magick.power[Element::Fire as usize] > 0.0
+        || magick.power[Element::Steam as usize] > 0.0
+        || magick.power[Element::Poison as usize] > 0.0 {
+        return;
+    }
+}
+
+fn add_delayed_magick(magick: Magick, actor_index: usize, world: &mut World) {
+    world.actors[actor_index].delayed_magick = Some(DelayedMagick {
+        actor_id: world.actors[actor_index].id,
+        started: world.time,
+        completed: false,
+        power: magick.power,
+    });
+}
+
+fn add_beam_object(magick: Magick, actor_index: usize, world: &mut World) {
+    world.beam_objects.push(BeamObject {
+        id: get_next_id(&mut world.id_counter),
+        beam: Beam { actor_id: world.actors[actor_index].id, magick },
+    });
+}
+
+pub fn complete_directed_magick(actor_index: usize, world: &mut World) {
+    let actor_id = world.actors[actor_index].id;
+    if let Some(index) = world.beam_objects.iter()
+        .find_position(|v| v.beam.actor_id == actor_id)
+        .map(|(i, _)| i) {
+        world.beam_objects.remove(index);
+    } else if let Some(delayed_magick) = world.actors[actor_index].delayed_magick.as_mut() {
+        delayed_magick.completed = true;
+    }
+}
+
+pub fn self_magick(actor_index: usize, world: &mut World) {
+    let magick = Spell::on(world.settings.max_spell_elements as usize, &mut world.actors[actor_index].spell_elements).cast();
+    if magick.power[Element::Shield as usize] == 0.0 {
+        world.actors[actor_index].effect = add_magick_power_to_effect(world.time, &world.actors[actor_index].effect, &magick.power);
+    } else {
+        let mut elements = [false; 11];
+        for i in 0..magick.power.len() {
+            elements[i] = magick.power[i] > 0.0;
+        }
+        let power = magick.power.iter().sum();
+        let radius_factor = if elements[Element::Earth as usize] || elements[Element::Ice as usize]
+            || (elements[Element::Shield as usize] && elements.iter().filter(|v| **v).count() == 1) {
+            1.0
+        } else {
+            power
+        };
+        world.actors[actor_index].aura = Aura {
+            applied: world.time,
+            power,
+            radius: radius_factor * world.actors[actor_index].body.radius,
+            elements,
+        };
+    }
 }
 
 pub fn get_body_mass(body: &Body) -> f64 {
