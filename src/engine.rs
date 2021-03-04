@@ -77,7 +77,7 @@ impl BeamCollider {
                 .find(|v| v.id == beam_object.beam.actor_id)
                 .unwrap();
             let direction = actor.current_direction;
-            let origin = actor.position + direction * (actor.body.radius + world.settings.beam_origin_margin);
+            let origin = actor.position + direction * (actor.body.radius + world.settings.margin);
             let magick = beam_object.beam.magick.clone();
             let mut length = world.settings.max_beam_length;
             if let Some(r) = intersect_beam(&magick, origin, direction, 0, &mut length, world) {
@@ -88,9 +88,9 @@ impl BeamCollider {
         let mut beam_index = 0;
         while beam_index < self.reflected_beams.len() {
             let beam = &mut self.reflected_beams[beam_index];
-            let origin = beam.origin + beam.direction * world.settings.beam_origin_margin;
+            let origin = beam.origin + beam.direction * world.settings.margin;
             if let Some(r) = intersect_beam(&beam.magick, origin, beam.direction, beam.depth, &mut beam.length, world) {
-                beam.length += world.settings.beam_origin_margin;
+                beam.length += world.settings.margin;
                 self.reflected_beams.push(r);
             }
             beam_index += 1;
@@ -745,7 +745,7 @@ fn handle_completed_magicks(world: &mut World) {
                 id: get_next_id(&mut world.id_counter),
                 body: Body { radius, material },
                 position: actor.position
-                    + actor.current_direction * (actor.body.radius + radius + world.settings.beam_origin_margin),
+                    + actor.current_direction * (actor.body.radius + radius + world.settings.margin),
                 health: 1.0,
                 effect: Effect {
                     applied: [world.time; 11],
