@@ -6,7 +6,6 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use itertools::Itertools;
 use lz4_flex::compress_prepend_size;
 use rand::{CryptoRng, Rng, SeedableRng};
 use rand::rngs::StdRng;
@@ -242,9 +241,7 @@ pub fn run_game_server(mut world: World, settings: GameServerSettings, sender: S
         engine.update(time_step, &mut world);
         sessions.retain(|v| v.active);
         for session in sessions.iter_mut() {
-            session.actor_index = world.actors.iter()
-                .find_position(|v| v.id == session.actor_id)
-                .map(|(i, _)| i);
+            session.actor_index = world.actors.iter().position(|v| v.id == session.actor_id);
         }
         messages_per_frame = 0;
         sender.send(ServerMessage {

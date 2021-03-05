@@ -3,7 +3,6 @@ use std::time::{Duration, Instant};
 
 use glfw_window::GlfwWindow;
 use graphics::*;
-use itertools::Itertools;
 use opengl_graphics::{
     Filter,
     GlGraphics,
@@ -181,9 +180,7 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
                         last_received_world_time = v.time;
                         world = v;
                         if let Some(player_id) = player_id {
-                            last_player_index = world.actors.iter()
-                                .find_position(|v| v.id == player_id)
-                                .map(|(i, _)| i);
+                            last_player_index = world.actors.iter().position(|v| v.id == player_id);
                         }
                     }
                 }
@@ -202,9 +199,7 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
             }
             engine.update(time_step, &mut world);
             if let Some(player_id) = player_id {
-                last_player_index = world.actors.iter()
-                    .find_position(|v| v.id == player_id)
-                    .map(|(i, _)| i);
+                last_player_index = world.actors.iter().position(|v| v.id == player_id);
             }
             if let Some(player_index) = last_player_index {
                 last_player_position = world.actors[player_index].position;
