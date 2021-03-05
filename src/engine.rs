@@ -6,9 +6,9 @@ use parry2d_f64::shape::{Ball, Shape, Triangle};
 
 use crate::rect::Rectf;
 use crate::vec2::{Square, Vec2f};
-use crate::world::{Actor, Aura, Beam, BeamObject, Body, BoundedArea, DelayedMagick, DynamicObject,
-                   Effect, Element, Magick, Material, RingSector, StaticArea, StaticObject,
-                   TempArea, World, WorldSettings};
+use crate::world::{Actor, Aura, Beam, BeamObject, BoundedArea, DelayedMagick, Body, DynamicObject,
+                   Effect, Element, Field, Magick, Material, RingSector, StaticArea,
+                   StaticObject, TempArea, World, WorldSettings};
 
 #[derive(Debug, Copy, Clone)]
 pub enum Index {
@@ -121,7 +121,9 @@ impl Engine {
         world.temp_areas.retain(|v| v.effect.power.iter().sum::<f64>() > 0.0);
         let now = world.time;
         world.bounded_areas.retain(|v| v.deadline >= now);
+        world.fields.retain(|v| v.deadline >= now);
         intersect_objects_with_areas(world);
+        intersect_objects_with_all_fields(world);
         update_temp_areas(world.time, duration, &world.settings, &mut world.temp_areas);
         update_actors(world.time, duration, &world.settings, &mut world.actors);
         update_dynamic_objects(world.time, duration, &world.settings, &mut world.dynamic_objects);
@@ -251,6 +253,7 @@ pub fn complete_directed_magick(actor_index: usize, world: &mut World) {
         return;
     }
     if remove_count(&mut world.bounded_areas, |v| v.actor_id == actor_id) > 0 {
+        world.fields.retain(|v| v.actor_id != actor_id);
         return;
     }
     if let Some(delayed_magick) = world.actors[actor_index].delayed_magick.as_mut() {
@@ -286,14 +289,24 @@ pub fn self_magick(actor_index: usize, world: &mut World) {
 fn cast_spray(magick: &Magick, actor_index: usize, world: &mut World) {
     let actor = &world.actors[actor_index];
     let effect = add_magick_power_to_effect(world.time, &Effect::default(), &magick.power);
+    let body = RingSector {
+        min_radius: actor.body.radius + world.settings.margin,
+        max_radius: actor.body.radius * (1.0 + effect.power.iter().sum::<f64>()) * world.settings.spray_distance_factor,
+        angle: world.settings.spray_angle,
+    };
+    if effect.power[Element::Water as usize] == effect.power.iter().sum::<f64>() {
+        world.fields.push(Field {
+            id: get_next_id(&mut world.id_counter),
+            actor_id: actor.id,
+            body: body.clone(),
+            force: world.settings.spray_force_factor * effect.power[Element::Water as usize],
+            deadline: world.time + world.settings.directed_magick_duration,
+        });
+    }
     world.bounded_areas.push(BoundedArea {
         id: get_next_id(&mut world.id_counter),
         actor_id: actor.id,
-        body: RingSector {
-            min_radius: actor.body.radius + world.settings.margin,
-            max_radius: actor.body.radius * (1.0 + effect.power.iter().sum::<f64>()) * world.settings.spray_distance_factor,
-            angle: world.settings.spray_angle,
-        },
+        body,
         effect,
         deadline: world.time + world.settings.directed_magick_duration,
     });
@@ -484,6 +497,60 @@ fn intersect_static_object_with_bounded_area(now: f64, area: &BoundedArea, owner
     if intersection_test(&object.isometry, object.shape, &isometry, &area.body, owner.current_direction) {
         *object.effect = add_magick_power_to_effect(now, object.effect, &area.effect.power);
     }
+}
+
+fn intersect_objects_with_all_fields(world: &mut World) {
+    for i in 0..world.actors.len() {
+        let (left, right) = world.actors.split_at_mut(i);
+        intersect_object_with_all_fields(&world.fields, left, &mut PushedObject {
+            shape: Ball::new(right[0].body.radius),
+            position: right[0].position,
+            dynamic_force: &mut right[0].dynamic_force,
+        });
+        let (left, right) = world.actors.split_at_mut(i + 1);
+        intersect_object_with_all_fields(&world.fields, right, &mut PushedObject {
+            shape: Ball::new(left[i].body.radius),
+            position: left[i].position,
+            dynamic_force: &mut left[i].dynamic_force,
+        });
+    }
+    for object in world.dynamic_objects.iter_mut() {
+        intersect_object_with_all_fields(&world.fields, &world.actors, &mut PushedObject {
+            shape: Ball::new(object.body.radius),
+            position: object.position,
+            dynamic_force: &mut object.dynamic_force,
+        });
+    }
+}
+
+struct PushedObject<'a, S: Shape> {
+    shape: S,
+    position: Vec2f,
+    dynamic_force: &'a mut Vec2f,
+}
+
+fn intersect_object_with_all_fields<S>(fields: &[Field], actors: &[Actor], object: &mut PushedObject<S>)
+    where S: Shape
+{
+    for field in fields {
+        if let Some(owner) = actors.iter().find(|v| v.id == field.actor_id) {
+            intersect_object_with_field(field, owner, object);
+        }
+    }
+}
+
+fn intersect_object_with_field<S>(field: &Field, owner: &Actor, object: &mut PushedObject<S>)
+    where S: Shape
+{
+    let isometry = Isometry::translation(object.position.x, object.position.y);
+    if intersection_test(&isometry, &object.shape, &owner.get_isometry(), &field.body, owner.current_direction) {
+        push_object(owner.position, field.force, field.body.max_radius, object.position, object.dynamic_force);
+    }
+}
+
+fn push_object(from: Vec2f, force: f64, max_distance: f64, position: Vec2f, dynamic_force: &mut Vec2f) {
+    let to_position = position - from;
+    *dynamic_force += to_position * ((1.0 / to_position.norm() - 1.0 / max_distance) * force);
 }
 
 fn update_temp_areas(now: f64, duration: f64, settings: &WorldSettings, temp_area_objects: &mut Vec<TempArea>) {

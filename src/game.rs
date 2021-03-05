@@ -406,6 +406,10 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
                 text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
                     .draw(&format!("Bounded areas: {}", world.bounded_areas.len())[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 13.0 * 24.0), g)
                     .unwrap();
+
+                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
+                    .draw(&format!("Fields: {}", world.fields.len())[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 14.0 * 24.0), g)
+                    .unwrap();
             });
 
             render_duration.add(Instant::now() - start);

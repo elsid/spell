@@ -17,6 +17,7 @@ pub struct World {
     pub static_areas: Vec<StaticArea>,
     pub temp_areas: Vec<TempArea>,
     pub bounded_areas: Vec<BoundedArea>,
+    pub fields: Vec<Field>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -35,6 +36,7 @@ pub struct WorldSettings {
     pub spray_distance_factor: f64,
     pub spray_angle: f64,
     pub directed_magick_duration: f64,
+    pub spray_force_factor: f64,
 }
 
 impl Default for WorldSettings {
@@ -54,6 +56,7 @@ impl Default for WorldSettings {
             spray_distance_factor: 2.0,
             spray_angle: std::f64::consts::FRAC_PI_8,
             directed_magick_duration: 3.0,
+            spray_force_factor: 1e5,
         }
     }
 }
@@ -129,6 +132,15 @@ pub struct BoundedArea {
     pub actor_id: u64,
     pub body: RingSector,
     pub effect: Effect,
+    pub deadline: f64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Field {
+    pub id: u64,
+    pub actor_id: u64,
+    pub body: RingSector,
+    pub force: f64,
     pub deadline: f64,
 }
 
