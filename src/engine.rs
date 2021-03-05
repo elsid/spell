@@ -1,4 +1,3 @@
-use itertools::Itertools;
 use parry2d_f64::math::{Isometry, Real};
 use parry2d_f64::na::{Point2, Vector2};
 use parry2d_f64::query::{Ray, RayCast, RayIntersection, time_of_impact, TOIStatus};
@@ -190,11 +189,10 @@ fn add_beam_object(magick: Magick, actor_index: usize, world: &mut World) {
 
 pub fn complete_directed_magick(actor_index: usize, world: &mut World) {
     let actor_id = world.actors[actor_index].id;
-    if let Some(index) = world.beam_objects.iter()
-        .find_position(|v| v.beam.actor_id == actor_id)
-        .map(|(i, _)| i) {
-        world.beam_objects.remove(index);
-    } else if let Some(delayed_magick) = world.actors[actor_index].delayed_magick.as_mut() {
+    if remove_count(&mut world.beam_objects, |v| v.beam.actor_id == actor_id) > 0 {
+        return;
+    }
+    if let Some(delayed_magick) = world.actors[actor_index].delayed_magick.as_mut() {
         delayed_magick.completed = true;
     }
 }
@@ -759,5 +757,39 @@ fn handle_completed_magicks(world: &mut World) {
                 ),
             });
         }
+    }
+}
+
+fn remove_count<T, F>(vec: &mut Vec<T>, mut f: F) -> usize
+    where F: FnMut(&T) -> bool
+{
+    let mut removed = 0;
+    vec.retain(|v| {
+        let retain = !f(v);
+        removed += !retain as usize;
+        retain
+    });
+    removed
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::engine::remove_count;
+
+    #[test]
+    fn remove_count_should_return_number_of_removed_items() {
+        assert_eq!(remove_count(&mut vec![1, 2, 3, 2, 1], |v| *v == 2), 2);
+    }
+
+    #[test]
+    fn remove_count_should_return_zero_when_nothing_is_removed() {
+        assert_eq!(remove_count(&mut vec![1, 2, 3, 2, 1], |v| *v == 4), 0);
+    }
+
+    #[test]
+    fn remove_count_should_remove_items_matching_predicate_preserving_order() {
+        let mut values = vec![1, 2, 3, 2, 1];
+        remove_count(&mut values, |v| *v == 2);
+        assert_eq!(values, &[1, 3, 1]);
     }
 }
