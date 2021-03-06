@@ -177,7 +177,33 @@ pub fn start_directed_magick(actor_index: usize, world: &mut World) {
         || magick.power[Element::Fire as usize] > 0.0
         || magick.power[Element::Steam as usize] > 0.0
         || magick.power[Element::Poison as usize] > 0.0 {
-        cast_spray(&magick, actor_index, world);
+        cast_spray(world.settings.spray_angle, world.settings.directed_magick_duration,
+                   &magick, actor_index, world);
+    }
+}
+
+pub fn start_area_of_effect_magick(actor_index: usize, world: &mut World) {
+    let magick = Spell::on(world.settings.max_spell_elements as usize,
+                           &mut world.actors[actor_index].spell_elements).cast();
+    if magick.power[Element::Shield as usize] > 0.0 {
+        return;
+    } else if magick.power[Element::Earth as usize] > 0.0 {
+        return;
+    } else if magick.power[Element::Ice as usize] > 0.0 {
+        return;
+    } else if magick.power[Element::Arcane as usize] > 0.0
+        || magick.power[Element::Life as usize] > 0.0 {
+        cast_spray(std::f64::consts::TAU, world.settings.area_of_effect_magick_duration,
+                   &magick, actor_index, world);
+    } else if magick.power[Element::Lightning as usize] > 0.0 {
+        return;
+    } else if magick.power[Element::Water as usize] > 0.0
+        || magick.power[Element::Cold as usize] > 0.0
+        || magick.power[Element::Fire as usize] > 0.0
+        || magick.power[Element::Steam as usize] > 0.0
+        || magick.power[Element::Poison as usize] > 0.0 {
+        cast_spray(std::f64::consts::TAU, world.settings.area_of_effect_magick_duration,
+                   &magick, actor_index, world);
     }
 }
 
@@ -289,13 +315,13 @@ pub fn self_magick(actor_index: usize, world: &mut World) {
     }
 }
 
-fn cast_spray(magick: &Magick, actor_index: usize, world: &mut World) {
+fn cast_spray(angle: f64, duration: f64, magick: &Magick, actor_index: usize, world: &mut World) {
     let actor = &world.actors[actor_index];
     let effect = add_magick_power_to_effect(world.time, &Effect::default(), &magick.power);
     let body = RingSector {
         min_radius: actor.body.radius + world.settings.margin,
         max_radius: actor.body.radius * (1.0 + effect.power.iter().sum::<f64>()) * world.settings.spray_distance_factor,
-        angle: world.settings.spray_angle,
+        angle,
     };
     if effect.power[Element::Water as usize] == effect.power.iter().sum::<f64>() {
         world.fields.push(Field {
@@ -303,7 +329,7 @@ fn cast_spray(magick: &Magick, actor_index: usize, world: &mut World) {
             actor_id: actor.id,
             body: body.clone(),
             force: world.settings.spray_force_factor * effect.power[Element::Water as usize],
-            deadline: world.time + world.settings.directed_magick_duration,
+            deadline: world.time + duration,
         });
     }
     world.bounded_areas.push(BoundedArea {
@@ -311,7 +337,7 @@ fn cast_spray(magick: &Magick, actor_index: usize, world: &mut World) {
         actor_id: actor.id,
         body,
         effect,
-        deadline: world.time + world.settings.directed_magick_duration,
+        deadline: world.time + duration,
     });
 }
 
@@ -1087,6 +1113,9 @@ fn intersection_test(shape_pos: &Isometry<Real>, shape: &dyn Shape, body_pos: &I
     if query::intersection_test(shape_pos, shape, body_pos, &Ball::new(body.min_radius)).unwrap()
         || !query::intersection_test(shape_pos, shape, body_pos, &Ball::new(body.max_radius)).unwrap() {
         return false;
+    }
+    if body.angle == std::f64::consts::TAU {
+        return true;
     }
     let radius = direction * body.max_radius;
     let left = radius.rotated(body.angle / 2.0);

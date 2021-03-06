@@ -37,6 +37,7 @@ pub struct WorldSettings {
     pub spray_angle: f64,
     pub directed_magick_duration: f64,
     pub spray_force_factor: f64,
+    pub area_of_effect_magick_duration: f64,
 }
 
 impl Default for WorldSettings {
@@ -57,6 +58,7 @@ impl Default for WorldSettings {
             spray_angle: std::f64::consts::FRAC_PI_8,
             directed_magick_duration: 3.0,
             spray_force_factor: 1e5,
+            area_of_effect_magick_duration: 0.5,
         }
     }
 }

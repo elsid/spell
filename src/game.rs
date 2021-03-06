@@ -31,7 +31,8 @@ use piston::window::{
     WindowSettings,
 };
 
-use crate::engine::{add_actor_spell_element, complete_directed_magick, Engine, self_magick, set_actor_moving, start_directed_magick};
+use crate::engine::{add_actor_spell_element, complete_directed_magick, Engine, self_magick,
+                    set_actor_moving, start_area_of_effect_magick, start_directed_magick};
 use crate::meters::{DurationMovingAverage, FpsMovingAverage};
 use crate::protocol::{GameUpdate, PlayerAction};
 use crate::vec2::Vec2f;
@@ -63,6 +64,7 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
     let mut player_id = None;
     let mut last_received_world_revision = 0;
     let mut last_received_world_time = 0.0;
+    let mut lshift = false;
 
     while let Some(e) = events.next(&mut window) {
         if let Some(v) = e.press_args() {
@@ -75,10 +77,16 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
                 }
                 Button::Mouse(MouseButton::Right) => {
                     if let Some(player_index) = last_player_index {
-                        sender.as_ref().map(|v| v.send(PlayerAction::StartDirectedMagick).unwrap());
-                        start_directed_magick(player_index, &mut world);
+                        if lshift {
+                            sender.as_ref().map(|v| v.send(PlayerAction::StartAreaOfEffectMagick).unwrap());
+                            start_area_of_effect_magick(player_index, &mut world);
+                        } else {
+                            sender.as_ref().map(|v| v.send(PlayerAction::StartDirectedMagick).unwrap());
+                            start_directed_magick(player_index, &mut world);
+                        }
                     }
                 }
+                Button::Keyboard(Key::LShift) => lshift = true,
                 _ => (),
             }
         }
@@ -103,6 +111,7 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
                         self_magick(player_index, &mut world);
                     }
                 }
+                Button::Keyboard(Key::LShift) => lshift = false,
                 Button::Keyboard(Key::Q) => {
                     if let Some(player_index) = last_player_index {
                         sender.as_ref().map(|v| v.send(PlayerAction::AddSpellElement(Element::Water)).unwrap());
@@ -228,10 +237,10 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
 
                 for area in world.bounded_areas.iter() {
                     let owner = world.actors.iter().find(|v| v.id == area.actor_id).unwrap();
-                    draw_ring_sector_body_and_magick(&area.body, &area.effect.power, |shape, rect| {
+                    draw_ring_sector_body_and_magick(&area.body, &area.effect.power, |shape, vertices| {
                         let transform = base_transform.trans(owner.position.x, owner.position.y)
                             .orient(owner.current_direction.x, owner.current_direction.y);
-                        shape.draw(rect, &ctx.draw_state, transform, g);
+                        draw_ring_sector(shape, vertices, &ctx.draw_state, transform, g);
                     });
                 }
 
@@ -429,18 +438,21 @@ fn draw_body_and_magick<F: FnMut(ellipse::Ellipse, [f64; 4])>(body: &Body, power
 }
 
 fn draw_ring_sector_body_and_magick<F: FnMut(polygon::Polygon, types::Polygon)>(body: &RingSector, power: &[f64; 11], mut f: F) {
+    const BASE_RESOLUTION: f64 = 12.0;
     let shape = polygon::Polygon::new(get_magick_power_color(power));
-    const RESOLUTION: usize = 10;
-    let mut polygon: [[f64; 2]; 2 * RESOLUTION + 1] = [[0.0; 2]; 2 * RESOLUTION + 1];
-    let max_angle_step = body.angle / RESOLUTION as f64;
-    let min_angle_step = body.angle / (RESOLUTION - 1) as f64;
-    for i in 0..RESOLUTION + 1 {
-        polygon[i] = Vec2f::only_x(body.max_radius).rotated(i as f64 * max_angle_step - body.angle / 2.0).into();
+    let resolution = (body.angle * BASE_RESOLUTION).round() as usize;
+    let min_angle_step = body.angle / (resolution - 1) as f64;
+    let max_angle_step = body.angle / resolution as f64;
+    let mut vertices = [[0.0, 0.0]; 2 * (std::f64::consts::TAU * BASE_RESOLUTION) as usize + 3];
+    for i in 0..resolution {
+        let from = Vec2f::only_x(body.max_radius).rotated(i as f64 * max_angle_step - body.angle / 2.0);
+        let to = Vec2f::only_x(body.min_radius).rotated(i as f64 * min_angle_step - body.angle / 2.0);
+        vertices[2 * i] = [from.x, from.y];
+        vertices[2 * i + 1] = [to.x, to.y];
     }
-    for i in 0..RESOLUTION {
-        polygon[i + RESOLUTION + 1] = Vec2f::only_x(body.min_radius).rotated(body.angle / 2.0 - i as f64 * min_angle_step).into();
-    }
-    f(shape, &polygon);
+    let last = Vec2f::only_x(body.max_radius).rotated(body.angle / 2.0);
+    vertices[2 * resolution] = [last.x, last.y];
+    f(shape, &vertices[0..2 * resolution + 1]);
 }
 
 fn draw_aura<F: FnMut(ellipse::Ellipse, [f64; 4])>(aura: &Aura, mut f: F) {
@@ -503,4 +515,25 @@ fn get_element_color(element: Element) -> [f32; 4] {
         Element::Ice => [0.0, 0.75, 1.0, 0.8],
         Element::Poison => [0.5, 1.0, 0.0, 0.8],
     }
+}
+
+fn draw_ring_sector<G>(shape: Polygon, vertices: types::Polygon, draw_state: &DrawState, transform: math::Matrix2d, g: &mut G)
+    where G: Graphics
+{
+    g.tri_list(
+        draw_state,
+        &shape.color,
+        |f| {
+            use graphics::triangulation::{tx, ty};
+            for i in 1..vertices.len() - 1 {
+                let buffer = &vertices[i - 1..i + 2];
+                let mut draw_buffer = [[0.0; 2]; 3];
+                for i in 0..buffer.len() {
+                    let v = &buffer[i];
+                    draw_buffer[i] = [tx(transform, v[0], v[1]), ty(transform, v[0], v[1])];
+                }
+                f(&draw_buffer);
+            }
+        },
+    );
 }

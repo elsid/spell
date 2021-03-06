@@ -50,4 +50,5 @@ pub enum PlayerAction {
     StartDirectedMagick,
     CompleteDirectedMagick,
     SelfMagick,
+    StartAreaOfEffectMagick,
 }

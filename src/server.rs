@@ -11,7 +11,8 @@ use rand::{CryptoRng, Rng, SeedableRng};
 use rand::rngs::StdRng;
 use tokio::net::UdpSocket;
 
-use crate::engine::{add_actor_spell_element, complete_directed_magick, Engine, get_next_id, remove_actor, self_magick, start_directed_magick};
+use crate::engine::{add_actor_spell_element, complete_directed_magick, Engine, get_next_id,
+                    remove_actor, self_magick, start_area_of_effect_magick, start_directed_magick};
 use crate::generators::generate_player_actor;
 use crate::protocol::{ClientMessage, ClientMessageData, GameUpdate, PlayerAction, ServerMessage, ServerMessageData};
 use crate::world::World;
@@ -305,6 +306,9 @@ fn handle_existing_session(message: ClientMessage, session: &mut GameSession, wo
                     }
                     PlayerAction::SelfMagick => {
                         self_magick(actor_index, world);
+                    }
+                    PlayerAction::StartAreaOfEffectMagick => {
+                        start_area_of_effect_magick(actor_index, world);
                     }
                 }
             } else {
