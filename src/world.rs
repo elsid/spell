@@ -107,7 +107,8 @@ pub struct StaticObject {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BeamObject {
     pub id: u64,
-    pub beam: Beam,
+    pub actor_id: u64,
+    pub magick: Magick,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -160,12 +161,6 @@ pub struct RingSector {
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Magick {
     pub power: [f64; 11],
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Beam {
-    pub actor_id: u64,
-    pub magick: Magick,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
