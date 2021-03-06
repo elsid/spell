@@ -43,7 +43,7 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
         actors,
         dynamic_objects,
         static_objects,
-        beam_objects: Vec::new(),
+        beams: Vec::new(),
         static_areas,
         temp_areas: Vec::new(),
         bounded_areas: Vec::new(),

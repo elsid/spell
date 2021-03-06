@@ -6,7 +6,7 @@ use parry2d_f64::shape::{Ball, Shape, Triangle};
 
 use crate::rect::Rectf;
 use crate::vec2::{Square, Vec2f};
-use crate::world::{Actor, Aura, BeamObject, Body, BoundedArea, DelayedMagick, DynamicObject,
+use crate::world::{Actor, Aura, Beam, Body, BoundedArea, DelayedMagick, DynamicObject,
                    Effect, Element, Field, Magick, Material, RingSector, StaticArea,
                    StaticObject, TempArea, World, WorldSettings};
 
@@ -72,14 +72,14 @@ impl BeamCollider {
     fn update(&mut self, world: &mut World) {
         self.initial_beams.clear();
         self.reflected_beams.clear();
-        for i in 0..world.beam_objects.len() {
-            let beam_object = &world.beam_objects[i];
+        for i in 0..world.beams.len() {
+            let beam = &world.beams[i];
             let actor = world.actors.iter()
-                .find(|v| v.id == beam_object.actor_id)
+                .find(|v| v.id == beam.actor_id)
                 .unwrap();
             let direction = actor.current_direction;
             let origin = actor.position + direction * (actor.body.radius + world.settings.margin);
-            let magick = beam_object.magick.clone();
+            let magick = beam.magick.clone();
             let mut length = world.settings.max_beam_length;
             if let Some(r) = intersect_beam(&magick, origin, direction, 0, &mut length, world) {
                 self.reflected_beams.push(r);
@@ -168,7 +168,7 @@ pub fn start_directed_magick(actor_index: usize, world: &mut World) {
         return;
     } else if magick.power[Element::Arcane as usize] > 0.0
         || magick.power[Element::Life as usize] > 0.0 {
-        add_beam_object(magick, actor_index, world);
+        add_beam(magick, actor_index, world);
     } else if magick.power[Element::Lightning as usize] > 0.0 {
         return;
     } else if magick.power[Element::Water as usize] > 0.0
@@ -240,8 +240,8 @@ fn add_delayed_magick(magick: Magick, actor_index: usize, world: &mut World) {
     });
 }
 
-fn add_beam_object(magick: Magick, actor_index: usize, world: &mut World) {
-    world.beam_objects.push(BeamObject {
+fn add_beam(magick: Magick, actor_index: usize, world: &mut World) {
+    world.beams.push(Beam {
         id: get_next_id(&mut world.id_counter),
         actor_id: world.actors[actor_index].id,
         magick,
@@ -250,7 +250,7 @@ fn add_beam_object(magick: Magick, actor_index: usize, world: &mut World) {
 
 pub fn complete_directed_magick(actor_index: usize, world: &mut World) {
     let actor_id = world.actors[actor_index].id;
-    if remove_count(&mut world.beam_objects, |v| v.actor_id == actor_id) > 0 {
+    if remove_count(&mut world.beams, |v| v.actor_id == actor_id) > 0 {
         return;
     }
     if remove_count(&mut world.bounded_areas, |v| v.actor_id == actor_id) > 0 {

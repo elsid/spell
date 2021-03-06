@@ -392,7 +392,7 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
                     .unwrap();
 
                 text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
-                    .draw(&format!("Beams: {}", world.beam_objects.len())[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 10.0 * 24.0), g)
+                    .draw(&format!("Beams: {}", world.beams.len())[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 10.0 * 24.0), g)
                     .unwrap();
 
                 text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)

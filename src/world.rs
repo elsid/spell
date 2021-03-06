@@ -13,7 +13,7 @@ pub struct World {
     pub actors: Vec<Actor>,
     pub dynamic_objects: Vec<DynamicObject>,
     pub static_objects: Vec<StaticObject>,
-    pub beam_objects: Vec<BeamObject>,
+    pub beams: Vec<Beam>,
     pub static_areas: Vec<StaticArea>,
     pub temp_areas: Vec<TempArea>,
     pub bounded_areas: Vec<BoundedArea>,
@@ -105,7 +105,7 @@ pub struct StaticObject {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct BeamObject {
+pub struct Beam {
     pub id: u64,
     pub actor_id: u64,
     pub magick: Magick,
