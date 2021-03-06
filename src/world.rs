@@ -109,6 +109,7 @@ pub struct Beam {
     pub id: u64,
     pub actor_id: u64,
     pub magick: Magick,
+    pub deadline: f64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

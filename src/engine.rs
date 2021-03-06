@@ -122,6 +122,7 @@ impl Engine {
         let now = world.time;
         world.bounded_areas.retain(|v| v.deadline >= now);
         world.fields.retain(|v| v.deadline >= now);
+        world.beams.retain(|v| v.deadline >= now);
         intersect_objects_with_areas(world);
         intersect_objects_with_all_fields(world);
         update_temp_areas(world.time, duration, &world.settings, &mut world.temp_areas);
@@ -245,6 +246,7 @@ fn add_beam(magick: Magick, actor_index: usize, world: &mut World) {
         id: get_next_id(&mut world.id_counter),
         actor_id: world.actors[actor_index].id,
         magick,
+        deadline: world.time + world.settings.directed_magick_duration,
     });
 }
 
