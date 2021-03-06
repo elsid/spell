@@ -47,7 +47,7 @@ use crate::world::{
 
 pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver: Receiver<GameUpdate>) {
     info!("Run game");
-    let opengl = OpenGL::V4_5;
+    let opengl = OpenGL::V2_1;
     let mut window: GlfwWindow = WindowSettings::new("spell", [1920, 1080])
         .graphics_api(opengl)
         .exit_on_esc(true)
