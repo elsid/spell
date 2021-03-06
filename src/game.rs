@@ -367,7 +367,7 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
                     .unwrap();
 
                 text::Text::new_color([0.5, 0.5, 0.5, 1.0], 20)
-                    .draw(&format!("World time: {} (+{})", world.time, world.time - last_received_world_time)[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 20.0 + 5.0 * 24.0), g)
+                    .draw(&format!("World time: {:.3} (+{:.3})", world.time, world.time - last_received_world_time)[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 20.0 + 5.0 * 24.0), g)
                     .unwrap();
             });
 
