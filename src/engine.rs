@@ -663,7 +663,7 @@ fn decay_aura(now: f64, duration: f64, decay_factor: f64, aura: &mut Aura) {
 }
 
 fn damage_health(duration: f64, damage_factor: f64, body: &Body, effect: &Effect, health: &mut f64) {
-    *health -= get_damage(&effect.power) * damage_factor * duration / body.mass();
+    *health = (*health - get_damage(&effect.power) * damage_factor * duration / body.mass()).min(1.0);
 }
 
 fn update_position(duration: f64, velocity: Vec2f, position: &mut Vec2f) {
