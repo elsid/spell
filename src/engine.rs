@@ -393,9 +393,6 @@ fn combine_elements(target: Element, element: Element) -> Option<Element> {
     } else if (target == Element::Water && element == Element::Cold)
         || (target == Element::Cold && element == Element::Water) {
         Some(Element::Ice)
-    } else if (target == Element::Water && element == Element::Arcane)
-        || (target == Element::Arcane && element == Element::Water) {
-        Some(Element::Poison)
     } else if target == Element::Ice && element == Element::Fire {
         Some(Element::Water)
     } else {
@@ -723,10 +720,6 @@ fn add_magick_power_to_effect(now: f64, target: &Effect, other: &[f64; 11]) -> E
     if target_power[Element::Water as usize] > 0.0 && target_power[Element::Cold as usize] > 0.0 {
         power[Element::Ice as usize] = target_power[Element::Water as usize].max(target_power[Element::Water as usize]);
         applied[Element::Ice as usize] = now;
-    }
-    if target_power[Element::Water as usize] > 0.0 && target_power[Element::Arcane as usize] > 0.0 {
-        power[Element::Poison as usize] = target_power[Element::Water as usize].max(target_power[Element::Arcane as usize]);
-        applied[Element::Poison as usize] = now;
     }
     Effect { power, applied }
 }
