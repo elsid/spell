@@ -135,7 +135,10 @@ impl Engine {
         world.dynamic_objects.iter_mut().for_each(|v| v.dynamic_force = Vec2f::ZERO);
         let bounds = world.bounds.clone();
         world.actors.retain(|v| is_active(&bounds, &v.body, v.position, v.health));
-        world.dynamic_objects.retain(|v| is_active(&bounds, &v.body, v.position, v.health));
+        world.dynamic_objects.retain(|v| {
+            (v.velocity_z > f64::EPSILON || v.velocity.norm() > f64::EPSILON)
+                && is_active(&bounds, &v.body, v.position, v.health)
+        });
         world.static_objects.retain(|v| is_active(&bounds, &v.body, v.position, v.health));
         handle_completed_magicks(world);
     }
