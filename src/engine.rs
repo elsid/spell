@@ -757,8 +757,8 @@ fn get_current_direction(current_direction: Vec2f, target_direction: Vec2f, dura
 }
 
 fn normalize_angle(angle: f64) -> f64 {
-    let turns = angle / (2.0 * std::f64::consts::PI) + 0.5;
-    return (turns - turns.floor() - 0.5) * (2.0 * std::f64::consts::PI);
+    let turns = angle / std::f64::consts::TAU + 0.5;
+    return (turns - turns.floor() - 0.5) * std::f64::consts::TAU;
 }
 
 fn intersect_beam(magick: &Magick, origin: Vec2f, direction: Vec2f, depth: usize, length: &mut f64, world: &mut World) -> Option<EmittedBeam> {
