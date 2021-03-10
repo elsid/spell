@@ -597,7 +597,7 @@ fn update_actors(now: f64, duration: f64, settings: &WorldSettings, actors: &mut
         update_actor_dynamic_force(settings.move_force, actor);
         decay_effect(now, duration, settings.decay_factor, &mut actor.effect);
         decay_aura(now, duration, settings.decay_factor, &mut actor.aura);
-        damage_health(duration, settings.damage_factor, &actor.body, &actor.effect, &mut actor.health);
+        damage_health(duration, settings.magical_damage_factor, &actor.body, &actor.effect, &mut actor.health);
         update_position(duration, actor.velocity, &mut actor.position);
         update_velocity(duration, &actor.body, actor.dynamic_force, &mut actor.velocity);
         update_position_z(duration, actor.body.radius, actor.velocity_z, &mut actor.position_z);
@@ -609,7 +609,7 @@ fn update_dynamic_objects(now: f64, duration: f64, settings: &WorldSettings, dyn
     for object in dynamic_objects.iter_mut() {
         decay_effect(now, duration, settings.decay_factor, &mut object.effect);
         decay_aura(now, duration, settings.decay_factor, &mut object.aura);
-        damage_health(duration, settings.damage_factor, &object.body, &object.effect, &mut object.health);
+        damage_health(duration, settings.magical_damage_factor, &object.body, &object.effect, &mut object.health);
         update_position(duration, object.velocity, &mut object.position);
         update_velocity(duration, &object.body, object.dynamic_force, &mut object.velocity);
         update_position_z(duration, object.body.radius, object.velocity_z, &mut object.position_z);
@@ -621,7 +621,7 @@ fn update_static_objects(now: f64, duration: f64, settings: &WorldSettings, stat
     for object in static_objects.iter_mut() {
         decay_effect(now, duration, settings.decay_factor, &mut object.effect);
         decay_aura(now, duration, settings.decay_factor, &mut object.aura);
-        damage_health(duration, settings.damage_factor, &object.body, &object.effect, &mut object.health);
+        damage_health(duration, settings.magical_damage_factor, &object.body, &object.effect, &mut object.health);
     }
 }
 
@@ -866,14 +866,14 @@ fn collide_objects(duration: f64, world: &mut World) {
     for static_object in world.static_objects.iter_mut() {
         for actor in world.actors.iter_mut() {
             collide_dynamic_and_static_objects(
-                world.time, duration, world.settings.damage_factor,
+                world.time, duration, world.settings.physical_damage_factor,
                 DynamicCollidingObject::from(actor),
                 StaticCollidingObject::from(&mut *static_object),
             );
         }
         for dynamic_object in world.dynamic_objects.iter_mut() {
             collide_dynamic_and_static_objects(
-                world.time, duration, world.settings.damage_factor,
+                world.time, duration, world.settings.physical_damage_factor,
                 DynamicCollidingObject::from(dynamic_object),
                 StaticCollidingObject::from(&mut *static_object),
             );
@@ -884,7 +884,7 @@ fn collide_objects(duration: f64, world: &mut World) {
             for j in i + 1..world.actors.len() {
                 let (left, right) = world.actors.split_at_mut(j);
                 collide_dynamic_objects(
-                    world.time, duration, world.settings.damage_factor,
+                    world.time, duration, world.settings.physical_damage_factor,
                     DynamicCollidingObject::from(&mut left[i]),
                     DynamicCollidingObject::from(&mut right[0]),
                 );
@@ -894,7 +894,7 @@ fn collide_objects(duration: f64, world: &mut World) {
     for dynamic_object in world.dynamic_objects.iter_mut() {
         for actor in world.actors.iter_mut() {
             collide_dynamic_objects(
-                world.time, duration, world.settings.damage_factor,
+                world.time, duration, world.settings.physical_damage_factor,
                 DynamicCollidingObject::from(&mut *dynamic_object),
                 DynamicCollidingObject::from(actor),
             );
@@ -905,7 +905,7 @@ fn collide_objects(duration: f64, world: &mut World) {
             for j in i + 1..world.dynamic_objects.len() {
                 let (left, right) = world.dynamic_objects.split_at_mut(j);
                 collide_dynamic_objects(
-                    world.time, duration, world.settings.damage_factor,
+                    world.time, duration, world.settings.physical_damage_factor,
                     DynamicCollidingObject::from(&mut left[i]),
                     DynamicCollidingObject::from(&mut right[0]),
                 );
