@@ -595,9 +595,9 @@ fn update_actors(now: f64, duration: f64, settings: &WorldSettings, actors: &mut
     for actor in actors.iter_mut() {
         update_actor_current_direction(duration, settings.max_rotation_speed, actor);
         update_actor_dynamic_force(settings.move_force, actor);
+        damage_health(duration, settings.magical_damage_factor, &actor.body, &actor.effect, &mut actor.health);
         decay_effect(now, duration, settings.decay_factor, &mut actor.effect);
         decay_aura(now, duration, settings.decay_factor, &mut actor.aura);
-        damage_health(duration, settings.magical_damage_factor, &actor.body, &actor.effect, &mut actor.health);
         update_position(duration, actor.velocity, &mut actor.position);
         update_velocity(duration, &actor.body, actor.dynamic_force, &mut actor.velocity);
         update_position_z(duration, actor.body.radius, actor.velocity_z, &mut actor.position_z);
@@ -607,9 +607,9 @@ fn update_actors(now: f64, duration: f64, settings: &WorldSettings, actors: &mut
 
 fn update_dynamic_objects(now: f64, duration: f64, settings: &WorldSettings, dynamic_objects: &mut Vec<DynamicObject>) {
     for object in dynamic_objects.iter_mut() {
+        damage_health(duration, settings.magical_damage_factor, &object.body, &object.effect, &mut object.health);
         decay_effect(now, duration, settings.decay_factor, &mut object.effect);
         decay_aura(now, duration, settings.decay_factor, &mut object.aura);
-        damage_health(duration, settings.magical_damage_factor, &object.body, &object.effect, &mut object.health);
         update_position(duration, object.velocity, &mut object.position);
         update_velocity(duration, &object.body, object.dynamic_force, &mut object.velocity);
         update_position_z(duration, object.body.radius, object.velocity_z, &mut object.position_z);
@@ -619,9 +619,9 @@ fn update_dynamic_objects(now: f64, duration: f64, settings: &WorldSettings, dyn
 
 fn update_static_objects(now: f64, duration: f64, settings: &WorldSettings, static_objects: &mut Vec<StaticObject>) {
     for object in static_objects.iter_mut() {
+        damage_health(duration, settings.magical_damage_factor, &object.body, &object.effect, &mut object.health);
         decay_effect(now, duration, settings.decay_factor, &mut object.effect);
         decay_aura(now, duration, settings.decay_factor, &mut object.aura);
-        damage_health(duration, settings.magical_damage_factor, &object.body, &object.effect, &mut object.health);
     }
 }
 
