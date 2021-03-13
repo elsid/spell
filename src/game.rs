@@ -224,20 +224,20 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
                 clear([0.0, 0.0, 0.0, 1.0], g);
 
                 for v in world.static_areas.iter() {
-                    draw_body_and_magick(&v.body, &v.magick.power, |shape, rect| {
+                    with_body_and_magick(&v.body, &v.magick.power, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for v in world.temp_areas.iter() {
-                    draw_body_and_magick(&v.body, &v.effect.power, |shape, rect| {
+                    with_body_and_magick(&v.body, &v.effect.power, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for area in world.bounded_areas.iter() {
                     let owner = world.actors.iter().find(|v| v.id == area.actor_id).unwrap();
-                    draw_ring_sector_body_and_magick(&area.body, &area.effect.power, |shape, vertices| {
+                    with_ring_sector_body_and_magick(&area.body, &area.effect.power, |shape, vertices| {
                         let transform = base_transform.trans(owner.position.x, owner.position.y)
                             .orient(owner.current_direction.x, owner.current_direction.y);
                         draw_ring_sector(shape, vertices, &ctx.draw_state, transform, g);
@@ -274,55 +274,55 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
                 }
 
                 for v in world.actors.iter() {
-                    draw_body_and_magick(&v.body, &v.effect.power, |shape, rect| {
+                    with_body_and_magick(&v.body, &v.effect.power, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for v in world.dynamic_objects.iter() {
-                    draw_body_and_magick(&v.body, &v.effect.power, |shape, rect| {
+                    with_body_and_magick(&v.body, &v.effect.power, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for v in world.static_objects.iter() {
-                    draw_body_and_magick(&v.body, &v.effect.power, |shape, rect| {
+                    with_body_and_magick(&v.body, &v.effect.power, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for v in world.actors.iter() {
-                    draw_aura(&v.aura, |shape, rect| {
+                    with_aura(&v.aura, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for v in world.dynamic_objects.iter() {
-                    draw_aura(&v.aura, |shape, rect| {
+                    with_aura(&v.aura, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for v in world.static_objects.iter() {
-                    draw_aura(&v.aura, |shape, rect| {
+                    with_aura(&v.aura, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for v in world.actors.iter() {
-                    draw_health(&v.body, v.health, |shape, rect| {
+                    with_health(&v.body, v.health, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for v in world.dynamic_objects.iter() {
-                    draw_health(&v.body, v.health, |shape, rect| {
+                    with_health(&v.body, v.health, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for v in world.static_objects.iter() {
-                    draw_health(&v.body, v.health, |shape, rect| {
+                    with_health(&v.body, v.health, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
@@ -428,7 +428,7 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
     }
 }
 
-fn draw_body_and_magick<F: FnMut(ellipse::Ellipse, [f64; 4])>(body: &Body, power: &[f64; 11], mut f: F) {
+fn with_body_and_magick<F: FnMut(ellipse::Ellipse, [f64; 4])>(body: &Body, power: &[f64; 11], mut f: F) {
     let mut shape = ellipse::Ellipse::new(get_material_color(&body.material, 1.0));
     if power.iter().sum::<f64>() > 0.0 {
         shape = shape.border(ellipse::Border { color: get_magick_power_color(power), radius: 0.1 });
@@ -437,7 +437,7 @@ fn draw_body_and_magick<F: FnMut(ellipse::Ellipse, [f64; 4])>(body: &Body, power
     f(shape, rect);
 }
 
-fn draw_ring_sector_body_and_magick<F: FnMut(polygon::Polygon, types::Polygon)>(body: &RingSector, power: &[f64; 11], mut f: F) {
+fn with_ring_sector_body_and_magick<F: FnMut(polygon::Polygon, types::Polygon)>(body: &RingSector, power: &[f64; 11], mut f: F) {
     const BASE_RESOLUTION: f64 = 12.0;
     let shape = polygon::Polygon::new(get_magick_power_color(power));
     let resolution = (body.angle * BASE_RESOLUTION).round() as usize;
@@ -455,13 +455,13 @@ fn draw_ring_sector_body_and_magick<F: FnMut(polygon::Polygon, types::Polygon)>(
     f(shape, &vertices[0..2 * resolution + 1]);
 }
 
-fn draw_aura<F: FnMut(ellipse::Ellipse, [f64; 4])>(aura: &Aura, mut f: F) {
+fn with_aura<F: FnMut(ellipse::Ellipse, [f64; 4])>(aura: &Aura, mut f: F) {
     let shape = ellipse::Ellipse::new(get_magick_power_color(&aura.elements));
     let rect = rectangle::centered_square(0.0, 0.0, aura.radius);
     f(shape, rect);
 }
 
-fn draw_health<F: FnMut(rectangle::Rectangle, [f64; 4])>(body: &Body, health: f64, mut f: F) {
+fn with_health<F: FnMut(rectangle::Rectangle, [f64; 4])>(body: &Body, health: f64, mut f: F) {
     let shift = body.radius + 0.5;
     let half_width = body.radius * 0.66;
     let bar_right = -half_width + 2.0 * half_width * health;
