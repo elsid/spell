@@ -1,14 +1,18 @@
+use std::cell::RefCell;
+
 use parry2d_f64::math::{Isometry, Real};
 use parry2d_f64::na::{Point2, Vector2};
 use parry2d_f64::query;
-use parry2d_f64::query::{Ray, RayCast, RayIntersection};
-use parry2d_f64::shape::{Ball, Shape, Triangle};
+use parry2d_f64::query::Ray;
+use parry2d_f64::shape::{Ball, Cuboid, Polyline, Shape, Triangle};
 
 use crate::rect::Rectf;
 use crate::vec2::{Square, Vec2f};
-use crate::world::{Actor, Aura, Beam, Body, BoundedArea, DelayedMagick, DynamicObject,
-                   Effect, Element, Field, Magick, Material, RingSector, StaticArea,
-                   StaticObject, TempArea, World, WorldSettings};
+use crate::world::{Actor, Aura, Beam, Body, BoundedArea, CircleArc, DelayedMagick, Disk,
+                   DynamicObject, Effect, Element, Field, Magick, Material, RingSector, StaticArea,
+                   StaticObject, StaticShape, TempArea, World, WorldSettings};
+
+const RESOLUTION_FACTOR: f64 = 4.0;
 
 #[derive(Debug, Copy, Clone)]
 pub enum Index {
@@ -69,7 +73,7 @@ pub struct BeamCollider {
 }
 
 impl BeamCollider {
-    fn update(&mut self, world: &mut World) {
+    fn update(&mut self, world: &mut World, shape_cache: &ShapeCache) {
         self.initial_beams.clear();
         self.reflected_beams.clear();
         for i in 0..world.beams.len() {
@@ -78,10 +82,10 @@ impl BeamCollider {
                 .find(|v| v.id == beam.actor_id)
                 .unwrap();
             let direction = actor.current_direction;
-            let origin = actor.position + direction * (actor.body.radius + world.settings.margin);
+            let origin = actor.position + direction * (actor.body.shape.radius + world.settings.margin);
             let magick = beam.magick.clone();
             let mut length = world.settings.max_beam_length;
-            if let Some(r) = intersect_beam(&magick, origin, direction, 0, &mut length, world) {
+            if let Some(r) = intersect_beam(&magick, origin, direction, 0, &mut length, world, shape_cache) {
                 self.reflected_beams.push(r);
             }
             self.initial_beams.push(EmittedBeam { origin, direction, length, depth: 0, magick });
@@ -90,7 +94,7 @@ impl BeamCollider {
         while beam_index < self.reflected_beams.len() {
             let beam = &mut self.reflected_beams[beam_index];
             let origin = beam.origin + beam.direction * world.settings.margin;
-            if let Some(r) = intersect_beam(&beam.magick, origin, beam.direction, beam.depth, &mut beam.length, world) {
+            if let Some(r) = intersect_beam(&beam.magick, origin, beam.direction, beam.depth, &mut beam.length, world, shape_cache) {
                 beam.length += world.settings.margin;
                 self.reflected_beams.push(r);
             }
@@ -99,9 +103,36 @@ impl BeamCollider {
     }
 }
 
+#[derive(Clone, PartialEq)]
+struct CircleArcKey {
+    radius: f64,
+    length: f64,
+}
+
+#[derive(Default)]
+struct ShapeCache {
+    polylines: RefCell<Vec<(CircleArcKey, Polyline)>>,
+}
+
+impl ShapeCache {
+    fn with<R, F>(&self, key: &CircleArcKey, mut f: F) -> R
+        where F: FnMut(&dyn Shape) -> R
+    {
+        if let Some((_, v)) = self.polylines.borrow().iter()
+            .find(|(k, _)| k == key) {
+            return f(v);
+        }
+        let polyline = make_circle_arc_polyline(key);
+        let r = f(&polyline);
+        self.polylines.borrow_mut().push((key.clone(), polyline));
+        r
+    }
+}
+
 #[derive(Default)]
 pub struct Engine {
     beam_collider: BeamCollider,
+    shape_cache: ShapeCache,
 }
 
 impl Engine {
@@ -123,23 +154,27 @@ impl Engine {
         world.bounded_areas.retain(|v| v.deadline >= now);
         world.fields.retain(|v| v.deadline >= now);
         world.beams.retain(|v| v.deadline >= now);
-        intersect_objects_with_areas(world);
+        intersect_objects_with_areas(world, &mut self.shape_cache);
         intersect_objects_with_all_fields(world);
         update_temp_areas(world.time, duration, &world.settings, &mut world.temp_areas);
         update_actors(world.time, duration, &world.settings, &mut world.actors);
         update_dynamic_objects(world.time, duration, &world.settings, &mut world.dynamic_objects);
         update_static_objects(world.time, duration, &world.settings, &mut world.static_objects);
-        self.beam_collider.update(world);
-        collide_objects(duration, world);
+        self.beam_collider.update(world, &mut self.shape_cache);
+        collide_objects(duration, world, &mut self.shape_cache);
         world.actors.iter_mut().for_each(|v| v.dynamic_force = Vec2f::ZERO);
         world.dynamic_objects.iter_mut().for_each(|v| v.dynamic_force = Vec2f::ZERO);
         let bounds = world.bounds.clone();
-        world.actors.retain(|v| is_active(&bounds, &v.body, v.position, v.health));
+        world.actors.retain(|v| is_active(&bounds, &v.body.shape.as_shape(), v.position, v.health));
         world.dynamic_objects.retain(|v| {
             (v.velocity_z > f64::EPSILON || v.velocity.norm() > f64::EPSILON)
-                && is_active(&bounds, &v.body, v.position, v.health)
+                && is_active(&bounds, &v.body.shape.as_shape(), v.position, v.health)
         });
-        world.static_objects.retain(|v| is_active(&bounds, &v.body, v.position, v.health));
+        world.static_objects.retain(|v| {
+            v.aura.power > 0.0 || v.body.shape.with_shape(&mut self.shape_cache, |shape| {
+                is_active(&bounds, shape, v.position, v.health)
+            })
+        });
         handle_completed_magicks(world);
     }
 }
@@ -224,6 +259,8 @@ fn cast_shield(magick: Magick, actor_index: usize, world: &mut World) {
         || magick.power[Element::Steam as usize] > 0.0
         || magick.power[Element::Poison as usize] > 0.0 {
         cast_spray_based_shield(magick, actor_index, world);
+    } else {
+        cast_reflecting_shield(std::f64::consts::FRAC_PI_2, actor_index, world);
     }
 }
 
@@ -234,7 +271,7 @@ fn cast_earth_based_shield(magick: Magick, actor_index: usize, world: &mut World
         world.static_objects.push(StaticObject {
             id: get_next_id(&mut world.id_counter),
             body: Body {
-                radius: distance * std::f64::consts::PI / (2 * 5 * 2) as f64,
+                shape: StaticShape::Disk(Disk { radius: distance * std::f64::consts::PI / (2 * 5 * 2) as f64 }),
                 material: Material::Stone,
             },
             position: actor.position + actor.current_direction.rotated(i as f64 * std::f64::consts::PI / (2 * 5) as f64) * distance,
@@ -252,13 +289,35 @@ fn cast_spray_based_shield(magick: Magick, actor_index: usize, world: &mut World
         world.temp_areas.push(TempArea {
             id: get_next_id(&mut world.id_counter),
             body: Body {
-                radius: distance * std::f64::consts::PI / (2 * 5 * 2) as f64,
+                shape: Disk { radius: distance * std::f64::consts::PI / (2 * 5 * 2) as f64 },
                 material: Material::Dirt,
             },
             position: actor.position + actor.current_direction.rotated(i as f64 * std::f64::consts::PI / (2 * 5) as f64) * distance,
             effect: add_magick_power_to_effect(world.time, &Effect::default(), &magick.power),
         });
     }
+}
+
+fn cast_reflecting_shield(length: f64, actor_index: usize, world: &mut World) {
+    let actor = &world.actors[actor_index];
+    let radius = 5.0;
+    let mut elements = [false; 11];
+    elements[Element::Shield as usize] = true;
+    world.static_objects.push(StaticObject {
+        id: get_next_id(&mut world.id_counter),
+        body: Body {
+            shape: StaticShape::CircleArc(CircleArc {
+                radius,
+                length,
+                rotation: normalize_angle(actor.current_direction.angle()),
+            }),
+            material: Material::None,
+        },
+        position: actor.position,
+        health: 0.0,
+        effect: Effect::default(),
+        aura: Aura { applied: world.time, power: 5.0, radius: 0.0, elements },
+    });
 }
 
 fn add_delayed_magick(magick: Magick, actor_index: usize, world: &mut World) {
@@ -312,7 +371,7 @@ pub fn self_magick(actor_index: usize, world: &mut World) {
         world.actors[actor_index].aura = Aura {
             applied: world.time,
             power,
-            radius: radius_factor * world.actors[actor_index].body.radius,
+            radius: radius_factor * world.actors[actor_index].body.shape.radius,
             elements,
         };
     }
@@ -322,8 +381,8 @@ fn cast_spray(angle: f64, duration: f64, magick: &Magick, actor_index: usize, wo
     let actor = &world.actors[actor_index];
     let effect = add_magick_power_to_effect(world.time, &Effect::default(), &magick.power);
     let body = RingSector {
-        min_radius: actor.body.radius + world.settings.margin,
-        max_radius: actor.body.radius * (1.0 + effect.power.iter().sum::<f64>()) * world.settings.spray_distance_factor,
+        min_radius: actor.body.shape.radius + world.settings.margin,
+        max_radius: actor.body.shape.radius * (1.0 + effect.power.iter().sum::<f64>()) * world.settings.spray_distance_factor,
         angle,
     };
     if effect.power[Element::Water as usize] == effect.power.iter().sum::<f64>() {
@@ -344,19 +403,62 @@ fn cast_spray(angle: f64, duration: f64, magick: &Magick, actor_index: usize, wo
     });
 }
 
-impl Body {
-    fn mass(&self) -> f64 {
-        self.volume() * self.material.density()
-    }
+trait WithMass {
+    fn mass(&self) -> f64;
+}
 
+impl<Shape: WithVolume> WithMass for Body<Shape> {
+    fn mass(&self) -> f64 {
+        self.shape.volume() * self.material.density()
+    }
+}
+
+trait WithVolume {
+    fn volume(&self) -> f64;
+}
+
+impl WithVolume for StaticShape {
+    fn volume(&self) -> f64 {
+        match self {
+            StaticShape::CircleArc(v) => v.volume(),
+            StaticShape::Disk(v) => v.volume(),
+        }
+    }
+}
+
+impl WithVolume for Disk {
     fn volume(&self) -> f64 {
         self.radius * self.radius * self.radius * std::f64::consts::PI
+    }
+}
+
+impl WithVolume for CircleArc {
+    fn volume(&self) -> f64 {
+        self.radius * self.length * std::f64::consts::PI
+    }
+}
+
+impl StaticShape {
+    fn with_shape<R, F: FnMut(&dyn Shape) -> R>(&self, cache: &ShapeCache, mut f: F) -> R {
+        match &self {
+            StaticShape::CircleArc(arc) => {
+                cache.with(&CircleArcKey { radius: arc.radius, length: arc.length }, f)
+            }
+            StaticShape::Disk(disk) => f(&disk.as_shape()),
+        }
+    }
+}
+
+impl Disk {
+    fn as_shape(&self) -> Ball {
+        Ball::new(self.radius)
     }
 }
 
 impl Material {
     fn density(self) -> f64 {
         match self {
+            Material::None => 1.0,
             Material::Flesh => 800.0,
             Material::Stone => 2750.0,
             Material::Grass => 500.0,
@@ -367,6 +469,7 @@ impl Material {
 
     fn restitution(self) -> f64 {
         match self {
+            Material::None => 1.0,
             Material::Flesh => 0.05,
             Material::Stone => 0.2,
             Material::Grass => 0.01,
@@ -377,6 +480,7 @@ impl Material {
 
     fn friction(self) -> f64 {
         match self {
+            Material::None => 0.0,
             Material::Flesh => 1.0,
             Material::Stone => 1.0,
             Material::Grass => 0.5,
@@ -414,15 +518,15 @@ fn can_cancel_element(target: Element, element: Element) -> bool {
         || (target == Element::Poison && element == Element::Life)
 }
 
-fn intersect_objects_with_areas(world: &mut World) {
+fn intersect_objects_with_areas(world: &mut World, shape_cache: &ShapeCache) {
     for i in 0..world.actors.len() {
         intersect_actor_with_all_bounded_areas(world.time, i, &world.bounded_areas, &mut world.actors);
         let actor = &mut world.actors[i];
         intersect_with_temp_and_static_areas(world.time, world.settings.gravitational_acceleration, &world.temp_areas, &world.static_areas, &mut IntersectingDynamicObject {
-            shape: &Ball::new(actor.body.radius),
+            shape: &Ball::new(actor.body.shape.radius),
             velocity: actor.velocity,
             isometry: Isometry::translation(actor.position.x, actor.position.y),
-            levitating: (actor.position_z - actor.body.radius) > f64::EPSILON,
+            levitating: (actor.position_z - actor.body.shape.radius) > f64::EPSILON,
             mass: actor.body.mass(),
             dynamic_force: &mut actor.dynamic_force,
             effect: &mut actor.effect,
@@ -430,25 +534,28 @@ fn intersect_objects_with_areas(world: &mut World) {
     }
     for object in world.dynamic_objects.iter_mut() {
         intersect_static_object_with_all_bounded_areas(world.time, &world.bounded_areas, &mut world.actors, &mut IntersectingStaticObject {
-            shape: &Ball::new(object.body.radius),
+            shape: &Ball::new(object.body.shape.radius),
             isometry: Isometry::translation(object.position.x, object.position.y),
             effect: &mut object.effect,
         });
         intersect_with_temp_and_static_areas(world.time, world.settings.gravitational_acceleration, &world.temp_areas, &world.static_areas, &mut IntersectingDynamicObject {
-            shape: &Ball::new(object.body.radius),
+            shape: &Ball::new(object.body.shape.radius),
             velocity: object.velocity,
             isometry: Isometry::translation(object.position.x, object.position.y),
-            levitating: (object.position_z - object.body.radius) > f64::EPSILON,
+            levitating: (object.position_z - object.body.shape.radius) > f64::EPSILON,
             mass: object.body.mass(),
             dynamic_force: &mut object.dynamic_force,
             effect: &mut object.effect,
         });
     }
-    for object in world.static_objects.iter_mut() {
-        intersect_static_object_with_all_bounded_areas(world.time, &world.bounded_areas, &world.actors, &mut IntersectingStaticObject {
-            shape: &Ball::new(object.body.radius),
-            isometry: Isometry::translation(object.position.x, object.position.y),
-            effect: &mut object.effect,
+    for i in 0..world.static_objects.len() {
+        world.static_objects[i].body.shape.clone().with_shape(shape_cache, |shape| {
+            let object = &mut world.static_objects[i];
+            intersect_static_object_with_all_bounded_areas(world.time, &world.bounded_areas, &world.actors, &mut IntersectingStaticObject {
+                shape,
+                isometry: Isometry::translation(object.position.x, object.position.y),
+                effect: &mut object.effect,
+            });
         });
     }
 }
@@ -471,10 +578,10 @@ fn intersect_with_temp_and_static_areas(now: f64, gravitational_acceleration: f6
     }
 }
 
-fn intersect_with_temp_areas(now: f64, temp_areas: &[TempArea], object: &mut IntersectingDynamicObject)  {
+fn intersect_with_temp_areas(now: f64, temp_areas: &[TempArea], object: &mut IntersectingDynamicObject) {
     for temp_area in temp_areas.iter() {
         let isometry = Isometry::translation(temp_area.position.x, temp_area.position.y);
-        if query::intersection_test(&object.isometry, object.shape, &isometry, &Ball::new(temp_area.body.radius)).unwrap() {
+        if query::intersection_test(&object.isometry, object.shape, &isometry, &Ball::new(temp_area.body.shape.radius)).unwrap() {
             *object.effect = add_magick_power_to_effect(now, object.effect, &temp_area.effect.power);
         }
     }
@@ -485,7 +592,7 @@ fn intersect_with_last_static_area(now: f64, gravitational_acceleration: f64, st
     if let Some(static_area) = static_areas.iter().rev()
         .find(|v| {
             let isometry = Isometry::translation(v.position.x, v.position.y);
-            query::intersection_test(&object.isometry, object.shape, &isometry, &Ball::new(v.body.radius)).unwrap()
+            query::intersection_test(&object.isometry, object.shape, &isometry, &Ball::new(v.body.shape.radius)).unwrap()
         }) {
         add_dry_friction_force(object.mass, object.velocity, static_area.body.material, gravitational_acceleration, object.dynamic_force);
         *object.effect = add_magick_power_to_effect(now, object.effect, &static_area.magick.power);
@@ -501,13 +608,13 @@ struct IntersectingStaticObject<'a> {
 fn intersect_actor_with_all_bounded_areas(now: f64, actor_index: usize, bounded_areas: &[BoundedArea], actors: &mut [Actor]) {
     let (left, right) = actors.split_at_mut(actor_index);
     intersect_static_object_with_all_bounded_areas(now, bounded_areas, left, &mut IntersectingStaticObject {
-        shape: &Ball::new(right[0].body.radius),
+        shape: &Ball::new(right[0].body.shape.radius),
         isometry: Isometry::translation(right[0].position.x, right[0].position.y),
         effect: &mut right[0].effect,
     });
     let (left, right) = actors.split_at_mut(actor_index + 1);
     intersect_static_object_with_all_bounded_areas(now, bounded_areas, right, &mut IntersectingStaticObject {
-        shape: &Ball::new(left[actor_index].body.radius),
+        shape: &Ball::new(left[actor_index].body.shape.radius),
         isometry: Isometry::translation(left[actor_index].position.x, left[actor_index].position.y),
         effect: &mut left[actor_index].effect,
     });
@@ -532,20 +639,20 @@ fn intersect_objects_with_all_fields(world: &mut World) {
     for i in 0..world.actors.len() {
         let (left, right) = world.actors.split_at_mut(i);
         intersect_object_with_all_fields(&world.fields, left, &mut PushedObject {
-            shape: Ball::new(right[0].body.radius),
+            shape: Ball::new(right[0].body.shape.radius),
             position: right[0].position,
             dynamic_force: &mut right[0].dynamic_force,
         });
         let (left, right) = world.actors.split_at_mut(i + 1);
         intersect_object_with_all_fields(&world.fields, right, &mut PushedObject {
-            shape: Ball::new(left[i].body.radius),
+            shape: Ball::new(left[i].body.shape.radius),
             position: left[i].position,
             dynamic_force: &mut left[i].dynamic_force,
         });
     }
     for object in world.dynamic_objects.iter_mut() {
         intersect_object_with_all_fields(&world.fields, &world.actors, &mut PushedObject {
-            shape: Ball::new(object.body.radius),
+            shape: Ball::new(object.body.shape.radius),
             position: object.position,
             dynamic_force: &mut object.dynamic_force,
         });
@@ -592,31 +699,30 @@ fn update_actors(now: f64, duration: f64, settings: &WorldSettings, actors: &mut
     for actor in actors.iter_mut() {
         update_actor_current_direction(duration, settings.max_rotation_speed, actor);
         update_actor_dynamic_force(settings.move_force, actor);
-        damage_health(duration, settings.magical_damage_factor, &actor.body, &actor.effect, &mut actor.health);
+        damage_health(duration, settings.magical_damage_factor, actor.body.mass(), &actor.effect, &mut actor.health);
         decay_effect(now, duration, settings.decay_factor, &mut actor.effect);
         decay_aura(now, duration, settings.decay_factor, &mut actor.aura);
         update_position(duration, actor.velocity, &mut actor.position);
-        update_velocity(duration, &actor.body, actor.dynamic_force, &mut actor.velocity);
-        update_position_z(duration, actor.body.radius, actor.velocity_z, &mut actor.position_z);
-        update_velocity_z(duration, actor.body.radius, settings.gravitational_acceleration, actor.position_z, &mut actor.velocity_z);
+        update_velocity(duration, actor.body.mass(), actor.dynamic_force, &mut actor.velocity);
+        update_position_z(duration, actor.body.shape.radius, actor.velocity_z, &mut actor.position_z);
+        update_velocity_z(duration, actor.body.shape.radius, settings.gravitational_acceleration, actor.position_z, &mut actor.velocity_z);
     }
 }
 
 fn update_dynamic_objects(now: f64, duration: f64, settings: &WorldSettings, dynamic_objects: &mut Vec<DynamicObject>) {
     for object in dynamic_objects.iter_mut() {
-        damage_health(duration, settings.magical_damage_factor, &object.body, &object.effect, &mut object.health);
+        damage_health(duration, settings.magical_damage_factor, object.body.mass(), &object.effect, &mut object.health);
         decay_effect(now, duration, settings.decay_factor, &mut object.effect);
         decay_aura(now, duration, settings.decay_factor, &mut object.aura);
         update_position(duration, object.velocity, &mut object.position);
-        update_velocity(duration, &object.body, object.dynamic_force, &mut object.velocity);
-        update_position_z(duration, object.body.radius, object.velocity_z, &mut object.position_z);
-        update_velocity_z(duration, object.body.radius, settings.gravitational_acceleration, object.position_z, &mut object.velocity_z);
+        update_velocity(duration, object.body.mass(), object.dynamic_force, &mut object.velocity);
+        update_position_z(duration, object.body.shape.radius, object.velocity_z, &mut object.position_z);
+        update_velocity_z(duration, object.body.shape.radius, settings.gravitational_acceleration, object.position_z, &mut object.velocity_z);
     }
 }
 
 fn update_static_objects(now: f64, duration: f64, settings: &WorldSettings, static_objects: &mut Vec<StaticObject>) {
     for object in static_objects.iter_mut() {
-        damage_health(duration, settings.magical_damage_factor, &object.body, &object.effect, &mut object.health);
         decay_effect(now, duration, settings.decay_factor, &mut object.effect);
         decay_aura(now, duration, settings.decay_factor, &mut object.aura);
     }
@@ -659,21 +765,21 @@ fn decay_aura(now: f64, duration: f64, decay_factor: f64, aura: &mut Aura) {
     }
 }
 
-fn damage_health(duration: f64, damage_factor: f64, body: &Body, effect: &Effect, health: &mut f64) {
-    *health = (*health - get_damage(&effect.power) * damage_factor * duration / body.mass()).min(1.0);
+fn damage_health(duration: f64, damage_factor: f64, mass: f64, effect: &Effect, health: &mut f64) {
+    *health = (*health - get_damage(&effect.power) * damage_factor * duration / mass).min(1.0);
 }
 
 fn update_position(duration: f64, velocity: Vec2f, position: &mut Vec2f) {
     *position += velocity * duration;
 }
 
-fn update_velocity(duration: f64, body: &Body, dynamic_force: Vec2f, velocity: &mut Vec2f) {
+fn update_velocity(duration: f64, mass: f64, dynamic_force: Vec2f, velocity: &mut Vec2f) {
     let dynamic_force_norm = dynamic_force.norm();
     let velocity_norm = velocity.norm();
     if dynamic_force_norm > 0.0 && velocity_norm > 0.0 {
-        *velocity += (dynamic_force / dynamic_force_norm) * (dynamic_force_norm * duration / (2.0 * body.mass())).min(velocity_norm);
+        *velocity += (dynamic_force / dynamic_force_norm) * (dynamic_force_norm * duration / (2.0 * mass)).min(velocity_norm);
     } else {
-        *velocity += dynamic_force * (duration / (2.0 * body.mass()));
+        *velocity += dynamic_force * (duration / (2.0 * mass));
     }
 }
 
@@ -757,14 +863,14 @@ fn normalize_angle(angle: f64) -> f64 {
     return (turns - turns.floor() - 0.5) * std::f64::consts::TAU;
 }
 
-fn intersect_beam(magick: &Magick, origin: Vec2f, direction: Vec2f, depth: usize, length: &mut f64, world: &mut World) -> Option<EmittedBeam> {
-    let mut nearest_hit = find_beam_nearest_intersection(origin, direction, &world.actors, length)
+fn intersect_beam(magick: &Magick, origin: Vec2f, direction: Vec2f, depth: usize, length: &mut f64, world: &mut World, shape_cache: &ShapeCache) -> Option<EmittedBeam> {
+    let mut nearest_hit = find_beam_nearest_intersection(origin, direction, &world.actors, length, shape_cache)
         .map(|(i, n)| (Index::Actor(i), n));
-    nearest_hit = find_beam_nearest_intersection(origin, direction, &world.dynamic_objects, length)
+    nearest_hit = find_beam_nearest_intersection(origin, direction, &world.dynamic_objects, length, shape_cache)
         .map(|(i, n)| (Index::DynamicBody(i), n)).or(nearest_hit);
-    nearest_hit = find_beam_nearest_intersection(origin, direction, &world.static_objects, length)
+    nearest_hit = find_beam_nearest_intersection(origin, direction, &world.static_objects, length, shape_cache)
         .map(|(i, n)| (Index::StaticBody(i), n)).or(nearest_hit);
-    if let Some((index, normal)) = nearest_hit {
+    if let Some((index, mut normal)) = nearest_hit {
         let (aura, effect) = match index {
             Index::Actor(i) => {
                 let object = &mut world.actors[i];
@@ -781,6 +887,8 @@ fn intersect_beam(magick: &Magick, origin: Vec2f, direction: Vec2f, depth: usize
         };
         *effect = add_magick_power_to_effect(world.time, effect, &magick.power);
         if depth < world.settings.max_beam_depth as usize && can_reflect_beams(&aura.elements) {
+            // RayCast::cast_ray_and_get_normal returns not normalized normal
+            normal.normalize();
             Some(EmittedBeam {
                 origin: origin + direction * *length,
                 direction: direction - normal * 2.0 * direction.cos(normal),
@@ -814,39 +922,60 @@ impl WithIsometry for DynamicObject {
 
 impl WithIsometry for StaticObject {
     fn get_isometry(&self) -> Isometry<Real> {
-        Isometry::translation(self.position.x, self.position.y)
+        match &self.body.shape {
+            StaticShape::CircleArc(v) => {
+                Isometry::new(Vector2::new(self.position.x, self.position.y), v.rotation)
+            }
+            StaticShape::Disk(..) => Isometry::translation(self.position.x, self.position.y),
+        }
     }
 }
 
-impl RayCast for Actor {
-    fn cast_local_ray_and_get_normal(&self, ray: &Ray, max_toi: f64, solid: bool) -> Option<RayIntersection> {
-        Ball::new(self.body.radius).cast_local_ray_and_get_normal(&ray, max_toi, solid)
+trait WithShape {
+    fn with_shape(&self, shape_cache: &ShapeCache, f: &mut dyn FnMut(&dyn Shape));
+}
+
+impl WithShape for Actor {
+    fn with_shape(&self, _: &ShapeCache, f: &mut dyn FnMut(&dyn Shape)) {
+        (*f)(&self.body.shape.as_shape())
     }
 }
 
-impl RayCast for DynamicObject {
-    fn cast_local_ray_and_get_normal(&self, ray: &Ray, max_toi: f64, solid: bool) -> Option<RayIntersection> {
-        Ball::new(self.body.radius).cast_local_ray_and_get_normal(&ray, max_toi, solid)
+impl WithShape for DynamicObject {
+    fn with_shape(&self, _: &ShapeCache, f: &mut dyn FnMut(&dyn Shape)) {
+        (*f)(&self.body.shape.as_shape())
     }
 }
 
-impl RayCast for StaticObject {
-    fn cast_local_ray_and_get_normal(&self, ray: &Ray, max_toi: f64, solid: bool) -> Option<RayIntersection> {
-        Ball::new(self.body.radius).cast_local_ray_and_get_normal(&ray, max_toi, solid)
+impl WithShape for StaticObject {
+    fn with_shape(&self, shape_cache: &ShapeCache, f: &mut dyn FnMut(&dyn Shape)) {
+        self.body.shape.clone().with_shape(shape_cache, |shape| (*f)(shape))
     }
 }
 
-fn find_beam_nearest_intersection<T>(origin: Vec2f, direction: Vec2f, objects: &[T], length: &mut f64) -> Option<(usize, Vec2f)>
-    where T: WithIsometry + RayCast
+fn with_shape<T, R, F>(v: &T, shape_cache: &ShapeCache, mut f: F) -> R
+    where T: WithShape,
+          F: FnMut(&dyn Shape) -> R,
+{
+    let mut r = None;
+    v.with_shape(shape_cache, &mut |shape| { r = Some(f(shape)); });
+    r.unwrap()
+}
+
+fn find_beam_nearest_intersection<T>(origin: Vec2f, direction: Vec2f, objects: &[T], length: &mut f64, shape_cache: &ShapeCache) -> Option<(usize, Vec2f)>
+    where T: WithIsometry + WithShape
 {
     let mut nearest = None;
     for i in 0..objects.len() {
-        let result = objects[i].cast_ray_and_get_normal(
-            &objects[i].get_isometry(),
-            &Ray::new(Point2::new(origin.x, origin.y), Vector2::new(direction.x, direction.y)),
-            *length,
-            true,
-        );
+        let isometry = objects[i].get_isometry();
+        let result = with_shape(&objects[i], shape_cache, |shape| {
+            shape.cast_ray_and_get_normal(
+                &isometry,
+                &Ray::new(Point2::new(origin.x, origin.y), Vector2::new(direction.x, direction.y)),
+                *length,
+                true,
+            )
+        });
         if let Some(intersection) = result {
             *length = intersection.toi;
             nearest = Some((i, Vec2f::new(intersection.normal.x, intersection.normal.y)));
@@ -855,247 +984,273 @@ fn find_beam_nearest_intersection<T>(origin: Vec2f, direction: Vec2f, objects: &
     nearest
 }
 
-fn collide_objects(duration: f64, world: &mut World) {
+fn collide_objects(duration: f64, world: &mut World, shape_cache: &ShapeCache) {
     let time = world.time;
     let physical_damage_factor = world.settings.physical_damage_factor;
     for static_object in world.static_objects.iter_mut() {
-        let mut static_object = StaticCollidingObject {
-            shape: &Ball::new(static_object.body.radius),
-            material: static_object.body.material,
-            mass: static_object.body.mass(),
-            isometry: &static_object.get_isometry(),
-            effect: &mut static_object.effect,
-            health: &mut static_object.health,
-            aura: &static_object.aura,
-        };
         for actor in world.actors.iter_mut() {
-            let mut actor_object = DynamicCollidingObject {
-                shape: &Ball::new(actor.body.radius),
-                material: actor.body.material,
-                mass: actor.body.mass(),
-                position: &mut actor.position,
-                velocity: &mut actor.velocity,
-                effect: &mut actor.effect,
-                health: &mut actor.health,
-                aura: &actor.aura,
-            };
-            collide_dynamic_and_static_objects(
-                time, duration, physical_damage_factor,
-                &mut actor_object, &mut static_object,
-            );
+            collide_dynamic_and_static_objects(time, duration, physical_damage_factor, shape_cache,
+                                               actor, static_object);
         }
         for dynamic_object in world.dynamic_objects.iter_mut() {
-            let mut dynamic_object = DynamicCollidingObject {
-                shape: &Ball::new(dynamic_object.body.radius),
-                material: dynamic_object.body.material,
-                mass: dynamic_object.body.mass(),
-                position: &mut dynamic_object.position,
-                velocity: &mut dynamic_object.velocity,
-                effect: &mut dynamic_object.effect,
-                health: &mut dynamic_object.health,
-                aura: &dynamic_object.aura,
-            };
-            collide_dynamic_and_static_objects(
-                time, duration, physical_damage_factor,
-                &mut dynamic_object, &mut static_object,
-            );
+            collide_dynamic_and_static_objects(time, duration, physical_damage_factor, shape_cache,
+                                               dynamic_object, static_object);
         }
     }
     if !world.actors.is_empty() {
         for i in 0..world.actors.len() - 1 {
             for j in i + 1..world.actors.len() {
                 let (left, right) = world.actors.split_at_mut(j);
-                collide_dynamic_objects(
-                    world.time, duration, world.settings.physical_damage_factor,
-                    DynamicCollidingObject {
-                        shape: &Ball::new(left[i].body.radius),
-                        material: left[i].body.material,
-                        mass: left[i].body.mass(),
-                        position: &mut left[i].position,
-                        velocity: &mut left[i].velocity,
-                        effect: &mut left[i].effect,
-                        health: &mut left[i].health,
-                        aura: &left[i].aura,
-                    },
-                    DynamicCollidingObject {
-                        shape: &Ball::new(right[0].body.radius),
-                        material: right[0].body.material,
-                        mass: right[0].body.mass(),
-                        position: &mut right[0].position,
-                        velocity: &mut right[0].velocity,
-                        effect: &mut right[0].effect,
-                        health: &mut right[0].health,
-                        aura: &right[0].aura,
-                    },
-                );
+                collide_dynamic_objects(world.time, duration, world.settings.physical_damage_factor,
+                                        &mut left[i], &mut right[0]);
             }
         }
     }
     for dynamic_object in world.dynamic_objects.iter_mut() {
         for actor in world.actors.iter_mut() {
-            collide_dynamic_objects(
-                world.time, duration, world.settings.physical_damage_factor,
-                DynamicCollidingObject {
-                    shape: &Ball::new(dynamic_object.body.radius),
-                    material: dynamic_object.body.material,
-                    mass: dynamic_object.body.mass(),
-                    position: &mut dynamic_object.position,
-                    velocity: &mut dynamic_object.velocity,
-                    effect: &mut dynamic_object.effect,
-                    health: &mut dynamic_object.health,
-                    aura: &dynamic_object.aura,
-                },
-                DynamicCollidingObject {
-                    shape: &Ball::new(actor.body.radius),
-                    material: actor.body.material,
-                    mass: actor.body.mass(),
-                    position: &mut actor.position,
-                    velocity: &mut actor.velocity,
-                    effect: &mut actor.effect,
-                    health: &mut actor.health,
-                    aura: &actor.aura,
-                },
-            );
+            collide_dynamic_objects(world.time, duration, world.settings.physical_damage_factor,
+                                    dynamic_object, actor);
         }
     }
     if !world.dynamic_objects.is_empty() {
         for i in 0..world.dynamic_objects.len() - 1 {
             for j in i + 1..world.dynamic_objects.len() {
                 let (left, right) = world.dynamic_objects.split_at_mut(j);
-                collide_dynamic_objects(
-                    world.time, duration, world.settings.physical_damage_factor,
-                    DynamicCollidingObject {
-                        shape: &Ball::new(left[i].body.radius),
-                        material: left[i].body.material,
-                        mass: left[i].body.mass(),
-                        position: &mut left[i].position,
-                        velocity: &mut left[i].velocity,
-                        effect: &mut left[i].effect,
-                        health: &mut left[i].health,
-                        aura: &left[i].aura,
-                    },
-                    DynamicCollidingObject {
-                        shape: &Ball::new(right[0].body.radius),
-                        material: right[0].body.material,
-                        mass: right[0].body.mass(),
-                        position: &mut right[0].position,
-                        velocity: &mut right[0].velocity,
-                        effect: &mut right[0].effect,
-                        health: &mut right[0].health,
-                        aura: &right[0].aura,
-                    },
-                );
+                collide_dynamic_objects(world.time, duration, world.settings.physical_damage_factor,
+                                        &mut left[i], &mut right[0]);
             }
         }
     }
 }
 
-struct DynamicCollidingObject<'a> {
-    shape: &'a dyn Shape,
-    material: Material,
-    mass: f64,
-    position: &'a mut Vec2f,
-    velocity: &'a mut Vec2f,
-    effect: &'a mut Effect,
-    health: &'a mut f64,
-    aura: &'a Aura,
+trait DynamicCollidingObject {
+    fn with_shape(&self, f: &mut dyn FnMut(&dyn Shape));
+    fn material(&self) -> Material;
+    fn mass(&self) -> f64;
+    fn position(&mut self) -> &mut Vec2f;
+    fn velocity(&mut self) -> &mut Vec2f;
+    fn effect(&mut self) -> &mut Effect;
+    fn health(&mut self) -> &mut f64;
+    fn aura(&self) -> &Aura;
+}
+
+impl DynamicCollidingObject for Actor {
+    fn with_shape(&self, f: &mut dyn FnMut(&dyn Shape)) {
+        (*f)(&self.body.shape.as_shape())
+    }
+
+    fn material(&self) -> Material {
+        self.body.material
+    }
+
+    fn mass(&self) -> f64 {
+        self.body.mass()
+    }
+
+    fn position(&mut self) -> &mut Vec2f {
+        &mut self.position
+    }
+
+    fn velocity(&mut self) -> &mut Vec2f {
+        &mut self.velocity
+    }
+
+    fn effect(&mut self) -> &mut Effect {
+        &mut self.effect
+    }
+
+    fn health(&mut self) -> &mut f64 {
+        &mut self.health
+    }
+
+    fn aura(&self) -> &Aura {
+        &self.aura
+    }
+}
+
+impl DynamicCollidingObject for DynamicObject {
+    fn with_shape(&self, f: &mut dyn FnMut(&dyn Shape)) {
+        (*f)(&self.body.shape.as_shape())
+    }
+
+    fn material(&self) -> Material {
+        self.body.material
+    }
+
+    fn mass(&self) -> f64 {
+        self.body.mass()
+    }
+
+    fn position(&mut self) -> &mut Vec2f {
+        &mut self.position
+    }
+
+    fn velocity(&mut self) -> &mut Vec2f {
+        &mut self.velocity
+    }
+
+    fn effect(&mut self) -> &mut Effect {
+        &mut self.effect
+    }
+
+    fn health(&mut self) -> &mut f64 {
+        &mut self.health
+    }
+
+    fn aura(&self) -> &Aura {
+        &self.aura
+    }
 }
 
 fn collide_dynamic_objects(now: f64, duration: f64, damage_factor: f64,
-                           mut lhs: DynamicCollidingObject, mut rhs: DynamicCollidingObject) {
-    let collision = query::time_of_impact(
-        &Isometry::translation(lhs.position.x, lhs.position.y),
-        &Vector2::new(lhs.velocity.x, lhs.velocity.y),
-        lhs.shape,
-        &Isometry::translation(rhs.position.x, rhs.position.y),
-        &Vector2::new(rhs.velocity.x, rhs.velocity.y),
-        rhs.shape,
-        duration,
-    ).unwrap();
+                           lhs: &mut dyn DynamicCollidingObject, rhs: &mut dyn DynamicCollidingObject) {
+    let mut collision = None;
+    let lhs_position = *lhs.position();
+    let lhs_velocity = *lhs.velocity();
+    let rhs_position = *rhs.position();
+    let rhs_velocity = *rhs.velocity();
+    lhs.with_shape(&mut |lhs_shape| {
+        rhs.with_shape(&mut |rhs_shape| {
+            collision = query::time_of_impact(
+                &Isometry::translation(lhs_position.x, lhs_position.y),
+                &Vector2::new(lhs_velocity.x, lhs_velocity.y),
+                lhs_shape,
+                &Isometry::translation(rhs_position.x, rhs_position.y),
+                &Vector2::new(rhs_velocity.x, rhs_velocity.y),
+                rhs_shape,
+                duration,
+            ).unwrap();
+        });
+    });
     if let Some(collision) = collision {
-        let lhs_kinetic_energy = get_kinetic_energy(lhs.mass, *lhs.velocity);
-        let rhs_kinetic_energy = get_kinetic_energy(rhs.mass, *rhs.velocity);
-        let delta_velocity = *lhs.velocity - *rhs.velocity;
-        let mass_sum = lhs.mass + rhs.mass;
-        if let Some(contact) = query::contact(
-            &Isometry::translation(lhs.position.x, lhs.position.y),
-            lhs.shape,
-            &Isometry::translation(rhs.position.x, rhs.position.y),
-            rhs.shape,
-            0.0,
-        ).unwrap() {
-            *lhs.position += Vec2f::new(contact.normal1.x, contact.normal1.y) * (contact.dist * rhs.mass / mass_sum);
-            *rhs.position += Vec2f::new(contact.normal2.x, contact.normal2.y) * (contact.dist * lhs.mass / mass_sum);
+        let lhs_kinetic_energy = get_kinetic_energy(lhs.mass(), *lhs.velocity());
+        let rhs_kinetic_energy = get_kinetic_energy(rhs.mass(), *rhs.velocity());
+        let delta_velocity = *lhs.velocity() - *rhs.velocity();
+        let mass_sum = lhs.mass() + rhs.mass();
+        let mut contact = None;
+        lhs.with_shape(&mut |lhs_shape| {
+            rhs.with_shape(&mut |rhs_shape| {
+                contact = query::contact(
+                    &Isometry::translation(lhs_position.x, lhs_position.y),
+                    lhs_shape,
+                    &Isometry::translation(rhs_position.x, rhs_position.y),
+                    rhs_shape,
+                    0.0,
+                ).unwrap();
+            });
+        });
+        if let Some(contact) = contact {
+            *lhs.position() += Vec2f::new(contact.normal1.x, contact.normal1.y) * (contact.dist * rhs.mass() / mass_sum);
+            *rhs.position() += Vec2f::new(contact.normal2.x, contact.normal2.y) * (contact.dist * lhs.mass() / mass_sum);
         } else {
-            *lhs.position += *lhs.velocity * collision.toi;
-            *rhs.position -= *rhs.velocity * collision.toi;
+            *lhs.position() += lhs_velocity * collision.toi;
+            *rhs.position() -= rhs_velocity * collision.toi;
         }
-        let lhs_velocity = *lhs.velocity - delta_velocity * rhs.mass * (1.0 + lhs.material.restitution()) / mass_sum;
-        let rhs_velocity = *rhs.velocity + delta_velocity * lhs.mass * (1.0 + rhs.material.restitution()) / mass_sum;
-        *lhs.velocity = lhs_velocity;
-        *rhs.velocity = rhs_velocity;
-        let new_lhs_effect = add_magick_power_to_effect(now, lhs.effect, &rhs.effect.power);
-        let new_rhs_effect = add_magick_power_to_effect(now, rhs.effect, &lhs.effect.power);
-        *lhs.effect = new_lhs_effect;
-        *rhs.effect = new_rhs_effect;
-        handle_dynamic_object_collision_damage(lhs_kinetic_energy, damage_factor, &mut lhs);
-        handle_dynamic_object_collision_damage(rhs_kinetic_energy, damage_factor, &mut rhs);
-    }
-}
-
-struct StaticCollidingObject<'a> {
-    shape: &'a dyn Shape,
-    material: Material,
-    mass: f64,
-    isometry: &'a Isometry<Real>,
-    effect: &'a mut Effect,
-    health: &'a mut f64,
-    aura: &'a Aura,
-}
-
-fn collide_dynamic_and_static_objects(now: f64, duration: f64, damage_factor: f64,
-                                      lhs: &mut DynamicCollidingObject, rhs: &mut StaticCollidingObject) {
-    let collision = query::time_of_impact(
-        &Isometry::translation(lhs.position.x, lhs.position.y),
-        &Vector2::new(lhs.velocity.x, lhs.velocity.y),
-        lhs.shape,
-        rhs.isometry,
-        &Vector2::new(0.0, 0.0),
-        rhs.shape,
-        duration,
-    ).unwrap();
-    if let Some(collision) = collision {
-        let mass_sum = lhs.mass + rhs.mass;
-        if let Some(contact) = query::contact(
-            &Isometry::translation(lhs.position.x, lhs.position.y),
-            lhs.shape,
-            rhs.isometry,
-            rhs.shape,
-            0.0,
-        ).unwrap() {
-            *lhs.position += Vec2f::new(contact.normal1.x, contact.normal1.y) * contact.dist;
-        } else {
-            *lhs.position += *lhs.velocity * collision.toi;
-        }
-        let delta_velocity = *lhs.velocity;
-        let lhs_kinetic_energy = get_kinetic_energy(lhs.mass, *lhs.velocity);
-        let lhs_velocity = *lhs.velocity - delta_velocity * rhs.mass * (1.0 + lhs.material.restitution()) / mass_sum;
-        *lhs.velocity = lhs_velocity;
-        let new_lhs_effect = add_magick_power_to_effect(now, lhs.effect, &rhs.effect.power);
-        let new_rhs_effect = add_magick_power_to_effect(now, rhs.effect, &lhs.effect.power);
-        *lhs.effect = new_lhs_effect;
-        *rhs.effect = new_rhs_effect;
+        let lhs_velocity = *lhs.velocity() - delta_velocity * rhs.mass() * (1.0 + lhs.material().restitution()) / mass_sum;
+        let rhs_velocity = *rhs.velocity() + delta_velocity * lhs.mass() * (1.0 + rhs.material().restitution()) / mass_sum;
+        *lhs.velocity() = lhs_velocity;
+        *rhs.velocity() = rhs_velocity;
+        let new_lhs_effect = add_magick_power_to_effect(now, lhs.effect(), &rhs.effect().power);
+        let new_rhs_effect = add_magick_power_to_effect(now, rhs.effect(), &lhs.effect().power);
+        *lhs.effect() = new_lhs_effect;
+        *rhs.effect() = new_rhs_effect;
         handle_dynamic_object_collision_damage(lhs_kinetic_energy, damage_factor, lhs);
-        if !can_absorb_physical_damage(&rhs.aura.elements) {
-            let rhs_velocity = delta_velocity * lhs.mass * (1.0 + rhs.material.restitution()) / mass_sum;
-            *rhs.health -= get_kinetic_energy(rhs.mass, rhs_velocity) * damage_factor / rhs.mass;
+        handle_dynamic_object_collision_damage(rhs_kinetic_energy, damage_factor, rhs);
+    }
+}
+
+trait StaticCollidingObject: WithIsometry {
+    fn with_shape(&self, shape_cache: &ShapeCache, f: &mut dyn FnMut(&dyn Shape));
+    fn material(&self) -> Material;
+    fn mass(&self) -> f64;
+    fn effect(&mut self) -> &mut Effect;
+    fn health(&mut self) -> &mut f64;
+    fn aura(&self) -> &Aura;
+}
+
+impl StaticCollidingObject for StaticObject {
+    fn with_shape(&self, shape_cache: &ShapeCache, f: &mut dyn FnMut(&dyn Shape)) {
+        self.body.shape.clone().with_shape(shape_cache, |shape| (*f)(shape))
+    }
+
+    fn material(&self) -> Material {
+        self.body.material
+    }
+
+    fn mass(&self) -> f64 {
+        self.body.mass()
+    }
+
+    fn effect(&mut self) -> &mut Effect {
+        &mut self.effect
+    }
+
+    fn health(&mut self) -> &mut f64 {
+        &mut self.health
+    }
+
+    fn aura(&self) -> &Aura {
+        &self.aura
+    }
+}
+
+fn collide_dynamic_and_static_objects(now: f64, duration: f64, damage_factor: f64, shape_cache: &ShapeCache,
+                                      lhs: &mut dyn DynamicCollidingObject, rhs: &mut dyn StaticCollidingObject) {
+    let mut collision = None;
+    let lhs_position = *lhs.position();
+    let lhs_velocity = *lhs.velocity();
+    let rhs_isometry = rhs.get_isometry();
+    lhs.with_shape(&mut |lhs_shape| {
+        rhs.with_shape(shape_cache, &mut |rhs_shape| {
+            collision = query::time_of_impact(
+                &Isometry::translation(lhs_position.x, lhs_position.y),
+                &Vector2::new(lhs_velocity.x, lhs_velocity.y),
+                lhs_shape,
+                &rhs_isometry,
+                &Vector2::new(0.0, 0.0),
+                rhs_shape,
+                duration,
+            ).unwrap();
+        });
+    });
+    if let Some(collision) = collision {
+        let mass_sum = lhs.mass() + rhs.mass();
+        let mut contact = None;
+        lhs.with_shape(&mut |lhs_shape| {
+            rhs.with_shape(shape_cache, &mut |rhs_shape| {
+                contact = query::contact(
+                    &Isometry::translation(lhs_position.x, lhs_position.y),
+                    lhs_shape,
+                    &rhs_isometry,
+                    rhs_shape,
+                    0.0,
+                ).unwrap();
+            });
+        });
+        if let Some(contact) = contact {
+            *lhs.position() += Vec2f::new(contact.normal1.x, contact.normal1.y) * contact.dist;
+        } else {
+            *lhs.position() += lhs_velocity * collision.toi;
+        }
+        let delta_velocity = *lhs.velocity();
+        let lhs_kinetic_energy = get_kinetic_energy(lhs.mass(), *lhs.velocity());
+        let lhs_velocity = *lhs.velocity() - delta_velocity * rhs.mass() * (1.0 + lhs.material().restitution()) / mass_sum;
+        *lhs.velocity() = lhs_velocity;
+        let new_lhs_effect = add_magick_power_to_effect(now, lhs.effect(), &rhs.effect().power);
+        let new_rhs_effect = add_magick_power_to_effect(now, rhs.effect(), &lhs.effect().power);
+        *lhs.effect() = new_lhs_effect;
+        *rhs.effect() = new_rhs_effect;
+        handle_dynamic_object_collision_damage(lhs_kinetic_energy, damage_factor, lhs);
+        if !can_absorb_physical_damage(&rhs.aura().elements) {
+            let rhs_velocity = delta_velocity * lhs.mass() * (1.0 + rhs.material().restitution()) / mass_sum;
+            *rhs.health() -= get_kinetic_energy(rhs.mass(), rhs_velocity) * damage_factor / rhs.mass();
         }
     }
 }
 
-fn handle_dynamic_object_collision_damage(prev_kinetic_energy: f64, damage_factor: f64, object: &mut DynamicCollidingObject) {
-    if !can_absorb_physical_damage(&object.aura.elements) {
-        *object.health -= (get_kinetic_energy(object.mass, *object.velocity) - prev_kinetic_energy).abs() * damage_factor / object.mass;
+fn handle_dynamic_object_collision_damage(prev_kinetic_energy: f64, damage_factor: f64, object: &mut dyn DynamicCollidingObject) {
+    if !can_absorb_physical_damage(&object.aura().elements) {
+        *object.health() -= (get_kinetic_energy(object.mass(), *object.velocity()) - prev_kinetic_energy).abs() * damage_factor / object.mass();
     }
 }
 
@@ -1103,25 +1258,30 @@ fn get_kinetic_energy(mass: f64, velocity: Vec2f) -> f64 {
     mass * velocity.dot_self() / 2.0
 }
 
-fn is_active(bounds: &Rectf, body: &Body, position: Vec2f, health: f64) -> bool {
-    let rect = Rectf::new(
-        position - Vec2f::both(body.radius),
-        position + Vec2f::both(body.radius),
-    );
-    health > 0.0 && bounds.overlaps(&rect)
+fn is_active(bounds: &Rectf, shape: &dyn Shape, position: Vec2f, health: f64) -> bool {
+    health > 0.0 && {
+        let bounds_position = (bounds.max + bounds.min) / 2.0;
+        let half_extents = (bounds.max - bounds.min) / 2.0;
+        query::intersection_test(
+            &Isometry::translation(bounds_position.x, bounds_position.y),
+            &Cuboid::new(Vector2::new(half_extents.x, half_extents.y)),
+            &Isometry::translation(position.x, position.y),
+            shape,
+        ).unwrap()
+    }
 }
 
 fn handle_completed_magicks(world: &mut World) {
     for actor in world.actors.iter_mut() {
         if actor.delayed_magick.as_ref().map(|v| v.completed).unwrap_or(false) {
             let delayed_magick = actor.delayed_magick.take().unwrap();
-            let radius = delayed_magick.power.iter().sum::<f64>() * actor.body.radius / world.settings.max_magic_power;
+            let radius = delayed_magick.power.iter().sum::<f64>() * actor.body.shape.radius / world.settings.max_magic_power;
             let material = Material::Stone;
             world.dynamic_objects.push(DynamicObject {
                 id: get_next_id(&mut world.id_counter),
-                body: Body { radius, material },
+                body: Body { shape: Disk { radius }, material },
                 position: actor.position
-                    + actor.current_direction * (actor.body.radius + radius + world.settings.margin),
+                    + actor.current_direction * (actor.body.shape.radius + radius + world.settings.margin),
                 health: 1.0,
                 effect: Effect {
                     applied: [world.time; 11],
@@ -1133,7 +1293,7 @@ fn handle_completed_magicks(world: &mut World) {
                     (world.time - delayed_magick.started).min(world.settings.max_magic_power)
                         * world.settings.magic_force_multiplier
                 ),
-                position_z: 1.5 * actor.body.radius,
+                position_z: 1.5 * actor.body.shape.radius,
                 velocity_z: 0.0,
             });
         }
@@ -1167,9 +1327,21 @@ fn intersection_test(shape_pos: &Isometry<Real>, shape: &dyn Shape, body_pos: &I
     query::intersection_test(shape_pos, shape, body_pos, &triangle).unwrap()
 }
 
+fn make_circle_arc_polyline(arc: &CircleArcKey) -> Polyline {
+    let mut vertices = Vec::new();
+    let resolution = (arc.radius * RESOLUTION_FACTOR).round();
+    let angle_step = arc.length / resolution;
+    let half_length = arc.length / 2.0;
+    for i in 0..=resolution as usize {
+        let position = Vec2f::only_x(arc.radius).rotated(angle_step * i as f64 - half_length);
+        vertices.push(Point2::new(position.x, position.y));
+    }
+    Polyline::new(vertices, None)
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::engine::remove_count;
+    use crate::engine::*;
 
     #[test]
     fn remove_count_should_return_number_of_removed_items() {
@@ -1186,5 +1358,14 @@ mod tests {
         let mut values = vec![1, 2, 3, 2, 1];
         remove_count(&mut values, |v| *v == 2);
         assert_eq!(values, &[1, 3, 1]);
+    }
+
+    #[test]
+    fn make_circle_arc_polyline_should_generate_vertices_along_arc_circle() {
+        use std::f64::consts::{FRAC_PI_2, SQRT_2};
+        let polyline = make_circle_arc_polyline(&CircleArcKey { radius: 2.0, length: FRAC_PI_2 });
+        assert_eq!(polyline.num_segments(), 8);
+        assert_eq!(polyline.vertices().first(), Some(&Point2::<Real>::new(SQRT_2, -SQRT_2)));
+        assert_eq!(polyline.vertices().last(), Some(&Point2::<Real>::new(SQRT_2, SQRT_2)));
     }
 }

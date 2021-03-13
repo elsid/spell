@@ -39,6 +39,7 @@ pub struct WorldSettings {
     pub directed_magick_duration: f64,
     pub spray_force_factor: f64,
     pub area_of_effect_magick_duration: f64,
+    pub border_width: f64,
 }
 
 impl Default for WorldSettings {
@@ -61,6 +62,7 @@ impl Default for WorldSettings {
             directed_magick_duration: 3.0,
             spray_force_factor: 1e5,
             area_of_effect_magick_duration: 0.5,
+            border_width: 0.1,
         }
     }
 }
@@ -68,7 +70,7 @@ impl Default for WorldSettings {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Actor {
     pub id: u64,
-    pub body: Body,
+    pub body: Body<Disk>,
     pub position: Vec2f,
     pub health: f64,
     pub effect: Effect,
@@ -87,7 +89,7 @@ pub struct Actor {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DynamicObject {
     pub id: u64,
-    pub body: Body,
+    pub body: Body<Disk>,
     pub position: Vec2f,
     pub health: f64,
     pub effect: Effect,
@@ -101,7 +103,7 @@ pub struct DynamicObject {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StaticObject {
     pub id: u64,
-    pub body: Body,
+    pub body: Body<StaticShape>,
     pub position: Vec2f,
     pub health: f64,
     pub effect: Effect,
@@ -119,7 +121,7 @@ pub struct Beam {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StaticArea {
     pub id: u64,
-    pub body: Body,
+    pub body: Body<Disk>,
     pub position: Vec2f,
     pub magick: Magick,
 }
@@ -127,7 +129,7 @@ pub struct StaticArea {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TempArea {
     pub id: u64,
-    pub body: Body,
+    pub body: Body<Disk>,
     pub position: Vec2f,
     pub effect: Effect,
 }
@@ -151,9 +153,27 @@ pub struct Field {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct Body {
-    pub radius: f64,
+pub struct Body<Shape> {
+    pub shape: Shape,
     pub material: Material,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub enum StaticShape {
+    CircleArc(CircleArc),
+    Disk(Disk),
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Disk {
+    pub radius: f64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct CircleArc {
+    pub radius: f64,
+    pub length: f64,
+    pub rotation: f64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -192,6 +212,7 @@ pub struct DelayedMagick {
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Deserialize, Serialize)]
 pub enum Material {
+    None,
     Flesh,
     Stone,
     Grass,

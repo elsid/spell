@@ -3,7 +3,7 @@ use rand::Rng;
 use crate::engine::get_next_id;
 use crate::rect::Rectf;
 use crate::vec2::Vec2f;
-use crate::world::{Actor, Aura, Body, DynamicObject, Effect, Element, Magick, Material, StaticArea, StaticObject, World, WorldSettings};
+use crate::world::{Actor, Aura, Body, Disk, DynamicObject, Effect, Element, Magick, Material, StaticArea, StaticObject, StaticShape, World, WorldSettings};
 
 pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
     let settings = WorldSettings::default();
@@ -20,7 +20,7 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
         StaticArea {
             id: get_next_id(&mut id_counter),
             body: Body {
-                radius: bounds.min.distance(bounds.max) * 0.5,
+                shape: Disk { radius: bounds.min.distance(bounds.max) * 0.5 },
                 material: Material::Dirt,
             },
             position: Vec2f::ZERO,
@@ -58,7 +58,7 @@ pub fn generate_player_actor<R: Rng>(id: u64, bounds: &Rectf, rng: &mut R) -> Ac
     let radius = 1.0;
     Actor {
         id,
-        body: Body { radius, material },
+        body: Body { shape: Disk { radius }, material },
         position: Vec2f::new(
             rng.gen_range(middle.x - delta.x * 0.25..middle.x + delta.x * 0.25),
             rng.gen_range(middle.y - delta.y * 0.25..middle.y + delta.y * 0.25),
@@ -88,7 +88,7 @@ pub fn generate_actor<R: Rng>(material: Material, id: u64, bounds: &Rectf, rng: 
     let radius = 1.0;
     Actor {
         id,
-        body: Body { radius, material },
+        body: Body { shape: Disk { radius }, material },
         position: Vec2f::new(
             rng.gen_range(bounds.min.x..bounds.max.x),
             rng.gen_range(bounds.min.y..bounds.max.y),
@@ -118,7 +118,7 @@ pub fn generate_dynamic_object<R: Rng>(material: Material, id: u64, bounds: &Rec
     let radius = rng.gen_range(0.8..1.2);
     DynamicObject {
         id,
-        body: Body { radius, material },
+        body: Body { shape: Disk { radius }, material },
         position: Vec2f::new(
             rng.gen_range(bounds.min.x..bounds.max.x),
             rng.gen_range(bounds.min.y..bounds.max.y),
@@ -142,7 +142,7 @@ pub fn generate_static_objects<R: Rng>(material: &Material, number: usize, bound
 pub fn generate_static_object<R: Rng>(material: Material, id: u64, bounds: &Rectf, rng: &mut R) -> StaticObject {
     StaticObject {
         id,
-        body: Body { radius: rng.gen_range(0.8..1.2), material },
+        body: Body { shape: StaticShape::Disk(Disk { radius: rng.gen_range(0.8..1.2) }), material },
         position: Vec2f::new(
             rng.gen_range(bounds.min.x..bounds.max.x),
             rng.gen_range(bounds.min.y..bounds.max.y),
@@ -162,7 +162,7 @@ pub fn generate_static_areas<R: Rng>(material: Material, magick: Magick, number:
 pub fn generate_static_area<R: Rng>(material: Material, magick: Magick, id: u64, bounds: &Rectf, rng: &mut R) -> StaticArea {
     StaticArea {
         id,
-        body: Body { radius: rng.gen_range(10.0..15.0), material },
+        body: Body { shape: Disk { radius: rng.gen_range(10.0..15.0) }, material },
         position: Vec2f::new(
             rng.gen_range(bounds.min.x..bounds.max.x),
             rng.gen_range(bounds.min.y..bounds.max.y),

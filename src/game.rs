@@ -2,7 +2,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use glfw_window::GlfwWindow;
-use graphics::*;
+use graphics::{DrawState, ellipse, Graphics, line, math, polygon, Polygon, rectangle, text, Transformed, types};
 use opengl_graphics::{
     Filter,
     GlGraphics,
@@ -36,7 +36,7 @@ use crate::engine::{add_actor_spell_element, complete_directed_magick, Engine, s
 use crate::meters::{DurationMovingAverage, FpsMovingAverage};
 use crate::protocol::{GameUpdate, PlayerAction};
 use crate::vec2::Vec2f;
-use crate::world::{Aura, Body, Element, Material, RingSector, World};
+use crate::world::{Aura, Disk, Element, Material, RingSector, StaticShape, World};
 
 pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver: Receiver<GameUpdate>) {
     info!("Run game");
@@ -221,16 +221,16 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
                     .scale(scale, scale)
                     .trans(-last_player_position.x, -last_player_position.y);
 
-                clear([0.0, 0.0, 0.0, 1.0], g);
+                graphics::clear([0.0, 0.0, 0.0, 1.0], g);
 
                 for v in world.static_areas.iter() {
-                    with_body_and_magick(&v.body, &v.magick.power, |shape, rect| {
+                    with_disk_body_and_magick(v.body.material, &v.body.shape, &v.magick.power, world.settings.border_width, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for v in world.temp_areas.iter() {
-                    with_body_and_magick(&v.body, &v.effect.power, |shape, rect| {
+                    with_disk_body_and_magick(v.body.material, &v.body.shape, &v.effect.power, world.settings.border_width, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
@@ -246,7 +246,7 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
 
                 if let Some(player_index) = last_player_index {
                     let target = last_player_position + (last_mouse_pos - last_viewport_shift) / scale;
-                    line_from_to(
+                    graphics::line_from_to(
                         [0.0, 0.0, 0.0, 0.5], 1.0 / scale,
                         [last_player_position.x, last_player_position.y],
                         [target.x, target.y],
@@ -255,8 +255,8 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
                     );
 
                     let player = &world.actors[player_index];
-                    let current_target = player.position + player.current_direction * player.body.radius * 2.0;
-                    line_from_to(
+                    let current_target = player.position + player.current_direction * player.body.shape.radius * 2.0;
+                    graphics::line_from_to(
                         [0.0, 0.0, 0.0, 0.5], 1.0 / scale,
                         [last_player_position.x, last_player_position.y],
                         [current_target.x, current_target.y],
@@ -274,21 +274,42 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
                 }
 
                 for v in world.actors.iter() {
-                    with_body_and_magick(&v.body, &v.effect.power, |shape, rect| {
+                    with_disk_body_and_magick(v.body.material, &v.body.shape, &v.effect.power, world.settings.border_width, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for v in world.dynamic_objects.iter() {
-                    with_body_and_magick(&v.body, &v.effect.power, |shape, rect| {
+                    with_disk_body_and_magick(v.body.material, &v.body.shape, &v.effect.power, world.settings.border_width, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for v in world.static_objects.iter() {
-                    with_body_and_magick(&v.body, &v.effect.power, |shape, rect| {
-                        shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
-                    });
+                    match &v.body.shape {
+                        StaticShape::CircleArc(arc) => {
+                            let ring_sector = RingSector {
+                                min_radius: arc.radius - world.settings.border_width,
+                                max_radius: arc.radius + world.settings.border_width,
+                                angle: arc.length,
+                            };
+                            with_ring_sector_body_and_magick(&ring_sector, &v.effect.power, |shape, vertices| {
+                                let transform = base_transform.trans(v.position.x, v.position.y)
+                                    .rot_rad(arc.rotation);
+                                draw_ring_sector(shape, vertices, &ctx.draw_state, transform, g);
+                            });
+                            with_ring_sector_body_and_magick(&ring_sector, &v.aura.elements, |shape, vertices| {
+                                let transform = base_transform.trans(v.position.x, v.position.y)
+                                    .rot_rad(arc.rotation);
+                                draw_ring_sector(shape, vertices, &ctx.draw_state, transform, g);
+                            });
+                        }
+                        StaticShape::Disk(shape) => {
+                            with_disk_body_and_magick(v.body.material, shape, &v.effect.power, world.settings.border_width, |shape, rect| {
+                                shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
+                            });
+                        }
+                    }
                 }
 
                 for v in world.actors.iter() {
@@ -310,42 +331,46 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
                 }
 
                 for v in world.actors.iter() {
-                    with_health(v.body.radius, v.health, |shape, rect| {
+                    with_health(v.body.shape.radius, v.health, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
-                    with_power(v.body.radius, v.aura.power / world.settings.max_magic_power, |shape, rect| {
+                    with_power(v.body.shape.radius, v.aura.power / world.settings.max_magic_power, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for v in world.dynamic_objects.iter() {
-                    with_health(v.body.radius, v.health, |shape, rect| {
+                    with_health(v.body.shape.radius, v.health, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
-                    with_power(v.body.radius, v.aura.power / world.settings.max_magic_power, |shape, rect| {
+                    with_power(v.body.shape.radius, v.aura.power / world.settings.max_magic_power, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for v in world.static_objects.iter() {
-                    with_health(v.body.radius, v.health, |shape, rect| {
+                    let radius = match &v.body.shape {
+                        StaticShape::CircleArc(v) => v.radius,
+                        StaticShape::Disk(v) => v.radius,
+                    };
+                    with_health(radius, v.health, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
-                    with_power(v.body.radius, v.aura.power / world.settings.max_magic_power, |shape, rect| {
+                    with_power(radius, v.aura.power / world.settings.max_magic_power, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for actor in world.actors.iter() {
-                    let half_width = actor.body.radius * 0.66;
-                    let spell_position = actor.position + Vec2f::new(-half_width, actor.body.radius + 0.3);
+                    let half_width = actor.body.shape.radius * 0.66;
+                    let spell_position = actor.position + Vec2f::new(-half_width, actor.body.shape.radius + 0.3);
                     let spell_transform = base_transform.trans(spell_position.x, spell_position.y);
-                    let square = rectangle::centered_square(0.0, 0.0, actor.body.radius * 0.1);
+                    let square = rectangle::centered_square(0.0, 0.0, actor.body.shape.radius * 0.1);
                     let element_width = (2.0 * half_width) / 5.0;
                     for (i, element) in actor.spell_elements.iter().enumerate() {
-                        let element_position = Vec2f::new((i as f64 + 0.5) * element_width, -actor.body.radius * 0.1);
+                        let element_position = Vec2f::new((i as f64 + 0.5) * element_width, -actor.body.shape.radius * 0.1);
                         ellipse::Ellipse::new(get_element_color(*element))
-                            .border(ellipse::Border { color: [0.0, 0.0, 0.0, 1.0], radius: actor.body.radius * 0.01 })
+                            .border(ellipse::Border { color: [0.0, 0.0, 0.0, 1.0], radius: actor.body.shape.radius * 0.01 })
                             .draw(square, &ctx.draw_state, spell_transform.trans(element_position.x, element_position.y), g);
                     }
                 }
@@ -437,16 +462,21 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
     }
 }
 
-fn with_body_and_magick<F: FnMut(ellipse::Ellipse, [f64; 4])>(body: &Body, power: &[f64; 11], mut f: F) {
-    let mut shape = ellipse::Ellipse::new(get_material_color(&body.material, 1.0));
+fn with_disk_body_and_magick<F>(material: Material, shape: &Disk, power: &[f64; 11], border_width: f64, mut f: F)
+    where F: FnMut(&ellipse::Ellipse, types::Rectangle)
+{
+    let mut drawable = ellipse::Ellipse::new(get_material_color(material, 1.0));
     if power.iter().sum::<f64>() > 0.0 {
-        shape = shape.border(ellipse::Border { color: get_magick_power_color(power), radius: 0.1 });
+        drawable = drawable.border(ellipse::Border { color: get_magick_power_color(power), radius: border_width });
     }
-    let rect = rectangle::centered_square(0.0, 0.0, body.radius);
-    f(shape, rect);
+    let rect = rectangle::centered_square(0.0, 0.0, shape.radius);
+    f(&drawable, rect);
 }
 
-fn with_ring_sector_body_and_magick<F: FnMut(polygon::Polygon, types::Polygon)>(body: &RingSector, power: &[f64; 11], mut f: F) {
+fn with_ring_sector_body_and_magick<T, F>(body: &RingSector, power: &[T; 11], mut f: F)
+    where F: FnMut(polygon::Polygon, types::Polygon),
+          T: Default + PartialEq
+{
     const BASE_RESOLUTION: f64 = 12.0;
     let shape = polygon::Polygon::new(get_magick_power_color(power));
     let resolution = (body.angle * BASE_RESOLUTION).round() as usize;
@@ -491,8 +521,9 @@ fn with_meter<F>(radius: f64, value: f64, y: f64, color: [f32; 4], mut f: F)
     f(health_bar, health_bar_rect);
 }
 
-fn get_material_color(material: &Material, alpha: f32) -> [f32; 4] {
+fn get_material_color(material: Material, alpha: f32) -> [f32; 4] {
     match material {
+        Material::None => [0.0, 0.0, 0.0, alpha],
         Material::Flesh => [0.93, 0.89, 0.69, alpha],
         Material::Stone => [0.76, 0.76, 0.76, alpha],
         Material::Dirt => [0.5, 0.38, 0.26, alpha],
@@ -502,8 +533,8 @@ fn get_material_color(material: &Material, alpha: f32) -> [f32; 4] {
 }
 
 fn get_magick_power_color<T: Default + PartialEq>(power: &[T; 11]) -> [f32; 4] {
-    let mut result: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
-    let mut colors = 1;
+    let mut result: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
+    let mut colors = 0;
     for i in 0..power.len() {
         if power[i] != T::default() {
             let color = get_element_color(Element::from(i));
@@ -512,6 +543,9 @@ fn get_magick_power_color<T: Default + PartialEq>(power: &[T; 11]) -> [f32; 4] {
             }
             colors += 1;
         }
+    }
+    if colors == 0 {
+        return [0.0, 0.0, 0.0, 0.0];
     }
     for i in 0..4 {
         result[i] /= colors as f32;

@@ -12,13 +12,6 @@ impl Rectf {
     pub fn new(min: Vec2f, max: Vec2f) -> Self {
         Self { min, max }
     }
-
-    pub fn overlaps(&self, other: &Rectf) -> bool {
-        self.min.x < other.max.x
-            && self.max.x > other.min.x
-            && self.min.y < other.max.y
-            && self.max.y > other.min.y
-    }
 }
 
 impl PartialEq for Rectf {
