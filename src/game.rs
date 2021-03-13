@@ -310,26 +310,35 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
                 }
 
                 for v in world.actors.iter() {
-                    with_health(&v.body, v.health, |shape, rect| {
+                    with_health(v.body.radius, v.health, |shape, rect| {
+                        shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
+                    });
+                    with_power(v.body.radius, v.aura.power / world.settings.max_magic_power, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for v in world.dynamic_objects.iter() {
-                    with_health(&v.body, v.health, |shape, rect| {
+                    with_health(v.body.radius, v.health, |shape, rect| {
+                        shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
+                    });
+                    with_power(v.body.radius, v.aura.power / world.settings.max_magic_power, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for v in world.static_objects.iter() {
-                    with_health(&v.body, v.health, |shape, rect| {
+                    with_health(v.body.radius, v.health, |shape, rect| {
+                        shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
+                    });
+                    with_power(v.body.radius, v.aura.power / world.settings.max_magic_power, |shape, rect| {
                         shape.draw(rect, &ctx.draw_state, base_transform.trans(v.position.x, v.position.y), g);
                     });
                 }
 
                 for actor in world.actors.iter() {
                     let half_width = actor.body.radius * 0.66;
-                    let spell_position = actor.position + Vec2f::new(-half_width, actor.body.radius + 1.0);
+                    let spell_position = actor.position + Vec2f::new(-half_width, actor.body.radius + 0.3);
                     let spell_transform = base_transform.trans(spell_position.x, spell_position.y);
                     let square = rectangle::centered_square(0.0, 0.0, actor.body.radius * 0.1);
                     let element_width = (2.0 * half_width) / 5.0;
@@ -461,15 +470,24 @@ fn with_aura<F: FnMut(ellipse::Ellipse, [f64; 4])>(aura: &Aura, mut f: F) {
     f(shape, rect);
 }
 
-fn with_health<F: FnMut(rectangle::Rectangle, [f64; 4])>(body: &Body, health: f64, mut f: F) {
-    let shift = body.radius + 0.5;
-    let half_width = body.radius * 0.66;
-    let bar_right = -half_width + 2.0 * half_width * health;
+fn with_health<F: FnMut(rectangle::Rectangle, [f64; 4])>(radius: f64, health: f64, f: F) {
+    with_meter(radius, health, 0.5, [1.0, 0.0, 0.0, 1.0], f);
+}
+
+fn with_power<F: FnMut(rectangle::Rectangle, [f64; 4])>(radius: f64, power: f64, f: F) {
+    with_meter(radius, power, 0.8, [0.0, 0.0, 1.0, 1.0], f);
+}
+
+fn with_meter<F>(radius: f64, value: f64, y: f64, color: [f32; 4], mut f: F)
+    where F: FnMut(rectangle::Rectangle, [f64; 4])
+{
+    let half_width = 0.66;
     let background = rectangle::Rectangle::new([0.0, 0.0, 0.0, 0.8]);
-    let background_rect = rectangle::rectangle_by_corners(-half_width, shift - body.radius * 0.1, half_width, shift + body.radius * 0.1);
+    let background_rect = rectangle::rectangle_by_corners(-half_width, radius + y - 0.1, half_width, radius + y + 0.1);
     f(background, background_rect);
-    let health_bar = rectangle::Rectangle::new([1.0, 0.0, 0.0, 1.0]);
-    let health_bar_rect = rectangle::rectangle_by_corners(-half_width, shift - body.radius * 0.1, bar_right, shift + body.radius * 0.1);
+    let bar_right = -half_width + 2.0 * half_width * value;
+    let health_bar = rectangle::Rectangle::new(color);
+    let health_bar_rect = rectangle::rectangle_by_corners(-half_width, radius + y - 0.1, bar_right, radius + y + 0.1);
     f(health_bar, health_bar_rect);
 }
 
