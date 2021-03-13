@@ -364,6 +364,22 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
                 text::Text::new_color([0.5, 0.5, 0.5, 1.0], 20)
                     .draw(&format!("World time: {:.3} (+{:.3})", world.time, world.time - last_received_world_time)[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 20.0 + 5.0 * 24.0), g)
                     .unwrap();
+
+                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
+                    .draw(&format!("Actors: {}", world.actors.len())[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 7.0 * 24.0), g)
+                    .unwrap();
+
+                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
+                    .draw(&format!("Dynamic objects: {}", world.dynamic_objects.len())[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 8.0 * 24.0), g)
+                    .unwrap();
+
+                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
+                    .draw(&format!("Static objects: {}", world.static_objects.len())[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 9.0 * 24.0), g)
+                    .unwrap();
+
+                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
+                    .draw(&format!("Beams: {}", world.beam_objects.len())[..], &mut glyphs, &ctx.draw_state, ctx.transform.trans(10.0, 10.0 * 24.0), g)
+                    .unwrap();
             });
 
             render_duration.add(Instant::now() - start);
