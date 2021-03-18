@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use parry2d_f64::math::{Isometry, Real};
 use parry2d_f64::na::{Point2, Vector2};
 use parry2d_f64::query;
-use parry2d_f64::query::Ray;
+use parry2d_f64::query::{Contact, Ray, TOI};
 use parry2d_f64::shape::{Ball, Cuboid, Polyline, Shape, Triangle};
 
 use crate::rect::Rectf;
@@ -14,7 +14,7 @@ use crate::world::{Actor, Aura, Beam, Body, BoundedArea, CircleArc, DelayedMagic
 
 const RESOLUTION_FACTOR: f64 = 4.0;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub enum Index {
     Actor(usize),
     DynamicObject(usize),
@@ -161,7 +161,7 @@ impl Engine {
         update_dynamic_objects(world.time, duration, &world.settings, &mut world.dynamic_objects);
         update_static_objects(world.time, duration, &world.settings, &mut world.static_objects);
         self.beam_collider.update(world, &mut self.shape_cache);
-        collide_objects(duration, world, &mut self.shape_cache);
+        move_objects(duration, world, &mut self.shape_cache);
         world.actors.iter_mut().for_each(|v| v.dynamic_force = Vec2f::ZERO);
         world.dynamic_objects.iter_mut().for_each(|v| v.dynamic_force = Vec2f::ZERO);
         let bounds = world.bounds.clone();
@@ -702,10 +702,9 @@ fn update_actors(now: f64, duration: f64, settings: &WorldSettings, actors: &mut
         damage_health(duration, settings.magical_damage_factor, actor.body.mass(), &actor.effect, &mut actor.health);
         decay_effect(now, duration, settings.decay_factor, &mut actor.effect);
         decay_aura(now, duration, settings.decay_factor, &mut actor.aura);
-        update_position(duration, actor.velocity, &mut actor.position);
         update_velocity(duration, actor.body.mass(), actor.dynamic_force, &mut actor.velocity);
-        update_position_z(duration, actor.body.shape.radius, actor.velocity_z, &mut actor.position_z);
         update_velocity_z(duration, actor.body.shape.radius, settings.gravitational_acceleration, actor.position_z, &mut actor.velocity_z);
+        update_position_z(duration, actor.body.shape.radius, actor.velocity_z, &mut actor.position_z);
     }
 }
 
@@ -714,7 +713,6 @@ fn update_dynamic_objects(now: f64, duration: f64, settings: &WorldSettings, dyn
         damage_health(duration, settings.magical_damage_factor, object.body.mass(), &object.effect, &mut object.health);
         decay_effect(now, duration, settings.decay_factor, &mut object.effect);
         decay_aura(now, duration, settings.decay_factor, &mut object.aura);
-        update_position(duration, object.velocity, &mut object.position);
         update_velocity(duration, object.body.mass(), object.dynamic_force, &mut object.velocity);
         update_position_z(duration, object.body.shape.radius, object.velocity_z, &mut object.position_z);
         update_velocity_z(duration, object.body.shape.radius, settings.gravitational_acceleration, object.position_z, &mut object.velocity_z);
@@ -984,273 +982,340 @@ fn find_beam_nearest_intersection<T>(origin: Vec2f, direction: Vec2f, objects: &
     nearest
 }
 
-fn collide_objects(duration: f64, world: &mut World, shape_cache: &ShapeCache) {
-    let time = world.time;
-    let physical_damage_factor = world.settings.physical_damage_factor;
-    for static_object in world.static_objects.iter_mut() {
-        for actor in world.actors.iter_mut() {
-            collide_dynamic_and_static_objects(time, duration, physical_damage_factor, shape_cache,
-                                               actor, static_object);
-        }
-        for dynamic_object in world.dynamic_objects.iter_mut() {
-            collide_dynamic_and_static_objects(time, duration, physical_damage_factor, shape_cache,
-                                               dynamic_object, static_object);
-        }
-    }
-    if !world.actors.is_empty() {
-        for i in 0..world.actors.len() - 1 {
-            for j in i + 1..world.actors.len() {
-                let (left, right) = world.actors.split_at_mut(j);
-                collide_dynamic_objects(world.time, duration, world.settings.physical_damage_factor,
-                                        &mut left[i], &mut right[0]);
+fn move_objects(duration: f64, world: &mut World, shape_cache: &ShapeCache) {
+    let mut earliest_collision = None;
+    let mut duration_left = duration;
+    loop {
+        for (i, static_object) in world.static_objects.iter().enumerate() {
+            for (j, actor) in world.actors.iter().enumerate() {
+                time_of_impact(duration_left, shape_cache, static_object, actor)
+                    .map(|toi| update_earliest_collision(Index::StaticObject(i), Index::Actor(j), toi, &mut earliest_collision));
+            }
+            for (j, dynamic_object) in world.dynamic_objects.iter().enumerate() {
+                time_of_impact(duration_left, shape_cache, static_object, dynamic_object)
+                    .map(|toi| update_earliest_collision(Index::StaticObject(i), Index::DynamicObject(j), toi, &mut earliest_collision));
             }
         }
-    }
-    for dynamic_object in world.dynamic_objects.iter_mut() {
-        for actor in world.actors.iter_mut() {
-            collide_dynamic_objects(world.time, duration, world.settings.physical_damage_factor,
-                                    dynamic_object, actor);
-        }
-    }
-    if !world.dynamic_objects.is_empty() {
-        for i in 0..world.dynamic_objects.len() - 1 {
-            for j in i + 1..world.dynamic_objects.len() {
-                let (left, right) = world.dynamic_objects.split_at_mut(j);
-                collide_dynamic_objects(world.time, duration, world.settings.physical_damage_factor,
-                                        &mut left[i], &mut right[0]);
+        if !world.actors.is_empty() {
+            for i in 0..world.actors.len() - 1 {
+                for j in i + 1..world.actors.len() {
+                    let (left, right) = world.actors.split_at_mut(j);
+                    time_of_impact(duration_left, shape_cache, &mut left[i], &mut right[0])
+                        .map(|toi| update_earliest_collision(Index::Actor(i), Index::Actor(j), toi, &mut earliest_collision));
+                }
             }
         }
-    }
-}
-
-trait DynamicCollidingObject {
-    fn with_shape(&self, f: &mut dyn FnMut(&dyn Shape));
-    fn material(&self) -> Material;
-    fn mass(&self) -> f64;
-    fn position(&mut self) -> &mut Vec2f;
-    fn velocity(&mut self) -> &mut Vec2f;
-    fn effect(&mut self) -> &mut Effect;
-    fn health(&mut self) -> &mut f64;
-    fn aura(&self) -> &Aura;
-}
-
-impl DynamicCollidingObject for Actor {
-    fn with_shape(&self, f: &mut dyn FnMut(&dyn Shape)) {
-        (*f)(&self.body.shape.as_shape())
-    }
-
-    fn material(&self) -> Material {
-        self.body.material
-    }
-
-    fn mass(&self) -> f64 {
-        self.body.mass()
-    }
-
-    fn position(&mut self) -> &mut Vec2f {
-        &mut self.position
-    }
-
-    fn velocity(&mut self) -> &mut Vec2f {
-        &mut self.velocity
-    }
-
-    fn effect(&mut self) -> &mut Effect {
-        &mut self.effect
-    }
-
-    fn health(&mut self) -> &mut f64 {
-        &mut self.health
-    }
-
-    fn aura(&self) -> &Aura {
-        &self.aura
-    }
-}
-
-impl DynamicCollidingObject for DynamicObject {
-    fn with_shape(&self, f: &mut dyn FnMut(&dyn Shape)) {
-        (*f)(&self.body.shape.as_shape())
-    }
-
-    fn material(&self) -> Material {
-        self.body.material
-    }
-
-    fn mass(&self) -> f64 {
-        self.body.mass()
-    }
-
-    fn position(&mut self) -> &mut Vec2f {
-        &mut self.position
-    }
-
-    fn velocity(&mut self) -> &mut Vec2f {
-        &mut self.velocity
-    }
-
-    fn effect(&mut self) -> &mut Effect {
-        &mut self.effect
-    }
-
-    fn health(&mut self) -> &mut f64 {
-        &mut self.health
-    }
-
-    fn aura(&self) -> &Aura {
-        &self.aura
-    }
-}
-
-fn collide_dynamic_objects(now: f64, duration: f64, damage_factor: f64,
-                           lhs: &mut dyn DynamicCollidingObject, rhs: &mut dyn DynamicCollidingObject) {
-    let mut collision = None;
-    let lhs_position = *lhs.position();
-    let lhs_velocity = *lhs.velocity();
-    let rhs_position = *rhs.position();
-    let rhs_velocity = *rhs.velocity();
-    lhs.with_shape(&mut |lhs_shape| {
-        rhs.with_shape(&mut |rhs_shape| {
-            collision = query::time_of_impact(
-                &Isometry::translation(lhs_position.x, lhs_position.y),
-                &Vector2::new(lhs_velocity.x, lhs_velocity.y),
-                lhs_shape,
-                &Isometry::translation(rhs_position.x, rhs_position.y),
-                &Vector2::new(rhs_velocity.x, rhs_velocity.y),
-                rhs_shape,
-                duration,
-            ).unwrap();
-        });
-    });
-    if let Some(collision) = collision {
-        let lhs_kinetic_energy = get_kinetic_energy(lhs.mass(), *lhs.velocity());
-        let rhs_kinetic_energy = get_kinetic_energy(rhs.mass(), *rhs.velocity());
-        let delta_velocity = *lhs.velocity() - *rhs.velocity();
-        let mass_sum = lhs.mass() + rhs.mass();
-        let mut contact = None;
-        lhs.with_shape(&mut |lhs_shape| {
-            rhs.with_shape(&mut |rhs_shape| {
-                contact = query::contact(
-                    &Isometry::translation(lhs_position.x, lhs_position.y),
-                    lhs_shape,
-                    &Isometry::translation(rhs_position.x, rhs_position.y),
-                    rhs_shape,
-                    0.0,
-                ).unwrap();
+        for (i, dynamic_object) in world.dynamic_objects.iter().enumerate() {
+            for (j, actor) in world.actors.iter().enumerate() {
+                time_of_impact(duration_left, shape_cache, dynamic_object, actor)
+                    .map(|toi| update_earliest_collision(Index::DynamicObject(i), Index::Actor(j), toi, &mut earliest_collision));
+            }
+        }
+        if !world.dynamic_objects.is_empty() {
+            for i in 0..world.dynamic_objects.len() - 1 {
+                for j in i + 1..world.dynamic_objects.len() {
+                    let (left, right) = world.dynamic_objects.split_at_mut(j);
+                    time_of_impact(duration_left, shape_cache, &mut left[i], &mut right[0])
+                        .map(|toi| update_earliest_collision(Index::DynamicObject(i), Index::DynamicObject(j), toi, &mut earliest_collision));
+                }
+            }
+        }
+        if let Some(collision) = earliest_collision.as_ref() {
+            let now = world.time + (duration - duration_left);
+            let physical_damage_factor = world.settings.physical_damage_factor;
+            with_colliding_objects_mut(collision.lhs, collision.rhs, world, |lhs, rhs| {
+                apply_impact(now, physical_damage_factor, duration / 100.0, shape_cache, &collision.toi, lhs, rhs);
             });
-        });
-        if let Some(contact) = contact {
-            *lhs.position() += Vec2f::new(contact.normal1.x, contact.normal1.y) * (contact.dist * rhs.mass() / mass_sum);
-            *rhs.position() += Vec2f::new(contact.normal2.x, contact.normal2.y) * (contact.dist * lhs.mass() / mass_sum);
+            for (i, actor) in world.actors.iter_mut().enumerate() {
+                if Index::Actor(i) != collision.lhs && Index::Actor(i) != collision.rhs {
+                    update_position(collision.toi.toi, actor.velocity, &mut actor.position)
+                }
+            }
+            for (i, dynamic_object) in world.dynamic_objects.iter_mut().enumerate() {
+                if Index::DynamicObject(i) != collision.lhs && Index::DynamicObject(i) != collision.rhs {
+                    update_position(collision.toi.toi, dynamic_object.velocity, &mut dynamic_object.position)
+                }
+            }
+            duration_left -= collision.toi.toi.max(duration / 10.0);
+            if duration_left < f64::EPSILON {
+                break;
+            }
+            earliest_collision = None;
         } else {
-            *lhs.position() += lhs_velocity * collision.toi;
-            *rhs.position() -= rhs_velocity * collision.toi;
+            world.actors.iter_mut().for_each(|v| update_position(duration, v.velocity, &mut v.position));
+            world.dynamic_objects.iter_mut().for_each(|v| update_position(duration, v.velocity, &mut v.position));
+            break;
         }
-        let lhs_velocity = *lhs.velocity() - delta_velocity * rhs.mass() * (1.0 + lhs.material().restitution()) / mass_sum;
-        let rhs_velocity = *rhs.velocity() + delta_velocity * lhs.mass() * (1.0 + rhs.material().restitution()) / mass_sum;
-        *lhs.velocity() = lhs_velocity;
-        *rhs.velocity() = rhs_velocity;
-        let new_lhs_effect = add_magick_power_to_effect(now, lhs.effect(), &rhs.effect().power);
-        let new_rhs_effect = add_magick_power_to_effect(now, rhs.effect(), &lhs.effect().power);
-        *lhs.effect() = new_lhs_effect;
-        *rhs.effect() = new_rhs_effect;
-        handle_dynamic_object_collision_damage(lhs_kinetic_energy, damage_factor, lhs);
-        handle_dynamic_object_collision_damage(rhs_kinetic_energy, damage_factor, rhs);
     }
 }
 
-trait StaticCollidingObject: WithIsometry {
-    fn with_shape(&self, shape_cache: &ShapeCache, f: &mut dyn FnMut(&dyn Shape));
-    fn material(&self) -> Material;
-    fn mass(&self) -> f64;
-    fn effect(&mut self) -> &mut Effect;
-    fn health(&mut self) -> &mut f64;
-    fn aura(&self) -> &Aura;
+trait WithVelocity {
+    fn velocity(&self) -> Vec2f;
 }
 
-impl StaticCollidingObject for StaticObject {
-    fn with_shape(&self, shape_cache: &ShapeCache, f: &mut dyn FnMut(&dyn Shape)) {
-        self.body.shape.clone().with_shape(shape_cache, |shape| (*f)(shape))
-    }
-
-    fn material(&self) -> Material {
-        self.body.material
-    }
-
-    fn mass(&self) -> f64 {
-        self.body.mass()
-    }
-
-    fn effect(&mut self) -> &mut Effect {
-        &mut self.effect
-    }
-
-    fn health(&mut self) -> &mut f64 {
-        &mut self.health
-    }
-
-    fn aura(&self) -> &Aura {
-        &self.aura
-    }
-}
-
-fn collide_dynamic_and_static_objects(now: f64, duration: f64, damage_factor: f64, shape_cache: &ShapeCache,
-                                      lhs: &mut dyn DynamicCollidingObject, rhs: &mut dyn StaticCollidingObject) {
-    let mut collision = None;
-    let lhs_position = *lhs.position();
-    let lhs_velocity = *lhs.velocity();
-    let rhs_isometry = rhs.get_isometry();
-    lhs.with_shape(&mut |lhs_shape| {
+fn time_of_impact<L, R>(duration: f64, shape_cache: &ShapeCache, lhs: &L, rhs: &R) -> Option<TOI>
+    where L: WithVelocity + WithIsometry + WithShape,
+          R: WithVelocity + WithIsometry + WithShape
+{
+    let mut toi = None;
+    lhs.with_shape(shape_cache, &mut |lhs_shape| {
         rhs.with_shape(shape_cache, &mut |rhs_shape| {
-            collision = query::time_of_impact(
-                &Isometry::translation(lhs_position.x, lhs_position.y),
-                &Vector2::new(lhs_velocity.x, lhs_velocity.y),
+            toi = query::time_of_impact(
+                &lhs.get_isometry(),
+                &Vector2::new(lhs.velocity().x, lhs.velocity().y),
                 lhs_shape,
-                &rhs_isometry,
-                &Vector2::new(0.0, 0.0),
+                &rhs.get_isometry(),
+                &Vector2::new(rhs.velocity().x, rhs.velocity().y),
                 rhs_shape,
                 duration,
             ).unwrap();
         });
     });
-    if let Some(collision) = collision {
-        let mass_sum = lhs.mass() + rhs.mass();
-        let mut contact = None;
-        lhs.with_shape(&mut |lhs_shape| {
-            rhs.with_shape(shape_cache, &mut |rhs_shape| {
-                contact = query::contact(
-                    &Isometry::translation(lhs_position.x, lhs_position.y),
-                    lhs_shape,
-                    &rhs_isometry,
-                    rhs_shape,
-                    0.0,
-                ).unwrap();
-            });
-        });
-        if let Some(contact) = contact {
-            *lhs.position() += Vec2f::new(contact.normal1.x, contact.normal1.y) * contact.dist;
-        } else {
-            *lhs.position() += lhs_velocity * collision.toi;
+    toi
+}
+
+impl WithVelocity for Actor {
+    fn velocity(&self) -> Vec2f {
+        self.velocity
+    }
+}
+
+impl WithVelocity for DynamicObject {
+    fn velocity(&self) -> Vec2f {
+        self.velocity
+    }
+}
+
+impl WithVelocity for StaticObject {
+    fn velocity(&self) -> Vec2f {
+        Vec2f::ZERO
+    }
+}
+
+struct Collision {
+    lhs: Index,
+    rhs: Index,
+    toi: TOI,
+}
+
+fn update_earliest_collision(lhs: Index, rhs: Index, toi: TOI, collision: &mut Option<Collision>) {
+    if collision.is_none() || collision.as_ref().unwrap().toi.toi > toi.toi {
+        *collision = Some(Collision { lhs, rhs, toi });
+    }
+}
+
+trait CollidingObject: WithVelocity + WithShape + WithIsometry {
+    fn material(&self) -> Material;
+    fn mass(&self) -> f64;
+    fn position(&self) -> Vec2f;
+    fn set_position(&mut self, value: Vec2f);
+    fn set_velocity(&mut self, value: Vec2f);
+    fn effect(&mut self) -> &mut Effect;
+    fn health(&mut self) -> &mut f64;
+    fn aura(&self) -> &Aura;
+    fn is_static(&self) -> bool;
+}
+
+fn with_colliding_objects_mut<F>(lhs: Index, rhs: Index, world: &mut World, mut f: F)
+    where F: FnMut(&mut dyn CollidingObject, &mut dyn CollidingObject)
+{
+    if lhs > rhs {
+        with_colliding_objects_ord_mut(rhs, lhs, world, |l, r| f(r, l))
+    } else {
+        with_colliding_objects_ord_mut(lhs, rhs, world, f)
+    }
+}
+
+fn with_colliding_objects_ord_mut<F>(lhs: Index, rhs: Index, world: &mut World, mut f: F)
+    where F: FnMut(&mut dyn CollidingObject, &mut dyn CollidingObject)
+{
+    match lhs {
+        Index::Actor(lhs) => match rhs {
+            Index::Actor(rhs) => {
+                let (left, right) = world.actors.split_at_mut(rhs);
+                f(&mut left[lhs], &mut right[0])
+            }
+            Index::DynamicObject(rhs) => f(&mut world.actors[lhs], &mut world.dynamic_objects[rhs]),
+            Index::StaticObject(rhs) => f(&mut world.actors[lhs], &mut world.static_objects[rhs]),
         }
-        let delta_velocity = *lhs.velocity();
-        let lhs_kinetic_energy = get_kinetic_energy(lhs.mass(), *lhs.velocity());
-        let lhs_velocity = *lhs.velocity() - delta_velocity * rhs.mass() * (1.0 + lhs.material().restitution()) / mass_sum;
-        *lhs.velocity() = lhs_velocity;
-        let new_lhs_effect = add_magick_power_to_effect(now, lhs.effect(), &rhs.effect().power);
-        let new_rhs_effect = add_magick_power_to_effect(now, rhs.effect(), &lhs.effect().power);
-        *lhs.effect() = new_lhs_effect;
-        *rhs.effect() = new_rhs_effect;
-        handle_dynamic_object_collision_damage(lhs_kinetic_energy, damage_factor, lhs);
-        if !can_absorb_physical_damage(&rhs.aura().elements) {
-            let rhs_velocity = delta_velocity * lhs.mass() * (1.0 + rhs.material().restitution()) / mass_sum;
-            *rhs.health() -= get_kinetic_energy(rhs.mass(), rhs_velocity) * damage_factor / rhs.mass();
+        Index::DynamicObject(lhs) => match rhs {
+            Index::Actor(rhs) => f(&mut world.dynamic_objects[lhs], &mut world.actors[rhs]),
+            Index::DynamicObject(rhs) => {
+                let (left, right) = world.dynamic_objects.split_at_mut(rhs);
+                f(&mut left[lhs], &mut right[0])
+            }
+            Index::StaticObject(rhs) => f(&mut world.dynamic_objects[lhs], &mut world.static_objects[rhs]),
+        }
+        Index::StaticObject(lhs) => match rhs {
+            Index::Actor(rhs) => f(&mut world.static_objects[lhs], &mut world.actors[rhs]),
+            Index::DynamicObject(rhs) => f(&mut world.static_objects[lhs], &mut world.dynamic_objects[rhs]),
+            Index::StaticObject(rhs) => {
+                let (left, right) = world.static_objects.split_at_mut(rhs);
+                f(&mut left[lhs], &mut right[0])
+            }
         }
     }
 }
 
-fn handle_dynamic_object_collision_damage(prev_kinetic_energy: f64, damage_factor: f64, object: &mut dyn DynamicCollidingObject) {
+fn apply_impact(now: f64, damage_factor: f64, epsilon_duration: f64, shape_cache: &ShapeCache, toi: &TOI, lhs: &mut dyn CollidingObject, rhs: &mut dyn CollidingObject) {
+    let lhs_kinetic_energy = get_kinetic_energy(lhs.mass(), lhs.velocity());
+    let rhs_kinetic_energy = get_kinetic_energy(rhs.mass(), rhs.velocity());
+    let delta_velocity = lhs.velocity() - rhs.velocity();
+    let mass_sum = lhs.mass() + rhs.mass();
+    let lhs_velocity = lhs.velocity() - delta_velocity * rhs.mass() * (1.0 + lhs.material().restitution()) / mass_sum;
+    let rhs_velocity = rhs.velocity() + delta_velocity * lhs.mass() * (1.0 + rhs.material().restitution()) / mass_sum;
+    lhs.set_position(lhs.position() + lhs.velocity() * toi.toi + lhs_velocity * epsilon_duration);
+    rhs.set_position(rhs.position() + rhs.velocity() * toi.toi + rhs_velocity * epsilon_duration);
+    lhs.set_velocity(lhs_velocity);
+    rhs.set_velocity(rhs_velocity);
+    if let Some(contact) = get_contact(shape_cache, lhs, rhs) {
+        if lhs.is_static() {
+            rhs.set_position(rhs.position() + Vec2f::new(contact.normal2.x, contact.normal2.y) * contact.dist.min(-epsilon_duration));
+        } else if rhs.is_static() {
+            lhs.set_position(lhs.position() + Vec2f::new(contact.normal1.x, contact.normal1.y) * contact.dist.min(-epsilon_duration));
+        } else {
+            let half_distance = contact.dist.min(-epsilon_duration) / 2.0;
+            lhs.set_position(lhs.position() + Vec2f::new(contact.normal1.x, contact.normal1.y) * (half_distance * rhs.mass() / mass_sum));
+            rhs.set_position(rhs.position() + Vec2f::new(contact.normal2.x, contact.normal2.y) * (half_distance * lhs.mass() / mass_sum));
+        }
+    }
+    let new_lhs_effect = add_magick_power_to_effect(now, lhs.effect(), &rhs.effect().power);
+    let new_rhs_effect = add_magick_power_to_effect(now, rhs.effect(), &lhs.effect().power);
+    *lhs.effect() = new_lhs_effect;
+    *rhs.effect() = new_rhs_effect;
+    handle_collision_damage(lhs_kinetic_energy, damage_factor, lhs_velocity, lhs);
+    handle_collision_damage(rhs_kinetic_energy, damage_factor, rhs_velocity, rhs);
+}
+
+fn get_contact(shape_cache: &ShapeCache, lhs: &dyn CollidingObject, rhs: &dyn CollidingObject) -> Option<Contact> {
+    let mut contact = None;
+    lhs.with_shape(shape_cache, &mut |lhs_shape| {
+        rhs.with_shape(shape_cache, &mut |rhs_shape| {
+            contact = query::contact(
+                &lhs.get_isometry(),
+                lhs_shape,
+                &rhs.get_isometry(),
+                rhs_shape,
+                0.0,
+            ).unwrap();
+        })
+    });
+    contact
+}
+
+impl CollidingObject for Actor {
+    fn material(&self) -> Material {
+        self.body.material
+    }
+
+    fn mass(&self) -> f64 {
+        self.body.mass()
+    }
+
+    fn position(&self) -> Vec2f {
+        self.position
+    }
+
+    fn set_position(&mut self, value: Vec2f) {
+        self.position = value;
+    }
+
+    fn set_velocity(&mut self, value: Vec2f) {
+        self.velocity = value;
+    }
+
+    fn effect(&mut self) -> &mut Effect {
+        &mut self.effect
+    }
+
+    fn health(&mut self) -> &mut f64 {
+        &mut self.health
+    }
+
+    fn aura(&self) -> &Aura {
+        &self.aura
+    }
+
+    fn is_static(&self) -> bool {
+        false
+    }
+}
+
+impl CollidingObject for DynamicObject {
+    fn material(&self) -> Material {
+        self.body.material
+    }
+
+    fn mass(&self) -> f64 {
+        self.body.mass()
+    }
+
+    fn position(&self) -> Vec2f {
+        self.position
+    }
+
+    fn set_position(&mut self, value: Vec2f) {
+        self.position = value;
+    }
+
+    fn set_velocity(&mut self, value: Vec2f) {
+        self.velocity = value;
+    }
+
+    fn effect(&mut self) -> &mut Effect {
+        &mut self.effect
+    }
+
+    fn health(&mut self) -> &mut f64 {
+        &mut self.health
+    }
+
+    fn aura(&self) -> &Aura {
+        &self.aura
+    }
+
+    fn is_static(&self) -> bool {
+        false
+    }
+}
+
+impl CollidingObject for StaticObject {
+    fn material(&self) -> Material {
+        self.body.material
+    }
+
+    fn mass(&self) -> f64 {
+        self.body.mass()
+    }
+
+    fn position(&self) -> Vec2f {
+        self.position
+    }
+
+    fn set_position(&mut self, _: Vec2f) {}
+
+    fn set_velocity(&mut self, _: Vec2f) {}
+
+    fn effect(&mut self) -> &mut Effect {
+        &mut self.effect
+    }
+
+    fn health(&mut self) -> &mut f64 {
+        &mut self.health
+    }
+
+    fn aura(&self) -> &Aura {
+        &self.aura
+    }
+
+    fn is_static(&self) -> bool {
+        true
+    }
+}
+
+fn handle_collision_damage(prev_kinetic_energy: f64, damage_factor: f64, velocity: Vec2f, object: &mut dyn CollidingObject) {
     if !can_absorb_physical_damage(&object.aura().elements) {
-        *object.health() -= (get_kinetic_energy(object.mass(), *object.velocity()) - prev_kinetic_energy).abs() * damage_factor / object.mass();
+        *object.health() -= (get_kinetic_energy(object.mass(), velocity) - prev_kinetic_energy).abs() * damage_factor / object.mass();
     }
 }
 
@@ -1341,6 +1406,9 @@ fn make_circle_arc_polyline(arc: &CircleArcKey) -> Polyline {
 
 #[cfg(test)]
 mod tests {
+    use parry2d_f64::na::Unit;
+    use parry2d_f64::query::TOIStatus;
+
     use crate::engine::*;
 
     #[test]
@@ -1367,5 +1435,46 @@ mod tests {
         assert_eq!(polyline.num_segments(), 8);
         assert_eq!(polyline.vertices().first(), Some(&Point2::<Real>::new(SQRT_2, -SQRT_2)));
         assert_eq!(polyline.vertices().last(), Some(&Point2::<Real>::new(SQRT_2, SQRT_2)));
+    }
+
+    #[test]
+    fn time_of_impact_should_find_impact_for_static_circle_arc_and_moving_disk() {
+        use std::f64::consts::FRAC_PI_2;
+        let duration = 10.0;
+        let shape_cache = ShapeCache::default();
+        let static_object = StaticObject {
+            id: 1,
+            body: Body {
+                shape: StaticShape::CircleArc(CircleArc {
+                    radius: 5.0,
+                    length: FRAC_PI_2,
+                    rotation: -2.6539321938108684,
+                }),
+                material: Material::None,
+            },
+            position: Vec2f::new(-33.23270204831895, -32.3454131103618),
+            health: 0.0,
+            effect: Effect::default(),
+            aura: Aura::default(),
+        };
+        let dynamic_object = DynamicObject {
+            id: 2,
+            body: Body { shape: Disk { radius: 0.2 }, material: Material::Stone },
+            position: Vec2f::new(-34.41147614376544, -32.89358428062188),
+            health: 1.0,
+            effect: Effect::default(),
+            aura: Aura::default(),
+            velocity: Vec2f::new(-737.9674461149048, -343.18066550098706),
+            dynamic_force: Vec2f::ZERO,
+            position_z: 1.5,
+            velocity_z: -0.08166666666666667,
+        };
+        let toi = time_of_impact(duration, &shape_cache, &static_object, &dynamic_object).unwrap();
+        assert_eq!(toi.toi, 0.004296260825975674);
+        assert_eq!(toi.witness1, Point2::new(4.989825741741153, -0.2589521646469748));
+        assert_eq!(toi.witness2, Point2::new(-0.18022918657654352, -0.08670317356335425));
+        assert_eq!(toi.normal1, Unit::new_unchecked(Vector2::<f64>::new(-0.9992290361820114, 0.03925981725337541)));
+        assert_eq!(toi.normal2, Unit::new_unchecked(Vector2::<f64>::new(-0.9011459910530735, -0.4335157468985109)));
+        assert_eq!(toi.status, TOIStatus::Converged);
     }
 }
