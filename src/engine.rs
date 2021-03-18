@@ -17,8 +17,8 @@ const RESOLUTION_FACTOR: f64 = 4.0;
 #[derive(Debug, Copy, Clone)]
 pub enum Index {
     Actor(usize),
-    DynamicBody(usize),
-    StaticBody(usize),
+    DynamicObject(usize),
+    StaticObject(usize),
 }
 
 struct Spell<'a> {
@@ -867,20 +867,20 @@ fn intersect_beam(magick: &Magick, origin: Vec2f, direction: Vec2f, depth: usize
     let mut nearest_hit = find_beam_nearest_intersection(origin, direction, &world.actors, length, shape_cache)
         .map(|(i, n)| (Index::Actor(i), n));
     nearest_hit = find_beam_nearest_intersection(origin, direction, &world.dynamic_objects, length, shape_cache)
-        .map(|(i, n)| (Index::DynamicBody(i), n)).or(nearest_hit);
+        .map(|(i, n)| (Index::DynamicObject(i), n)).or(nearest_hit);
     nearest_hit = find_beam_nearest_intersection(origin, direction, &world.static_objects, length, shape_cache)
-        .map(|(i, n)| (Index::StaticBody(i), n)).or(nearest_hit);
+        .map(|(i, n)| (Index::StaticObject(i), n)).or(nearest_hit);
     if let Some((index, mut normal)) = nearest_hit {
         let (aura, effect) = match index {
             Index::Actor(i) => {
                 let object = &mut world.actors[i];
                 (&object.aura, &mut object.effect)
             }
-            Index::DynamicBody(i) => {
+            Index::DynamicObject(i) => {
                 let object = &mut world.dynamic_objects[i];
                 (&object.aura, &mut object.effect)
             }
-            Index::StaticBody(i) => {
+            Index::StaticObject(i) => {
                 let object = &mut world.static_objects[i];
                 (&object.aura, &mut object.effect)
             }
