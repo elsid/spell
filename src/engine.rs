@@ -671,9 +671,9 @@ fn update_velocity(duration: f64, body: &Body, dynamic_force: Vec2f, velocity: &
     let dynamic_force_norm = dynamic_force.norm();
     let velocity_norm = velocity.norm();
     if dynamic_force_norm > 0.0 && velocity_norm > 0.0 {
-        *velocity += (dynamic_force / dynamic_force_norm) * (dynamic_force_norm * duration / body.mass()).min(velocity_norm);
+        *velocity += (dynamic_force / dynamic_force_norm) * (dynamic_force_norm * duration / (2.0 * body.mass())).min(velocity_norm);
     } else {
-        *velocity += dynamic_force * (duration / body.mass());
+        *velocity += dynamic_force * (duration / (2.0 * body.mass()));
     }
 }
 
@@ -683,7 +683,7 @@ fn update_position_z(duration: f64, height: f64, velocity_z: f64, position_z: &m
 
 fn update_velocity_z(duration: f64, height: f64, gravitational_acceleration: f64, position_z: f64, velocity_z: &mut f64) {
     if position_z - height > f64::EPSILON {
-        *velocity_z -= duration * gravitational_acceleration;
+        *velocity_z -= duration * gravitational_acceleration / 2.0;
     } else {
         *velocity_z = 0.0;
     }
