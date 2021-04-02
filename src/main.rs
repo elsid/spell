@@ -33,6 +33,7 @@ use crate::world::World;
 
 #[cfg(feature = "render")]
 mod client;
+mod control;
 mod engine;
 #[cfg(feature = "render")]
 mod game;

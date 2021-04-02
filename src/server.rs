@@ -11,13 +11,11 @@ use rand::rngs::StdRng;
 use rand::{CryptoRng, Rng, SeedableRng};
 use tokio::net::UdpSocket;
 
-use crate::engine::{
-    add_actor_spell_element, complete_directed_magick, get_next_id, remove_actor, self_magick,
-    start_area_of_effect_magick, start_directed_magick, Engine,
-};
+use crate::control::apply_player_action;
+use crate::engine::{get_next_id, remove_actor, Engine};
 use crate::generators::generate_player_actor;
 use crate::protocol::{
-    ClientMessage, ClientMessageData, GameUpdate, PlayerAction, ServerMessage, ServerMessageData,
+    ClientMessage, ClientMessageData, GameUpdate, ServerMessage, ServerMessageData,
 };
 use crate::world::World;
 
@@ -350,29 +348,7 @@ fn handle_existing_session(message: ClientMessage, session: &mut GameSession, wo
         }
         ClientMessageData::PlayerAction(player_action) => {
             if let Some(actor_index) = session.actor_index {
-                match player_action {
-                    PlayerAction::Move(moving) => {
-                        world.actors[actor_index].moving = moving;
-                    }
-                    PlayerAction::SetTargetDirection(target_direction) => {
-                        world.actors[actor_index].target_direction = target_direction;
-                    }
-                    PlayerAction::AddSpellElement(element) => {
-                        add_actor_spell_element(actor_index, element, world);
-                    }
-                    PlayerAction::StartDirectedMagick => {
-                        start_directed_magick(actor_index, world);
-                    }
-                    PlayerAction::CompleteDirectedMagick => {
-                        complete_directed_magick(actor_index, world);
-                    }
-                    PlayerAction::SelfMagick => {
-                        self_magick(actor_index, world);
-                    }
-                    PlayerAction::StartAreaOfEffectMagick => {
-                        start_area_of_effect_magick(actor_index, world);
-                    }
-                }
+                apply_player_action(&player_action, actor_index, world);
             } else {
                 warn!(
                     "Player actor is not found for session: {}",

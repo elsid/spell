@@ -14,16 +14,13 @@ use piston::input::{
 use piston::window::{Window, WindowSettings};
 use piston::EventLoop;
 
-use crate::engine::{
-    add_actor_spell_element, complete_directed_magick, self_magick, set_actor_moving,
-    start_area_of_effect_magick, start_directed_magick, Engine,
-};
+use crate::control::apply_player_action;
+use crate::engine::Engine;
 use crate::meters::{DurationMovingAverage, FpsMovingAverage};
 use crate::protocol::{GameUpdate, PlayerAction};
 use crate::vec2::Vec2f;
 use crate::world::{Aura, Disk, Element, Material, RingSector, StaticShape, World};
 
-#[allow(clippy::option_map_unit_fn)]
 pub fn run_game(
     mut world: World,
     sender: Option<Sender<PlayerAction>>,
@@ -61,24 +58,30 @@ pub fn run_game(
             match v {
                 Button::Mouse(MouseButton::Left) => {
                     if let Some(player_index) = last_player_index {
-                        sender
-                            .as_ref()
-                            .map(|v| v.send(PlayerAction::Move(true)).unwrap());
-                        set_actor_moving(player_index, true, &mut world);
+                        send_or_apply_player_action(
+                            sender.as_ref(),
+                            PlayerAction::Move(true),
+                            player_index,
+                            &mut world,
+                        );
                     }
                 }
                 Button::Mouse(MouseButton::Right) => {
                     if let Some(player_index) = last_player_index {
                         if lshift {
-                            sender
-                                .as_ref()
-                                .map(|v| v.send(PlayerAction::StartAreaOfEffectMagick).unwrap());
-                            start_area_of_effect_magick(player_index, &mut world);
+                            send_or_apply_player_action(
+                                sender.as_ref(),
+                                PlayerAction::StartAreaOfEffectMagick,
+                                player_index,
+                                &mut world,
+                            );
                         } else {
-                            sender
-                                .as_ref()
-                                .map(|v| v.send(PlayerAction::StartDirectedMagick).unwrap());
-                            start_directed_magick(player_index, &mut world);
+                            send_or_apply_player_action(
+                                sender.as_ref(),
+                                PlayerAction::StartDirectedMagick,
+                                player_index,
+                                &mut world,
+                            );
                         }
                     }
                 }
@@ -91,99 +94,113 @@ pub fn run_game(
             match v {
                 Button::Mouse(MouseButton::Left) => {
                     if let Some(player_index) = last_player_index {
-                        sender
-                            .as_ref()
-                            .map(|v| v.send(PlayerAction::Move(false)).unwrap());
-                        set_actor_moving(player_index, false, &mut world);
+                        send_or_apply_player_action(
+                            sender.as_ref(),
+                            PlayerAction::Move(false),
+                            player_index,
+                            &mut world,
+                        );
                     }
                 }
                 Button::Mouse(MouseButton::Right) => {
                     if let Some(player_index) = last_player_index {
-                        sender
-                            .as_ref()
-                            .map(|v| v.send(PlayerAction::CompleteDirectedMagick).unwrap());
-                        complete_directed_magick(player_index, &mut world);
+                        send_or_apply_player_action(
+                            sender.as_ref(),
+                            PlayerAction::CompleteDirectedMagick,
+                            player_index,
+                            &mut world,
+                        );
                     }
                 }
                 Button::Mouse(MouseButton::Middle) => {
                     if let Some(player_index) = last_player_index {
-                        sender
-                            .as_ref()
-                            .map(|v| v.send(PlayerAction::SelfMagick).unwrap());
-                        self_magick(player_index, &mut world);
+                        send_or_apply_player_action(
+                            sender.as_ref(),
+                            PlayerAction::SelfMagick,
+                            player_index,
+                            &mut world,
+                        );
                     }
                 }
                 Button::Keyboard(Key::LShift) => lshift = false,
                 Button::Keyboard(Key::Q) => {
                     if let Some(player_index) = last_player_index {
-                        sender.as_ref().map(|v| {
-                            v.send(PlayerAction::AddSpellElement(Element::Water))
-                                .unwrap()
-                        });
-                        add_actor_spell_element(player_index, Element::Water, &mut world);
+                        send_or_apply_player_action(
+                            sender.as_ref(),
+                            PlayerAction::AddSpellElement(Element::Water),
+                            player_index,
+                            &mut world,
+                        );
                     }
                 }
                 Button::Keyboard(Key::A) => {
                     if let Some(player_index) = last_player_index {
-                        sender.as_ref().map(|v| {
-                            v.send(PlayerAction::AddSpellElement(Element::Lightning))
-                                .unwrap()
-                        });
-                        add_actor_spell_element(player_index, Element::Lightning, &mut world);
+                        send_or_apply_player_action(
+                            sender.as_ref(),
+                            PlayerAction::AddSpellElement(Element::Lightning),
+                            player_index,
+                            &mut world,
+                        );
                     }
                 }
                 Button::Keyboard(Key::W) => {
                     if let Some(player_index) = last_player_index {
-                        sender.as_ref().map(|v| {
-                            v.send(PlayerAction::AddSpellElement(Element::Life))
-                                .unwrap()
-                        });
-                        add_actor_spell_element(player_index, Element::Life, &mut world);
+                        send_or_apply_player_action(
+                            sender.as_ref(),
+                            PlayerAction::AddSpellElement(Element::Life),
+                            player_index,
+                            &mut world,
+                        );
                     }
                 }
                 Button::Keyboard(Key::S) => {
                     if let Some(player_index) = last_player_index {
-                        sender.as_ref().map(|v| {
-                            v.send(PlayerAction::AddSpellElement(Element::Arcane))
-                                .unwrap()
-                        });
-                        add_actor_spell_element(player_index, Element::Arcane, &mut world);
+                        send_or_apply_player_action(
+                            sender.as_ref(),
+                            PlayerAction::AddSpellElement(Element::Arcane),
+                            player_index,
+                            &mut world,
+                        );
                     }
                 }
                 Button::Keyboard(Key::E) => {
                     if let Some(player_index) = last_player_index {
-                        sender.as_ref().map(|v| {
-                            v.send(PlayerAction::AddSpellElement(Element::Shield))
-                                .unwrap()
-                        });
-                        add_actor_spell_element(player_index, Element::Shield, &mut world);
+                        send_or_apply_player_action(
+                            sender.as_ref(),
+                            PlayerAction::AddSpellElement(Element::Shield),
+                            player_index,
+                            &mut world,
+                        );
                     }
                 }
                 Button::Keyboard(Key::D) => {
                     if let Some(player_index) = last_player_index {
-                        sender.as_ref().map(|v| {
-                            v.send(PlayerAction::AddSpellElement(Element::Earth))
-                                .unwrap()
-                        });
-                        add_actor_spell_element(player_index, Element::Earth, &mut world);
+                        send_or_apply_player_action(
+                            sender.as_ref(),
+                            PlayerAction::AddSpellElement(Element::Earth),
+                            player_index,
+                            &mut world,
+                        );
                     }
                 }
                 Button::Keyboard(Key::R) => {
                     if let Some(player_index) = last_player_index {
-                        sender.as_ref().map(|v| {
-                            v.send(PlayerAction::AddSpellElement(Element::Cold))
-                                .unwrap()
-                        });
-                        add_actor_spell_element(player_index, Element::Cold, &mut world);
+                        send_or_apply_player_action(
+                            sender.as_ref(),
+                            PlayerAction::AddSpellElement(Element::Cold),
+                            player_index,
+                            &mut world,
+                        );
                     }
                 }
                 Button::Keyboard(Key::F) => {
                     if let Some(player_index) = last_player_index {
-                        sender.as_ref().map(|v| {
-                            v.send(PlayerAction::AddSpellElement(Element::Fire))
-                                .unwrap()
-                        });
-                        add_actor_spell_element(player_index, Element::Fire, &mut world);
+                        send_or_apply_player_action(
+                            sender.as_ref(),
+                            PlayerAction::AddSpellElement(Element::Fire),
+                            player_index,
+                            &mut world,
+                        );
                     }
                 }
                 _ => (),
@@ -218,23 +235,28 @@ pub fn run_game(
                 let target_direction = (last_mouse_pos - last_viewport_shift) / scale;
                 let norm = target_direction.norm();
                 if norm <= f64::EPSILON {
-                    world.actors[player_index].target_direction =
-                        world.actors[player_index].current_direction;
-                    sender.as_ref().map(|v| {
-                        v.send(PlayerAction::SetTargetDirection(
+                    send_or_apply_player_action(
+                        sender.as_ref(),
+                        PlayerAction::SetTargetDirection(
                             world.actors[player_index].current_direction,
-                        ))
-                        .unwrap()
-                    });
+                        ),
+                        player_index,
+                        &mut world,
+                    );
                 } else {
-                    world.actors[player_index].target_direction = target_direction / norm;
-                    sender.as_ref().map(|v| {
-                        v.send(PlayerAction::SetTargetDirection(target_direction / norm))
-                            .unwrap()
-                    });
+                    send_or_apply_player_action(
+                        sender.as_ref(),
+                        PlayerAction::SetTargetDirection(target_direction / norm),
+                        player_index,
+                        &mut world,
+                    );
                 }
             }
-            engine.update(time_step, &mut world);
+            if sender.is_some() {
+                engine.update_visual(time_step, &mut world);
+            } else {
+                engine.update(time_step, &mut world);
+            }
             if let Some(player_id) = player_id {
                 last_player_index = world.actors.iter().position(|v| v.id == player_id);
             }
@@ -654,13 +676,18 @@ pub fn run_game(
                     )
                     .unwrap();
 
+                let world_revision = if sender.is_some() {
+                    format!(
+                        "World revision: {} (+{})",
+                        world.revision,
+                        world.revision - last_received_world_revision
+                    )
+                } else {
+                    format!("World revision: {}", world.revision)
+                };
                 text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
                     .draw(
-                        &format!(
-                            "World revision: {} (+{})",
-                            world.revision,
-                            world.revision - last_received_world_revision
-                        )[..],
+                        &world_revision[..],
                         &mut glyphs,
                         &ctx.draw_state,
                         ctx.transform.trans(10.0, 5.0 * 24.0),
@@ -668,13 +695,18 @@ pub fn run_game(
                     )
                     .unwrap();
 
+                let world_time = if sender.is_some() {
+                    format!(
+                        "World time: {:.3} (+{:.3})",
+                        world.time,
+                        world.time - last_received_world_time
+                    )
+                } else {
+                    format!("World time: {:.3}", world.time)
+                };
                 text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
                     .draw(
-                        &format!(
-                            "World time: {:.3} (+{:.3})",
-                            world.time,
-                            world.time - last_received_world_time
-                        )[..],
+                        &world_time[..],
                         &mut glyphs,
                         &ctx.draw_state,
                         ctx.transform.trans(10.0, 6.0 * 24.0),
@@ -918,4 +950,17 @@ fn draw_ring_sector<G>(
             f(&draw_buffer);
         }
     });
+}
+
+fn send_or_apply_player_action(
+    sender: Option<&Sender<PlayerAction>>,
+    player_action: PlayerAction,
+    actor_index: usize,
+    world: &mut World,
+) {
+    if let Some(s) = sender {
+        s.send(player_action).unwrap();
+    } else {
+        apply_player_action(&player_action, actor_index, world);
+    }
 }

@@ -198,7 +198,7 @@ impl Engine {
             &world.settings,
             &mut world.static_objects,
         );
-        self.beam_collider.update(world, &self.shape_cache);
+        self.update_beams(world);
         move_objects(duration, world, &self.shape_cache);
         world
             .actors
@@ -224,6 +224,17 @@ impl Engine {
         });
         handle_completed_magicks(world);
     }
+
+    #[cfg(feature = "render")]
+    pub fn update_visual(&mut self, duration: f64, world: &mut World) {
+        world.revision += 1;
+        world.time += duration;
+        self.update_beams(world);
+    }
+
+    fn update_beams(&mut self, world: &mut World) {
+        self.beam_collider.update(world, &self.shape_cache);
+    }
 }
 
 pub fn get_next_id(counter: &mut u64) -> u64 {
@@ -234,11 +245,6 @@ pub fn get_next_id(counter: &mut u64) -> u64 {
 
 pub fn remove_actor(actor_index: usize, world: &mut World) {
     world.actors.remove(actor_index);
-}
-
-#[cfg(feature = "render")]
-pub fn set_actor_moving(actor_index: usize, value: bool, world: &mut World) {
-    world.actors[actor_index].moving = value;
 }
 
 pub fn add_actor_spell_element(actor_index: usize, element: Element, world: &mut World) {
