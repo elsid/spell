@@ -1,9 +1,9 @@
 #[macro_use]
 extern crate log;
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::channel;
+use std::sync::Arc;
 use std::thread::spawn;
 use std::time::Duration;
 
@@ -11,30 +11,33 @@ use clap::Clap;
 use rand::thread_rng;
 use tokio::runtime::Builder;
 
-use crate::client::{GameChannel, GameClientSettings, run_game_client, run_udp_client, ServerChannel, UdpClientSettings};
+use crate::client::{
+    run_game_client, run_udp_client, GameChannel, GameClientSettings, ServerChannel,
+    UdpClientSettings,
+};
 use crate::engine::get_next_id;
 #[cfg(feature = "render")]
 use crate::game::run_game;
 use crate::generators::{generate_player_actor, generate_world};
 use crate::protocol::GameUpdate;
 use crate::rect::Rectf;
-use crate::server::{GameServerSettings, run_game_server, run_udp_server, UdpServerSettings};
+use crate::server::{run_game_server, run_udp_server, GameServerSettings, UdpServerSettings};
 use crate::vec2::Vec2f;
 #[cfg(feature = "render")]
 use crate::world::World;
 
-mod vec2;
-mod world;
-mod rect;
-mod engine;
-mod protocol;
-mod server;
 mod client;
-#[cfg(feature = "render")]
-mod meters;
+mod engine;
 #[cfg(feature = "render")]
 mod game;
 mod generators;
+#[cfg(feature = "render")]
+mod meters;
+mod protocol;
+mod rect;
+mod server;
+mod vec2;
+mod world;
 
 #[derive(Clap)]
 struct Args {
@@ -89,10 +92,15 @@ fn run_single_player() {
     let mut rng = thread_rng();
     let mut world = generate_world(Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)), &mut rng);
     let id = get_next_id(&mut world.id_counter);
-    world.actors.push(generate_player_actor(id, &world.bounds, &mut rng));
+    world
+        .actors
+        .push(generate_player_actor(id, &world.bounds, &mut rng));
     let (sender, receiver) = channel();
     sender.send(GameUpdate::SetPlayerId(id)).unwrap();
-    #[cfg(feature = "render")] { run_game(world, None, receiver); }
+    #[cfg(feature = "render")]
+    {
+        run_game(world, None, receiver);
+    }
 }
 
 fn run_multi_player(params: MultiPlayerParams) {
@@ -105,8 +113,14 @@ fn run_multi_player(params: MultiPlayerParams) {
         let settings = GameClientSettings {
             connect_timeout: Duration::from_secs_f64(params.connect_timeout),
         };
-        let game_channel = GameChannel { sender: update_sender, receiver: action_receiver };
-        let server_channel = ServerChannel { sender: client_sender, receiver: server_receiver };
+        let game_channel = GameChannel {
+            sender: update_sender,
+            receiver: action_receiver,
+        };
+        let server_channel = ServerChannel {
+            sender: client_sender,
+            receiver: server_receiver,
+        };
         let stop = stop_game_client.clone();
         spawn(move || run_game_client(settings, server_channel, game_channel, stop))
     };
@@ -117,14 +131,21 @@ fn run_multi_player(params: MultiPlayerParams) {
     let udp_server = {
         let stop = stop_udp_client.clone();
         spawn(move || {
-            let runtime = Builder::new_current_thread()
-                .enable_all()
-                .build()
+            let runtime = Builder::new_current_thread().enable_all().build().unwrap();
+            runtime
+                .block_on(run_udp_client(
+                    settings,
+                    server_sender,
+                    client_receiver,
+                    stop,
+                ))
                 .unwrap();
-            runtime.block_on(run_udp_client(settings, server_sender, client_receiver, stop)).unwrap();
         })
     };
-    #[cfg(feature = "render")] { run_game(World::default(), Some(action_sender), update_receiver); }
+    #[cfg(feature = "render")]
+    {
+        run_game(World::default(), Some(action_sender), update_receiver);
+    }
     stop_game_client.store(true, Ordering::Release);
     game_client.join().unwrap();
     stop_udp_client.store(true, Ordering::Release);
@@ -133,7 +154,10 @@ fn run_multi_player(params: MultiPlayerParams) {
 
 fn run_server(params: ServerParams) {
     let runtime = Builder::new_current_thread().enable_all().build().unwrap();
-    let world = generate_world(Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)), &mut thread_rng());
+    let world = generate_world(
+        Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)),
+        &mut thread_rng(),
+    );
     let (server_sender, server_receiver) = channel();
     let (client_sender, client_receiver) = channel();
     let stop_game_server = Arc::new(AtomicBool::new(false));
@@ -153,7 +177,14 @@ fn run_server(params: ServerParams) {
         update_period,
         session_timeout: Duration::from_secs_f64(params.udp_session_timeout),
     };
-    runtime.block_on(run_udp_server(settings, client_sender, server_receiver, Arc::new(AtomicBool::new(false)))).unwrap();
+    runtime
+        .block_on(run_udp_server(
+            settings,
+            client_sender,
+            server_receiver,
+            Arc::new(AtomicBool::new(false)),
+        ))
+        .unwrap();
     stop_game_server.store(true, Ordering::Release);
     server.join().unwrap();
 }

@@ -8,9 +8,11 @@ use parry2d_f64::shape::{Ball, Cuboid, Polyline, Shape, Triangle};
 
 use crate::rect::Rectf;
 use crate::vec2::{Square, Vec2f};
-use crate::world::{Actor, Aura, Beam, Body, BoundedArea, CircleArc, DelayedMagick, Disk,
-                   DynamicObject, Effect, Element, Field, Magick, Material, RingSector, StaticArea,
-                   StaticObject, StaticShape, TempArea, World, WorldSettings};
+use crate::world::{
+    Actor, Aura, Beam, Body, BoundedArea, CircleArc, DelayedMagick, Disk, DynamicObject, Effect,
+    Element, Field, Magick, Material, RingSector, StaticArea, StaticObject, StaticShape, TempArea,
+    World, WorldSettings,
+};
 
 const RESOLUTION_FACTOR: f64 = 4.0;
 
@@ -28,7 +30,10 @@ struct Spell<'a> {
 
 impl<'a> Spell<'a> {
     fn on(max_elements: usize, elements: &'a mut Vec<Element>) -> Self {
-        Self { max_elements, elements }
+        Self {
+            max_elements,
+            elements,
+        }
     }
 
     fn add(&mut self, element: Element) {
@@ -78,23 +83,44 @@ impl BeamCollider {
         self.reflected_beams.clear();
         for i in 0..world.beams.len() {
             let beam = &world.beams[i];
-            let actor = world.actors.iter()
-                .find(|v| v.id == beam.actor_id)
-                .unwrap();
+            let actor = world.actors.iter().find(|v| v.id == beam.actor_id).unwrap();
             let direction = actor.current_direction;
-            let origin = actor.position + direction * (actor.body.shape.radius + world.settings.margin);
+            let origin =
+                actor.position + direction * (actor.body.shape.radius + world.settings.margin);
             let magick = beam.magick.clone();
             let mut length = world.settings.max_beam_length;
-            if let Some(r) = intersect_beam(&magick, origin, direction, 0, &mut length, world, shape_cache) {
+            if let Some(r) = intersect_beam(
+                &magick,
+                origin,
+                direction,
+                0,
+                &mut length,
+                world,
+                shape_cache,
+            ) {
                 self.reflected_beams.push(r);
             }
-            self.initial_beams.push(EmittedBeam { origin, direction, length, depth: 0, magick });
+            self.initial_beams.push(EmittedBeam {
+                origin,
+                direction,
+                length,
+                depth: 0,
+                magick,
+            });
         }
         let mut beam_index = 0;
         while beam_index < self.reflected_beams.len() {
             let beam = &mut self.reflected_beams[beam_index];
             let origin = beam.origin + beam.direction * world.settings.margin;
-            if let Some(r) = intersect_beam(&beam.magick, origin, beam.direction, beam.depth, &mut beam.length, world, shape_cache) {
+            if let Some(r) = intersect_beam(
+                &beam.magick,
+                origin,
+                beam.direction,
+                beam.depth,
+                &mut beam.length,
+                world,
+                shape_cache,
+            ) {
                 beam.length += world.settings.margin;
                 self.reflected_beams.push(r);
             }
@@ -116,10 +142,10 @@ struct ShapeCache {
 
 impl ShapeCache {
     fn with<R, F>(&self, key: &CircleArcKey, mut f: F) -> R
-        where F: FnMut(&dyn Shape) -> R
+    where
+        F: FnMut(&dyn Shape) -> R,
     {
-        if let Some((_, v)) = self.polylines.borrow().iter()
-            .find(|(k, _)| k == key) {
+        if let Some((_, v)) = self.polylines.borrow().iter().find(|(k, _)| k == key) {
             return f(v);
         }
         let polyline = make_circle_arc_polyline(key);
@@ -149,7 +175,9 @@ impl Engine {
     pub fn update(&mut self, duration: f64, world: &mut World) {
         world.revision += 1;
         world.time += duration;
-        world.temp_areas.retain(|v| v.effect.power.iter().sum::<f64>() > 0.0);
+        world
+            .temp_areas
+            .retain(|v| v.effect.power.iter().sum::<f64>() > 0.0);
         let now = world.time;
         world.bounded_areas.retain(|v| v.deadline >= now);
         world.fields.retain(|v| v.deadline >= now);
@@ -158,22 +186,41 @@ impl Engine {
         intersect_objects_with_all_fields(world);
         update_temp_areas(world.time, duration, &world.settings, &mut world.temp_areas);
         update_actors(world.time, duration, &world.settings, &mut world.actors);
-        update_dynamic_objects(world.time, duration, &world.settings, &mut world.dynamic_objects);
-        update_static_objects(world.time, duration, &world.settings, &mut world.static_objects);
+        update_dynamic_objects(
+            world.time,
+            duration,
+            &world.settings,
+            &mut world.dynamic_objects,
+        );
+        update_static_objects(
+            world.time,
+            duration,
+            &world.settings,
+            &mut world.static_objects,
+        );
         self.beam_collider.update(world, &self.shape_cache);
         move_objects(duration, world, &self.shape_cache);
-        world.actors.iter_mut().for_each(|v| v.dynamic_force = Vec2f::ZERO);
-        world.dynamic_objects.iter_mut().for_each(|v| v.dynamic_force = Vec2f::ZERO);
+        world
+            .actors
+            .iter_mut()
+            .for_each(|v| v.dynamic_force = Vec2f::ZERO);
+        world
+            .dynamic_objects
+            .iter_mut()
+            .for_each(|v| v.dynamic_force = Vec2f::ZERO);
         let bounds = world.bounds.clone();
-        world.actors.retain(|v| is_active(&bounds, &v.body.shape.as_shape(), v.position, v.health));
+        world
+            .actors
+            .retain(|v| is_active(&bounds, &v.body.shape.as_shape(), v.position, v.health));
         world.dynamic_objects.retain(|v| {
             (v.velocity_z > f64::EPSILON || v.velocity.norm() > f64::EPSILON)
                 && is_active(&bounds, &v.body.shape.as_shape(), v.position, v.health)
         });
         world.static_objects.retain(|v| {
-            v.aura.power > 0.0 || v.body.shape.with_shape(&self.shape_cache, |shape| {
-                is_active(&bounds, shape, v.position, v.health)
-            })
+            v.aura.power > 0.0
+                || v.body.shape.with_shape(&self.shape_cache, |shape| {
+                    is_active(&bounds, shape, v.position, v.health)
+                })
         });
         handle_completed_magicks(world);
     }
@@ -194,12 +241,20 @@ pub fn set_actor_moving(actor_index: usize, value: bool, world: &mut World) {
 }
 
 pub fn add_actor_spell_element(actor_index: usize, element: Element, world: &mut World) {
-    Spell::on(world.settings.max_spell_elements as usize, &mut world.actors[actor_index].spell_elements).add(element);
+    Spell::on(
+        world.settings.max_spell_elements as usize,
+        &mut world.actors[actor_index].spell_elements,
+    )
+    .add(element);
 }
 
 #[allow(clippy::needless_return)]
 pub fn start_directed_magick(actor_index: usize, world: &mut World) {
-    let magick = Spell::on(world.settings.max_spell_elements as usize, &mut world.actors[actor_index].spell_elements).cast();
+    let magick = Spell::on(
+        world.settings.max_spell_elements as usize,
+        &mut world.actors[actor_index].spell_elements,
+    )
+    .cast();
     if magick.power[Element::Shield as usize] > 0.0 {
         cast_shield(magick, actor_index, world);
     } else if magick.power[Element::Earth as usize] > 0.0 {
@@ -207,7 +262,8 @@ pub fn start_directed_magick(actor_index: usize, world: &mut World) {
     } else if magick.power[Element::Ice as usize] > 0.0 {
         return;
     } else if magick.power[Element::Arcane as usize] > 0.0
-        || magick.power[Element::Life as usize] > 0.0 {
+        || magick.power[Element::Life as usize] > 0.0
+    {
         add_beam(magick, actor_index, world);
     } else if magick.power[Element::Lightning as usize] > 0.0 {
         return;
@@ -215,17 +271,26 @@ pub fn start_directed_magick(actor_index: usize, world: &mut World) {
         || magick.power[Element::Cold as usize] > 0.0
         || magick.power[Element::Fire as usize] > 0.0
         || magick.power[Element::Steam as usize] > 0.0
-        || magick.power[Element::Poison as usize] > 0.0 {
-        cast_spray(world.settings.spray_angle, world.settings.directed_magick_duration,
-                   &magick, actor_index, world);
+        || magick.power[Element::Poison as usize] > 0.0
+    {
+        cast_spray(
+            world.settings.spray_angle,
+            world.settings.directed_magick_duration,
+            &magick,
+            actor_index,
+            world,
+        );
     }
 }
 
 #[allow(clippy::needless_return)]
 #[allow(clippy::if_same_then_else)]
 pub fn start_area_of_effect_magick(actor_index: usize, world: &mut World) {
-    let magick = Spell::on(world.settings.max_spell_elements as usize,
-                           &mut world.actors[actor_index].spell_elements).cast();
+    let magick = Spell::on(
+        world.settings.max_spell_elements as usize,
+        &mut world.actors[actor_index].spell_elements,
+    )
+    .cast();
     if magick.power[Element::Shield as usize] > 0.0 {
         return;
     } else if magick.power[Element::Earth as usize] > 0.0 {
@@ -233,18 +298,30 @@ pub fn start_area_of_effect_magick(actor_index: usize, world: &mut World) {
     } else if magick.power[Element::Ice as usize] > 0.0 {
         return;
     } else if magick.power[Element::Arcane as usize] > 0.0
-        || magick.power[Element::Life as usize] > 0.0 {
-        cast_spray(std::f64::consts::TAU, world.settings.area_of_effect_magick_duration,
-                   &magick, actor_index, world);
+        || magick.power[Element::Life as usize] > 0.0
+    {
+        cast_spray(
+            std::f64::consts::TAU,
+            world.settings.area_of_effect_magick_duration,
+            &magick,
+            actor_index,
+            world,
+        );
     } else if magick.power[Element::Lightning as usize] > 0.0 {
         return;
     } else if magick.power[Element::Water as usize] > 0.0
         || magick.power[Element::Cold as usize] > 0.0
         || magick.power[Element::Fire as usize] > 0.0
         || magick.power[Element::Steam as usize] > 0.0
-        || magick.power[Element::Poison as usize] > 0.0 {
-        cast_spray(std::f64::consts::TAU, world.settings.area_of_effect_magick_duration,
-                   &magick, actor_index, world);
+        || magick.power[Element::Poison as usize] > 0.0
+    {
+        cast_spray(
+            std::f64::consts::TAU,
+            world.settings.area_of_effect_magick_duration,
+            &magick,
+            actor_index,
+            world,
+        );
     }
 }
 
@@ -254,7 +331,8 @@ fn cast_shield(magick: Magick, actor_index: usize, world: &mut World) {
     if magick.power[Element::Earth as usize] > 0.0 {
         cast_earth_based_shield(magick, actor_index, world);
     } else if magick.power[Element::Arcane as usize] > 0.0
-        || magick.power[Element::Life as usize] > 0.0 {
+        || magick.power[Element::Life as usize] > 0.0
+    {
         return;
     } else if magick.power[Element::Lightning as usize] > 0.0 {
         return;
@@ -262,7 +340,8 @@ fn cast_shield(magick: Magick, actor_index: usize, world: &mut World) {
         || magick.power[Element::Cold as usize] > 0.0
         || magick.power[Element::Fire as usize] > 0.0
         || magick.power[Element::Steam as usize] > 0.0
-        || magick.power[Element::Poison as usize] > 0.0 {
+        || magick.power[Element::Poison as usize] > 0.0
+    {
         cast_spray_based_shield(magick, actor_index, world);
     } else {
         cast_reflecting_shield(std::f64::consts::FRAC_PI_2, actor_index, world);
@@ -276,10 +355,16 @@ fn cast_earth_based_shield(magick: Magick, actor_index: usize, world: &mut World
         world.static_objects.push(StaticObject {
             id: get_next_id(&mut world.id_counter),
             body: Body {
-                shape: StaticShape::Disk(Disk { radius: distance * std::f64::consts::PI / (2 * 5 * 2) as f64 }),
+                shape: StaticShape::Disk(Disk {
+                    radius: distance * std::f64::consts::PI / (2 * 5 * 2) as f64,
+                }),
                 material: Material::Stone,
             },
-            position: actor.position + actor.current_direction.rotated(i as f64 * std::f64::consts::PI / (2 * 5) as f64) * distance,
+            position: actor.position
+                + actor
+                    .current_direction
+                    .rotated(i as f64 * std::f64::consts::PI / (2 * 5) as f64)
+                    * distance,
             health: 1.0,
             effect: add_magick_power_to_effect(world.time, &Effect::default(), &magick.power),
             aura: Aura::default(),
@@ -294,10 +379,16 @@ fn cast_spray_based_shield(magick: Magick, actor_index: usize, world: &mut World
         world.temp_areas.push(TempArea {
             id: get_next_id(&mut world.id_counter),
             body: Body {
-                shape: Disk { radius: distance * std::f64::consts::PI / (2 * 5 * 2) as f64 },
+                shape: Disk {
+                    radius: distance * std::f64::consts::PI / (2 * 5 * 2) as f64,
+                },
                 material: Material::Dirt,
             },
-            position: actor.position + actor.current_direction.rotated(i as f64 * std::f64::consts::PI / (2 * 5) as f64) * distance,
+            position: actor.position
+                + actor
+                    .current_direction
+                    .rotated(i as f64 * std::f64::consts::PI / (2 * 5) as f64)
+                    * distance,
             effect: add_magick_power_to_effect(world.time, &Effect::default(), &magick.power),
         });
     }
@@ -321,7 +412,12 @@ fn cast_reflecting_shield(length: f64, actor_index: usize, world: &mut World) {
         position: actor.position,
         health: 0.0,
         effect: Effect::default(),
-        aura: Aura { applied: world.time, power: 5.0, radius: 0.0, elements },
+        aura: Aura {
+            applied: world.time,
+            power: 5.0,
+            radius: 0.0,
+            elements,
+        },
     });
 }
 
@@ -358,16 +454,28 @@ pub fn complete_directed_magick(actor_index: usize, world: &mut World) {
 }
 
 pub fn self_magick(actor_index: usize, world: &mut World) {
-    let magick = Spell::on(world.settings.max_spell_elements as usize, &mut world.actors[actor_index].spell_elements).cast();
+    let magick = Spell::on(
+        world.settings.max_spell_elements as usize,
+        &mut world.actors[actor_index].spell_elements,
+    )
+    .cast();
     if magick.power[Element::Shield as usize] == 0.0 {
-        world.actors[actor_index].effect = add_magick_power_to_effect(world.time, &world.actors[actor_index].effect, &magick.power);
+        world.actors[actor_index].effect = add_magick_power_to_effect(
+            world.time,
+            &world.actors[actor_index].effect,
+            &magick.power,
+        );
     } else {
         let mut elements = [false; 11];
-        elements.iter_mut().zip(magick.power.iter())
+        elements
+            .iter_mut()
+            .zip(magick.power.iter())
             .for_each(|(e, p)| *e = *p > 0.0);
         let power = magick.power.iter().sum();
-        let radius_factor = if elements[Element::Earth as usize] || elements[Element::Ice as usize]
-            || (elements[Element::Shield as usize] && elements.iter().filter(|v| **v).count() == 1) {
+        let radius_factor = if elements[Element::Earth as usize]
+            || elements[Element::Ice as usize]
+            || (elements[Element::Shield as usize] && elements.iter().filter(|v| **v).count() == 1)
+        {
             1.0
         } else {
             power
@@ -386,10 +494,14 @@ fn cast_spray(angle: f64, duration: f64, magick: &Magick, actor_index: usize, wo
     let effect = add_magick_power_to_effect(world.time, &Effect::default(), &magick.power);
     let body = RingSector {
         min_radius: actor.body.shape.radius + world.settings.margin,
-        max_radius: actor.body.shape.radius * (1.0 + effect.power.iter().sum::<f64>()) * world.settings.spray_distance_factor,
+        max_radius: actor.body.shape.radius
+            * (1.0 + effect.power.iter().sum::<f64>())
+            * world.settings.spray_distance_factor,
         angle,
     };
-    if (effect.power[Element::Water as usize] - effect.power.iter().sum::<f64>()).abs() <= f64::EPSILON {
+    if (effect.power[Element::Water as usize] - effect.power.iter().sum::<f64>()).abs()
+        <= f64::EPSILON
+    {
         world.fields.push(Field {
             id: get_next_id(&mut world.id_counter),
             actor_id: actor.id,
@@ -445,9 +557,13 @@ impl WithVolume for CircleArc {
 impl StaticShape {
     fn with_shape<R, F: FnMut(&dyn Shape) -> R>(&self, cache: &ShapeCache, mut f: F) -> R {
         match &self {
-            StaticShape::CircleArc(arc) => {
-                cache.with(&CircleArcKey { radius: arc.radius, length: arc.length }, f)
-            }
+            StaticShape::CircleArc(arc) => cache.with(
+                &CircleArcKey {
+                    radius: arc.radius,
+                    length: arc.length,
+                },
+                f,
+            ),
             StaticShape::Disk(disk) => f(&disk.as_shape()),
         }
     }
@@ -496,10 +612,12 @@ impl Material {
 
 fn combine_elements(target: Element, element: Element) -> Option<Element> {
     if (target == Element::Water && element == Element::Fire)
-        || (target == Element::Fire && element == Element::Water) {
+        || (target == Element::Fire && element == Element::Water)
+    {
         Some(Element::Steam)
     } else if (target == Element::Water && element == Element::Cold)
-        || (target == Element::Cold && element == Element::Water) {
+        || (target == Element::Cold && element == Element::Water)
+    {
         Some(Element::Ice)
     } else if target == Element::Ice && element == Element::Fire {
         Some(Element::Water)
@@ -510,7 +628,8 @@ fn combine_elements(target: Element, element: Element) -> Option<Element> {
 
 fn can_cancel_element(target: Element, element: Element) -> bool {
     (target == Element::Water && element == Element::Lightning)
-        || (target == Element::Lightning && (element == Element::Earth || element == Element::Water))
+        || (target == Element::Lightning
+            && (element == Element::Earth || element == Element::Water))
         || (target == Element::Life && element == Element::Arcane)
         || (target == Element::Arcane && element == Element::Life)
         || (target == Element::Shield && element == Element::Shield)
@@ -524,43 +643,74 @@ fn can_cancel_element(target: Element, element: Element) -> bool {
 
 fn intersect_objects_with_areas(world: &mut World, shape_cache: &ShapeCache) {
     for i in 0..world.actors.len() {
-        intersect_actor_with_all_bounded_areas(world.time, i, &world.bounded_areas, &mut world.actors);
+        intersect_actor_with_all_bounded_areas(
+            world.time,
+            i,
+            &world.bounded_areas,
+            &mut world.actors,
+        );
         let actor = &mut world.actors[i];
-        intersect_with_temp_and_static_areas(world.time, world.settings.gravitational_acceleration, &world.temp_areas, &world.static_areas, &mut IntersectingDynamicObject {
-            shape: &Ball::new(actor.body.shape.radius),
-            velocity: actor.velocity,
-            isometry: Isometry::translation(actor.position.x, actor.position.y),
-            levitating: (actor.position_z - actor.body.shape.radius) > f64::EPSILON,
-            mass: actor.body.mass(),
-            dynamic_force: &mut actor.dynamic_force,
-            effect: &mut actor.effect,
-        });
+        intersect_with_temp_and_static_areas(
+            world.time,
+            world.settings.gravitational_acceleration,
+            &world.temp_areas,
+            &world.static_areas,
+            &mut IntersectingDynamicObject {
+                shape: &Ball::new(actor.body.shape.radius),
+                velocity: actor.velocity,
+                isometry: Isometry::translation(actor.position.x, actor.position.y),
+                levitating: (actor.position_z - actor.body.shape.radius) > f64::EPSILON,
+                mass: actor.body.mass(),
+                dynamic_force: &mut actor.dynamic_force,
+                effect: &mut actor.effect,
+            },
+        );
     }
     for object in world.dynamic_objects.iter_mut() {
-        intersect_static_object_with_all_bounded_areas(world.time, &world.bounded_areas, &world.actors, &mut IntersectingStaticObject {
-            shape: &Ball::new(object.body.shape.radius),
-            isometry: Isometry::translation(object.position.x, object.position.y),
-            effect: &mut object.effect,
-        });
-        intersect_with_temp_and_static_areas(world.time, world.settings.gravitational_acceleration, &world.temp_areas, &world.static_areas, &mut IntersectingDynamicObject {
-            shape: &Ball::new(object.body.shape.radius),
-            velocity: object.velocity,
-            isometry: Isometry::translation(object.position.x, object.position.y),
-            levitating: (object.position_z - object.body.shape.radius) > f64::EPSILON,
-            mass: object.body.mass(),
-            dynamic_force: &mut object.dynamic_force,
-            effect: &mut object.effect,
-        });
-    }
-    for i in 0..world.static_objects.len() {
-        world.static_objects[i].body.shape.clone().with_shape(shape_cache, |shape| {
-            let object = &mut world.static_objects[i];
-            intersect_static_object_with_all_bounded_areas(world.time, &world.bounded_areas, &world.actors, &mut IntersectingStaticObject {
-                shape,
+        intersect_static_object_with_all_bounded_areas(
+            world.time,
+            &world.bounded_areas,
+            &world.actors,
+            &mut IntersectingStaticObject {
+                shape: &Ball::new(object.body.shape.radius),
                 isometry: Isometry::translation(object.position.x, object.position.y),
                 effect: &mut object.effect,
+            },
+        );
+        intersect_with_temp_and_static_areas(
+            world.time,
+            world.settings.gravitational_acceleration,
+            &world.temp_areas,
+            &world.static_areas,
+            &mut IntersectingDynamicObject {
+                shape: &Ball::new(object.body.shape.radius),
+                velocity: object.velocity,
+                isometry: Isometry::translation(object.position.x, object.position.y),
+                levitating: (object.position_z - object.body.shape.radius) > f64::EPSILON,
+                mass: object.body.mass(),
+                dynamic_force: &mut object.dynamic_force,
+                effect: &mut object.effect,
+            },
+        );
+    }
+    for i in 0..world.static_objects.len() {
+        world.static_objects[i]
+            .body
+            .shape
+            .clone()
+            .with_shape(shape_cache, |shape| {
+                let object = &mut world.static_objects[i];
+                intersect_static_object_with_all_bounded_areas(
+                    world.time,
+                    &world.bounded_areas,
+                    &world.actors,
+                    &mut IntersectingStaticObject {
+                        shape,
+                        isometry: Isometry::translation(object.position.x, object.position.y),
+                        effect: &mut object.effect,
+                    },
+                );
             });
-        });
     }
 }
 
@@ -574,31 +724,63 @@ struct IntersectingDynamicObject<'a> {
     effect: &'a mut Effect,
 }
 
-fn intersect_with_temp_and_static_areas(now: f64, gravitational_acceleration: f64, temp_areas: &[TempArea],
-                                        static_areas: &[StaticArea], object: &mut IntersectingDynamicObject) {
+fn intersect_with_temp_and_static_areas(
+    now: f64,
+    gravitational_acceleration: f64,
+    temp_areas: &[TempArea],
+    static_areas: &[StaticArea],
+    object: &mut IntersectingDynamicObject,
+) {
     intersect_with_temp_areas(now, temp_areas, object);
     if !object.levitating {
         intersect_with_last_static_area(now, gravitational_acceleration, static_areas, object);
     }
 }
 
-fn intersect_with_temp_areas(now: f64, temp_areas: &[TempArea], object: &mut IntersectingDynamicObject) {
+fn intersect_with_temp_areas(
+    now: f64,
+    temp_areas: &[TempArea],
+    object: &mut IntersectingDynamicObject,
+) {
     for temp_area in temp_areas.iter() {
         let isometry = Isometry::translation(temp_area.position.x, temp_area.position.y);
-        if query::intersection_test(&object.isometry, object.shape, &isometry, &Ball::new(temp_area.body.shape.radius)).unwrap() {
-            *object.effect = add_magick_power_to_effect(now, object.effect, &temp_area.effect.power);
+        if query::intersection_test(
+            &object.isometry,
+            object.shape,
+            &isometry,
+            &Ball::new(temp_area.body.shape.radius),
+        )
+        .unwrap()
+        {
+            *object.effect =
+                add_magick_power_to_effect(now, object.effect, &temp_area.effect.power);
         }
     }
 }
 
-fn intersect_with_last_static_area(now: f64, gravitational_acceleration: f64, static_areas: &[StaticArea],
-                                   object: &mut IntersectingDynamicObject) {
-    if let Some(static_area) = static_areas.iter().rev()
-        .find(|v| {
-            let isometry = Isometry::translation(v.position.x, v.position.y);
-            query::intersection_test(&object.isometry, object.shape, &isometry, &Ball::new(v.body.shape.radius)).unwrap()
-        }) {
-        add_dry_friction_force(object.mass, object.velocity, static_area.body.material, gravitational_acceleration, object.dynamic_force);
+fn intersect_with_last_static_area(
+    now: f64,
+    gravitational_acceleration: f64,
+    static_areas: &[StaticArea],
+    object: &mut IntersectingDynamicObject,
+) {
+    if let Some(static_area) = static_areas.iter().rev().find(|v| {
+        let isometry = Isometry::translation(v.position.x, v.position.y);
+        query::intersection_test(
+            &object.isometry,
+            object.shape,
+            &isometry,
+            &Ball::new(v.body.shape.radius),
+        )
+        .unwrap()
+    }) {
+        add_dry_friction_force(
+            object.mass,
+            object.velocity,
+            static_area.body.material,
+            gravitational_acceleration,
+            object.dynamic_force,
+        );
         *object.effect = add_magick_power_to_effect(now, object.effect, &static_area.magick.power);
     }
 }
@@ -609,22 +791,45 @@ struct IntersectingStaticObject<'a> {
     effect: &'a mut Effect,
 }
 
-fn intersect_actor_with_all_bounded_areas(now: f64, actor_index: usize, bounded_areas: &[BoundedArea], actors: &mut [Actor]) {
+fn intersect_actor_with_all_bounded_areas(
+    now: f64,
+    actor_index: usize,
+    bounded_areas: &[BoundedArea],
+    actors: &mut [Actor],
+) {
     let (left, right) = actors.split_at_mut(actor_index);
-    intersect_static_object_with_all_bounded_areas(now, bounded_areas, left, &mut IntersectingStaticObject {
-        shape: &Ball::new(right[0].body.shape.radius),
-        isometry: Isometry::translation(right[0].position.x, right[0].position.y),
-        effect: &mut right[0].effect,
-    });
+    intersect_static_object_with_all_bounded_areas(
+        now,
+        bounded_areas,
+        left,
+        &mut IntersectingStaticObject {
+            shape: &Ball::new(right[0].body.shape.radius),
+            isometry: Isometry::translation(right[0].position.x, right[0].position.y),
+            effect: &mut right[0].effect,
+        },
+    );
     let (left, right) = actors.split_at_mut(actor_index + 1);
-    intersect_static_object_with_all_bounded_areas(now, bounded_areas, right, &mut IntersectingStaticObject {
-        shape: &Ball::new(left[actor_index].body.shape.radius),
-        isometry: Isometry::translation(left[actor_index].position.x, left[actor_index].position.y),
-        effect: &mut left[actor_index].effect,
-    });
+    intersect_static_object_with_all_bounded_areas(
+        now,
+        bounded_areas,
+        right,
+        &mut IntersectingStaticObject {
+            shape: &Ball::new(left[actor_index].body.shape.radius),
+            isometry: Isometry::translation(
+                left[actor_index].position.x,
+                left[actor_index].position.y,
+            ),
+            effect: &mut left[actor_index].effect,
+        },
+    );
 }
 
-fn intersect_static_object_with_all_bounded_areas(now: f64, bounded_areas: &[BoundedArea], actors: &[Actor], object: &mut IntersectingStaticObject) {
+fn intersect_static_object_with_all_bounded_areas(
+    now: f64,
+    bounded_areas: &[BoundedArea],
+    actors: &[Actor],
+    object: &mut IntersectingStaticObject,
+) {
     for bounded_area in bounded_areas {
         if let Some(owner) = actors.iter().find(|v| v.id == bounded_area.actor_id) {
             intersect_static_object_with_bounded_area(now, bounded_area, owner, object);
@@ -632,9 +837,20 @@ fn intersect_static_object_with_all_bounded_areas(now: f64, bounded_areas: &[Bou
     }
 }
 
-fn intersect_static_object_with_bounded_area(now: f64, area: &BoundedArea, owner: &Actor, object: &mut IntersectingStaticObject) {
+fn intersect_static_object_with_bounded_area(
+    now: f64,
+    area: &BoundedArea,
+    owner: &Actor,
+    object: &mut IntersectingStaticObject,
+) {
     let isometry = Isometry::translation(owner.position.x, owner.position.y);
-    if intersection_test(&object.isometry, object.shape, &isometry, &area.body, owner.current_direction) {
+    if intersection_test(
+        &object.isometry,
+        object.shape,
+        &isometry,
+        &area.body,
+        owner.current_direction,
+    ) {
         *object.effect = add_magick_power_to_effect(now, object.effect, &area.effect.power);
     }
 }
@@ -642,24 +858,36 @@ fn intersect_static_object_with_bounded_area(now: f64, area: &BoundedArea, owner
 fn intersect_objects_with_all_fields(world: &mut World) {
     for i in 0..world.actors.len() {
         let (left, right) = world.actors.split_at_mut(i);
-        intersect_object_with_all_fields(&world.fields, left, &mut PushedObject {
-            shape: Ball::new(right[0].body.shape.radius),
-            position: right[0].position,
-            dynamic_force: &mut right[0].dynamic_force,
-        });
+        intersect_object_with_all_fields(
+            &world.fields,
+            left,
+            &mut PushedObject {
+                shape: Ball::new(right[0].body.shape.radius),
+                position: right[0].position,
+                dynamic_force: &mut right[0].dynamic_force,
+            },
+        );
         let (left, right) = world.actors.split_at_mut(i + 1);
-        intersect_object_with_all_fields(&world.fields, right, &mut PushedObject {
-            shape: Ball::new(left[i].body.shape.radius),
-            position: left[i].position,
-            dynamic_force: &mut left[i].dynamic_force,
-        });
+        intersect_object_with_all_fields(
+            &world.fields,
+            right,
+            &mut PushedObject {
+                shape: Ball::new(left[i].body.shape.radius),
+                position: left[i].position,
+                dynamic_force: &mut left[i].dynamic_force,
+            },
+        );
     }
     for object in world.dynamic_objects.iter_mut() {
-        intersect_object_with_all_fields(&world.fields, &world.actors, &mut PushedObject {
-            shape: Ball::new(object.body.shape.radius),
-            position: object.position,
-            dynamic_force: &mut object.dynamic_force,
-        });
+        intersect_object_with_all_fields(
+            &world.fields,
+            &world.actors,
+            &mut PushedObject {
+                shape: Ball::new(object.body.shape.radius),
+                position: object.position,
+                dynamic_force: &mut object.dynamic_force,
+            },
+        );
     }
 }
 
@@ -669,8 +897,12 @@ struct PushedObject<'a, S: Shape> {
     dynamic_force: &'a mut Vec2f,
 }
 
-fn intersect_object_with_all_fields<S>(fields: &[Field], actors: &[Actor], object: &mut PushedObject<S>)
-    where S: Shape
+fn intersect_object_with_all_fields<S>(
+    fields: &[Field],
+    actors: &[Actor],
+    object: &mut PushedObject<S>,
+) where
+    S: Shape,
 {
     for field in fields {
         if let Some(owner) = actors.iter().find(|v| v.id == field.actor_id) {
@@ -680,20 +912,44 @@ fn intersect_object_with_all_fields<S>(fields: &[Field], actors: &[Actor], objec
 }
 
 fn intersect_object_with_field<S>(field: &Field, owner: &Actor, object: &mut PushedObject<S>)
-    where S: Shape
+where
+    S: Shape,
 {
     let isometry = Isometry::translation(object.position.x, object.position.y);
-    if intersection_test(&isometry, &object.shape, &owner.get_isometry(), &field.body, owner.current_direction) {
-        push_object(owner.position, field.force, field.body.max_radius, object.position, object.dynamic_force);
+    if intersection_test(
+        &isometry,
+        &object.shape,
+        &owner.get_isometry(),
+        &field.body,
+        owner.current_direction,
+    ) {
+        push_object(
+            owner.position,
+            field.force,
+            field.body.max_radius,
+            object.position,
+            object.dynamic_force,
+        );
     }
 }
 
-fn push_object(from: Vec2f, force: f64, max_distance: f64, position: Vec2f, dynamic_force: &mut Vec2f) {
+fn push_object(
+    from: Vec2f,
+    force: f64,
+    max_distance: f64,
+    position: Vec2f,
+    dynamic_force: &mut Vec2f,
+) {
     let to_position = position - from;
     *dynamic_force += to_position * ((1.0 / to_position.norm() - 1.0 / max_distance) * force);
 }
 
-fn update_temp_areas(now: f64, duration: f64, settings: &WorldSettings, temp_area_objects: &mut Vec<TempArea>) {
+fn update_temp_areas(
+    now: f64,
+    duration: f64,
+    settings: &WorldSettings,
+    temp_area_objects: &mut Vec<TempArea>,
+) {
     for object in temp_area_objects.iter_mut() {
         decay_effect(now, duration, settings.decay_factor, &mut object.effect);
     }
@@ -703,27 +959,81 @@ fn update_actors(now: f64, duration: f64, settings: &WorldSettings, actors: &mut
     for actor in actors.iter_mut() {
         update_actor_current_direction(duration, settings.max_rotation_speed, actor);
         update_actor_dynamic_force(settings.move_force, actor);
-        damage_health(duration, settings.magical_damage_factor, actor.body.mass(), &actor.effect, &mut actor.health);
+        damage_health(
+            duration,
+            settings.magical_damage_factor,
+            actor.body.mass(),
+            &actor.effect,
+            &mut actor.health,
+        );
         decay_effect(now, duration, settings.decay_factor, &mut actor.effect);
         decay_aura(now, duration, settings.decay_factor, &mut actor.aura);
-        update_velocity(duration, actor.body.mass(), actor.dynamic_force, &mut actor.velocity);
-        update_velocity_z(duration, actor.body.shape.radius, settings.gravitational_acceleration, actor.position_z, &mut actor.velocity_z);
-        update_position_z(duration, actor.body.shape.radius, actor.velocity_z, &mut actor.position_z);
+        update_velocity(
+            duration,
+            actor.body.mass(),
+            actor.dynamic_force,
+            &mut actor.velocity,
+        );
+        update_velocity_z(
+            duration,
+            actor.body.shape.radius,
+            settings.gravitational_acceleration,
+            actor.position_z,
+            &mut actor.velocity_z,
+        );
+        update_position_z(
+            duration,
+            actor.body.shape.radius,
+            actor.velocity_z,
+            &mut actor.position_z,
+        );
     }
 }
 
-fn update_dynamic_objects(now: f64, duration: f64, settings: &WorldSettings, dynamic_objects: &mut Vec<DynamicObject>) {
+fn update_dynamic_objects(
+    now: f64,
+    duration: f64,
+    settings: &WorldSettings,
+    dynamic_objects: &mut Vec<DynamicObject>,
+) {
     for object in dynamic_objects.iter_mut() {
-        damage_health(duration, settings.magical_damage_factor, object.body.mass(), &object.effect, &mut object.health);
+        damage_health(
+            duration,
+            settings.magical_damage_factor,
+            object.body.mass(),
+            &object.effect,
+            &mut object.health,
+        );
         decay_effect(now, duration, settings.decay_factor, &mut object.effect);
         decay_aura(now, duration, settings.decay_factor, &mut object.aura);
-        update_velocity(duration, object.body.mass(), object.dynamic_force, &mut object.velocity);
-        update_position_z(duration, object.body.shape.radius, object.velocity_z, &mut object.position_z);
-        update_velocity_z(duration, object.body.shape.radius, settings.gravitational_acceleration, object.position_z, &mut object.velocity_z);
+        update_velocity(
+            duration,
+            object.body.mass(),
+            object.dynamic_force,
+            &mut object.velocity,
+        );
+        update_position_z(
+            duration,
+            object.body.shape.radius,
+            object.velocity_z,
+            &mut object.position_z,
+        );
+        update_velocity_z(
+            duration,
+            object.body.shape.radius,
+            settings.gravitational_acceleration,
+            object.position_z,
+            &mut object.velocity_z,
+        );
     }
 }
 
-fn update_static_objects(now: f64, duration: f64, settings: &WorldSettings, static_objects: &mut Vec<StaticObject>) {
+fn update_static_objects(
+    now: f64,
+    duration: f64,
+    settings: &WorldSettings,
+    static_objects: &mut Vec<StaticObject>,
+) {
     for object in static_objects.iter_mut() {
         decay_effect(now, duration, settings.decay_factor, &mut object.effect);
         decay_aura(now, duration, settings.decay_factor, &mut object.aura);
@@ -731,17 +1041,29 @@ fn update_static_objects(now: f64, duration: f64, settings: &WorldSettings, stat
 }
 
 fn update_actor_current_direction(duration: f64, max_rotation_speed: f64, actor: &mut Actor) {
-    actor.current_direction = get_current_direction(actor.current_direction, actor.target_direction, duration, max_rotation_speed);
+    actor.current_direction = get_current_direction(
+        actor.current_direction,
+        actor.target_direction,
+        duration,
+        max_rotation_speed,
+    );
 }
 
 fn update_actor_dynamic_force(move_force: f64, actor: &mut Actor) {
     actor.dynamic_force += actor.current_direction * move_force * actor.moving as i32 as f64;
 }
 
-fn add_dry_friction_force(mass: f64, velocity: Vec2f, surface: Material, gravitational_acceleration: f64, dynamic_force: &mut Vec2f) {
+fn add_dry_friction_force(
+    mass: f64,
+    velocity: Vec2f,
+    surface: Material,
+    gravitational_acceleration: f64,
+    dynamic_force: &mut Vec2f,
+) {
     let speed = velocity.norm();
     if speed != 0.0 {
-        *dynamic_force -= velocity * (mass * surface.friction() * gravitational_acceleration / speed);
+        *dynamic_force -=
+            velocity * (mass * surface.friction() * gravitational_acceleration / speed);
     }
 }
 
@@ -779,7 +1101,8 @@ fn update_velocity(duration: f64, mass: f64, dynamic_force: Vec2f, velocity: &mu
     let dynamic_force_norm = dynamic_force.norm();
     let velocity_norm = velocity.norm();
     if dynamic_force_norm > 0.0 && velocity_norm > 0.0 {
-        *velocity += (dynamic_force / dynamic_force_norm) * (dynamic_force_norm * duration / (2.0 * mass)).min(velocity_norm);
+        *velocity += (dynamic_force / dynamic_force_norm)
+            * (dynamic_force_norm * duration / (2.0 * mass)).min(velocity_norm);
     } else {
         *velocity += dynamic_force * (duration / (2.0 * mass));
     }
@@ -789,7 +1112,13 @@ fn update_position_z(duration: f64, height: f64, velocity_z: f64, position_z: &m
     *position_z = height.max(*position_z + duration * velocity_z);
 }
 
-fn update_velocity_z(duration: f64, height: f64, gravitational_acceleration: f64, position_z: f64, velocity_z: &mut f64) {
+fn update_velocity_z(
+    duration: f64,
+    height: f64,
+    gravitational_acceleration: f64,
+    position_z: f64,
+    velocity_z: &mut f64,
+) {
     if position_z - height > f64::EPSILON {
         *velocity_z -= duration * gravitational_acceleration / 2.0;
     } else {
@@ -810,7 +1139,8 @@ fn add_magick_power_to_effect(now: f64, target: &Effect, other: &[f64; 11]) -> E
     if target_power[Element::Water as usize] > 0.0 && target_power[Element::Fire as usize] > 0.0 {
         power[Element::Water as usize] = 0.0;
         power[Element::Fire as usize] = 0.0;
-        power[Element::Steam as usize] = target_power[Element::Water as usize].max(target_power[Element::Fire as usize]);
+        power[Element::Steam as usize] =
+            target_power[Element::Water as usize].max(target_power[Element::Fire as usize]);
         applied[Element::Steam as usize] = now;
     }
     if target_power[Element::Poison as usize] > 0.0 && target_power[Element::Life as usize] > 0.0 {
@@ -826,15 +1156,15 @@ fn add_magick_power_to_effect(now: f64, target: &Effect, other: &[f64; 11]) -> E
         power[Element::Fire as usize] = 0.0;
     }
     if target_power[Element::Water as usize] > 0.0 && target_power[Element::Cold as usize] > 0.0 {
-        power[Element::Ice as usize] = target_power[Element::Water as usize].max(target_power[Element::Water as usize]);
+        power[Element::Ice as usize] =
+            target_power[Element::Water as usize].max(target_power[Element::Water as usize]);
         applied[Element::Ice as usize] = now;
     }
     Effect { power, applied }
 }
 
 fn get_damage(power: &[f64; 11]) -> f64 {
-    power[Element::Lightning as usize]
-        - power[Element::Life as usize]
+    power[Element::Lightning as usize] - power[Element::Life as usize]
         + power[Element::Arcane as usize]
         + power[Element::Cold as usize]
         + power[Element::Fire as usize]
@@ -843,11 +1173,15 @@ fn get_damage(power: &[f64; 11]) -> f64 {
 }
 
 fn is_instant_effect_element(element: Element) -> bool {
-    matches!(element, Element::Lightning | Element::Arcane | Element::Earth | Element::Steam)
+    matches!(
+        element,
+        Element::Lightning | Element::Arcane | Element::Earth | Element::Steam
+    )
 }
 
 fn can_absorb_physical_damage(elements: &[bool; 11]) -> bool {
-    let expect = elements[Element::Shield as usize] as i32 + elements[Element::Earth as usize] as i32;
+    let expect =
+        elements[Element::Shield as usize] as i32 + elements[Element::Earth as usize] as i32;
     elements[Element::Shield as usize] && expect == elements.iter().map(|v| *v as i32).sum()
 }
 
@@ -855,7 +1189,12 @@ fn can_reflect_beams(elements: &[bool; 11]) -> bool {
     elements[Element::Shield as usize] && 1 == elements.iter().map(|v| *v as i32).sum()
 }
 
-fn get_current_direction(current_direction: Vec2f, target_direction: Vec2f, duration: f64, max_rotation_speed: f64) -> Vec2f {
+fn get_current_direction(
+    current_direction: Vec2f,
+    target_direction: Vec2f,
+    duration: f64,
+    max_rotation_speed: f64,
+) -> Vec2f {
     let diff = normalize_angle(target_direction.angle() - current_direction.angle());
     current_direction.rotated(diff.signum() * diff.abs().min(max_rotation_speed * duration))
 }
@@ -865,13 +1204,36 @@ fn normalize_angle(angle: f64) -> f64 {
     (turns - turns.floor() - 0.5) * std::f64::consts::TAU
 }
 
-fn intersect_beam(magick: &Magick, origin: Vec2f, direction: Vec2f, depth: usize, length: &mut f64, world: &mut World, shape_cache: &ShapeCache) -> Option<EmittedBeam> {
-    let mut nearest_hit = find_beam_nearest_intersection(origin, direction, &world.actors, length, shape_cache)
-        .map(|(i, n)| (Index::Actor(i), n));
-    nearest_hit = find_beam_nearest_intersection(origin, direction, &world.dynamic_objects, length, shape_cache)
-        .map(|(i, n)| (Index::DynamicObject(i), n)).or(nearest_hit);
-    nearest_hit = find_beam_nearest_intersection(origin, direction, &world.static_objects, length, shape_cache)
-        .map(|(i, n)| (Index::StaticObject(i), n)).or(nearest_hit);
+fn intersect_beam(
+    magick: &Magick,
+    origin: Vec2f,
+    direction: Vec2f,
+    depth: usize,
+    length: &mut f64,
+    world: &mut World,
+    shape_cache: &ShapeCache,
+) -> Option<EmittedBeam> {
+    let mut nearest_hit =
+        find_beam_nearest_intersection(origin, direction, &world.actors, length, shape_cache)
+            .map(|(i, n)| (Index::Actor(i), n));
+    nearest_hit = find_beam_nearest_intersection(
+        origin,
+        direction,
+        &world.dynamic_objects,
+        length,
+        shape_cache,
+    )
+    .map(|(i, n)| (Index::DynamicObject(i), n))
+    .or(nearest_hit);
+    nearest_hit = find_beam_nearest_intersection(
+        origin,
+        direction,
+        &world.static_objects,
+        length,
+        shape_cache,
+    )
+    .map(|(i, n)| (Index::StaticObject(i), n))
+    .or(nearest_hit);
     if let Some((index, mut normal)) = nearest_hit {
         let (aura, effect) = match index {
             Index::Actor(i) => {
@@ -951,21 +1313,34 @@ impl WithShape for DynamicObject {
 
 impl WithShape for StaticObject {
     fn with_shape(&self, shape_cache: &ShapeCache, f: &mut dyn FnMut(&dyn Shape)) {
-        self.body.shape.clone().with_shape(shape_cache, |shape| (*f)(shape))
+        self.body
+            .shape
+            .clone()
+            .with_shape(shape_cache, |shape| (*f)(shape))
     }
 }
 
 fn with_shape<T, R, F>(v: &T, shape_cache: &ShapeCache, mut f: F) -> R
-    where T: WithShape,
-          F: FnMut(&dyn Shape) -> R,
+where
+    T: WithShape,
+    F: FnMut(&dyn Shape) -> R,
 {
     let mut r = None;
-    v.with_shape(shape_cache, &mut |shape| { r = Some(f(shape)); });
+    v.with_shape(shape_cache, &mut |shape| {
+        r = Some(f(shape));
+    });
     r.unwrap()
 }
 
-fn find_beam_nearest_intersection<T>(origin: Vec2f, direction: Vec2f, objects: &[T], length: &mut f64, shape_cache: &ShapeCache) -> Option<(usize, Vec2f)>
-    where T: WithIsometry + WithShape
+fn find_beam_nearest_intersection<T>(
+    origin: Vec2f,
+    direction: Vec2f,
+    objects: &[T],
+    length: &mut f64,
+    shape_cache: &ShapeCache,
+) -> Option<(usize, Vec2f)>
+where
+    T: WithIsometry + WithShape,
 {
     let mut nearest = None;
     for (i, object) in objects.iter().enumerate() {
@@ -973,7 +1348,10 @@ fn find_beam_nearest_intersection<T>(origin: Vec2f, direction: Vec2f, objects: &
         let result = with_shape(object, shape_cache, |shape| {
             shape.cast_ray_and_get_normal(
                 &isometry,
-                &Ray::new(Point2::new(origin.x, origin.y), Vector2::new(direction.x, direction.y)),
+                &Ray::new(
+                    Point2::new(origin.x, origin.y),
+                    Vector2::new(direction.x, direction.y),
+                ),
                 *length,
                 true,
             )
@@ -992,37 +1370,76 @@ fn move_objects(duration: f64, world: &mut World, shape_cache: &ShapeCache) {
     loop {
         for (i, static_object) in world.static_objects.iter().enumerate() {
             for (j, actor) in world.actors.iter().enumerate() {
-                if let Some(toi) = time_of_impact(duration_left, shape_cache, static_object, actor) {
-                    update_earliest_collision(Index::StaticObject(i), Index::Actor(j), toi, &mut earliest_collision);
+                if let Some(toi) = time_of_impact(duration_left, shape_cache, static_object, actor)
+                {
+                    update_earliest_collision(
+                        Index::StaticObject(i),
+                        Index::Actor(j),
+                        toi,
+                        &mut earliest_collision,
+                    );
                 }
             }
             for (j, dynamic_object) in world.dynamic_objects.iter().enumerate() {
-                if let Some(toi) = time_of_impact(duration_left, shape_cache, static_object, dynamic_object) {
-                    update_earliest_collision(Index::StaticObject(i), Index::DynamicObject(j), toi, &mut earliest_collision);
+                if let Some(toi) =
+                    time_of_impact(duration_left, shape_cache, static_object, dynamic_object)
+                {
+                    update_earliest_collision(
+                        Index::StaticObject(i),
+                        Index::DynamicObject(j),
+                        toi,
+                        &mut earliest_collision,
+                    );
                 }
             }
         }
         if !world.actors.is_empty() {
             for i in 0..world.actors.len() - 1 {
                 for j in i + 1..world.actors.len() {
-                    if let Some(toi) = time_of_impact(duration_left, shape_cache, &world.actors[i], &world.actors[j]) {
-                        update_earliest_collision(Index::Actor(i), Index::Actor(j), toi, &mut earliest_collision);
+                    if let Some(toi) = time_of_impact(
+                        duration_left,
+                        shape_cache,
+                        &world.actors[i],
+                        &world.actors[j],
+                    ) {
+                        update_earliest_collision(
+                            Index::Actor(i),
+                            Index::Actor(j),
+                            toi,
+                            &mut earliest_collision,
+                        );
                     }
                 }
             }
         }
         for (i, dynamic_object) in world.dynamic_objects.iter().enumerate() {
             for (j, actor) in world.actors.iter().enumerate() {
-                if let Some(toi) = time_of_impact(duration_left, shape_cache, dynamic_object, actor) {
-                    update_earliest_collision(Index::DynamicObject(i), Index::Actor(j), toi, &mut earliest_collision);
+                if let Some(toi) = time_of_impact(duration_left, shape_cache, dynamic_object, actor)
+                {
+                    update_earliest_collision(
+                        Index::DynamicObject(i),
+                        Index::Actor(j),
+                        toi,
+                        &mut earliest_collision,
+                    );
                 }
             }
         }
         if !world.dynamic_objects.is_empty() {
             for i in 0..world.dynamic_objects.len() - 1 {
                 for j in i + 1..world.dynamic_objects.len() {
-                    if let Some(toi) = time_of_impact(duration_left, shape_cache, &world.dynamic_objects[i], &world.dynamic_objects[j]) {
-                        update_earliest_collision(Index::DynamicObject(i), Index::DynamicObject(j), toi, &mut earliest_collision);
+                    if let Some(toi) = time_of_impact(
+                        duration_left,
+                        shape_cache,
+                        &world.dynamic_objects[i],
+                        &world.dynamic_objects[j],
+                    ) {
+                        update_earliest_collision(
+                            Index::DynamicObject(i),
+                            Index::DynamicObject(j),
+                            toi,
+                            &mut earliest_collision,
+                        );
                     }
                 }
             }
@@ -1031,7 +1448,15 @@ fn move_objects(duration: f64, world: &mut World, shape_cache: &ShapeCache) {
             let now = world.time + (duration - duration_left);
             let physical_damage_factor = world.settings.physical_damage_factor;
             with_colliding_objects_mut(collision.lhs, collision.rhs, world, |lhs, rhs| {
-                apply_impact(now, physical_damage_factor, duration / 100.0, shape_cache, &collision.toi, lhs, rhs);
+                apply_impact(
+                    now,
+                    physical_damage_factor,
+                    duration / 100.0,
+                    shape_cache,
+                    &collision.toi,
+                    lhs,
+                    rhs,
+                );
             });
             for (i, actor) in world.actors.iter_mut().enumerate() {
                 if Index::Actor(i) != collision.lhs && Index::Actor(i) != collision.rhs {
@@ -1039,8 +1464,14 @@ fn move_objects(duration: f64, world: &mut World, shape_cache: &ShapeCache) {
                 }
             }
             for (i, dynamic_object) in world.dynamic_objects.iter_mut().enumerate() {
-                if Index::DynamicObject(i) != collision.lhs && Index::DynamicObject(i) != collision.rhs {
-                    update_position(collision.toi.toi, dynamic_object.velocity, &mut dynamic_object.position)
+                if Index::DynamicObject(i) != collision.lhs
+                    && Index::DynamicObject(i) != collision.rhs
+                {
+                    update_position(
+                        collision.toi.toi,
+                        dynamic_object.velocity,
+                        &mut dynamic_object.position,
+                    )
                 }
             }
             duration_left -= collision.toi.toi.max(duration / 10.0);
@@ -1049,8 +1480,14 @@ fn move_objects(duration: f64, world: &mut World, shape_cache: &ShapeCache) {
             }
             earliest_collision = None;
         } else {
-            world.actors.iter_mut().for_each(|v| update_position(duration, v.velocity, &mut v.position));
-            world.dynamic_objects.iter_mut().for_each(|v| update_position(duration, v.velocity, &mut v.position));
+            world
+                .actors
+                .iter_mut()
+                .for_each(|v| update_position(duration, v.velocity, &mut v.position));
+            world
+                .dynamic_objects
+                .iter_mut()
+                .for_each(|v| update_position(duration, v.velocity, &mut v.position));
             break;
         }
     }
@@ -1061,8 +1498,9 @@ trait WithVelocity {
 }
 
 fn time_of_impact<L, R>(duration: f64, shape_cache: &ShapeCache, lhs: &L, rhs: &R) -> Option<TOI>
-    where L: WithVelocity + WithIsometry + WithShape,
-          R: WithVelocity + WithIsometry + WithShape
+where
+    L: WithVelocity + WithIsometry + WithShape,
+    R: WithVelocity + WithIsometry + WithShape,
 {
     let mut toi = None;
     lhs.with_shape(shape_cache, &mut |lhs_shape| {
@@ -1075,7 +1513,8 @@ fn time_of_impact<L, R>(duration: f64, shape_cache: &ShapeCache, lhs: &L, rhs: &
                 &Vector2::new(rhs.velocity().x, rhs.velocity().y),
                 rhs_shape,
                 duration,
-            ).unwrap();
+            )
+            .unwrap();
         });
     });
     toi
@@ -1124,7 +1563,8 @@ trait CollidingObject: WithVelocity + WithShape + WithIsometry {
 }
 
 fn with_colliding_objects_mut<F>(lhs: Index, rhs: Index, world: &mut World, mut f: F)
-    where F: FnMut(&mut dyn CollidingObject, &mut dyn CollidingObject)
+where
+    F: FnMut(&mut dyn CollidingObject, &mut dyn CollidingObject),
 {
     if lhs > rhs {
         with_colliding_objects_ord_mut(rhs, lhs, world, |l, r| f(r, l))
@@ -1134,7 +1574,8 @@ fn with_colliding_objects_mut<F>(lhs: Index, rhs: Index, world: &mut World, mut 
 }
 
 fn with_colliding_objects_ord_mut<F>(lhs: Index, rhs: Index, world: &mut World, mut f: F)
-    where F: FnMut(&mut dyn CollidingObject, &mut dyn CollidingObject)
+where
+    F: FnMut(&mut dyn CollidingObject, &mut dyn CollidingObject),
 {
     match lhs {
         Index::Actor(lhs) => match rhs {
@@ -1144,46 +1585,78 @@ fn with_colliding_objects_ord_mut<F>(lhs: Index, rhs: Index, world: &mut World, 
             }
             Index::DynamicObject(rhs) => f(&mut world.actors[lhs], &mut world.dynamic_objects[rhs]),
             Index::StaticObject(rhs) => f(&mut world.actors[lhs], &mut world.static_objects[rhs]),
-        }
+        },
         Index::DynamicObject(lhs) => match rhs {
             Index::Actor(rhs) => f(&mut world.dynamic_objects[lhs], &mut world.actors[rhs]),
             Index::DynamicObject(rhs) => {
                 let (left, right) = world.dynamic_objects.split_at_mut(rhs);
                 f(&mut left[lhs], &mut right[0])
             }
-            Index::StaticObject(rhs) => f(&mut world.dynamic_objects[lhs], &mut world.static_objects[rhs]),
-        }
+            Index::StaticObject(rhs) => f(
+                &mut world.dynamic_objects[lhs],
+                &mut world.static_objects[rhs],
+            ),
+        },
         Index::StaticObject(lhs) => match rhs {
             Index::Actor(rhs) => f(&mut world.static_objects[lhs], &mut world.actors[rhs]),
-            Index::DynamicObject(rhs) => f(&mut world.static_objects[lhs], &mut world.dynamic_objects[rhs]),
+            Index::DynamicObject(rhs) => f(
+                &mut world.static_objects[lhs],
+                &mut world.dynamic_objects[rhs],
+            ),
             Index::StaticObject(rhs) => {
                 let (left, right) = world.static_objects.split_at_mut(rhs);
                 f(&mut left[lhs], &mut right[0])
             }
-        }
+        },
     }
 }
 
-fn apply_impact(now: f64, damage_factor: f64, epsilon_duration: f64, shape_cache: &ShapeCache, toi: &TOI, lhs: &mut dyn CollidingObject, rhs: &mut dyn CollidingObject) {
+fn apply_impact(
+    now: f64,
+    damage_factor: f64,
+    epsilon_duration: f64,
+    shape_cache: &ShapeCache,
+    toi: &TOI,
+    lhs: &mut dyn CollidingObject,
+    rhs: &mut dyn CollidingObject,
+) {
     let lhs_kinetic_energy = get_kinetic_energy(lhs.mass(), lhs.velocity());
     let rhs_kinetic_energy = get_kinetic_energy(rhs.mass(), rhs.velocity());
     let delta_velocity = lhs.velocity() - rhs.velocity();
     let mass_sum = lhs.mass() + rhs.mass();
-    let lhs_velocity = lhs.velocity() - delta_velocity * rhs.mass() * (1.0 + lhs.material().restitution()) / mass_sum;
-    let rhs_velocity = rhs.velocity() + delta_velocity * lhs.mass() * (1.0 + rhs.material().restitution()) / mass_sum;
+    let lhs_velocity = lhs.velocity()
+        - delta_velocity * rhs.mass() * (1.0 + lhs.material().restitution()) / mass_sum;
+    let rhs_velocity = rhs.velocity()
+        + delta_velocity * lhs.mass() * (1.0 + rhs.material().restitution()) / mass_sum;
     lhs.set_position(lhs.position() + lhs.velocity() * toi.toi + lhs_velocity * epsilon_duration);
     rhs.set_position(rhs.position() + rhs.velocity() * toi.toi + rhs_velocity * epsilon_duration);
     lhs.set_velocity(lhs_velocity);
     rhs.set_velocity(rhs_velocity);
     if let Some(contact) = get_contact(shape_cache, lhs, rhs) {
         if lhs.is_static() {
-            rhs.set_position(rhs.position() + Vec2f::new(contact.normal2.x, contact.normal2.y) * contact.dist.min(-epsilon_duration));
+            rhs.set_position(
+                rhs.position()
+                    + Vec2f::new(contact.normal2.x, contact.normal2.y)
+                        * contact.dist.min(-epsilon_duration),
+            );
         } else if rhs.is_static() {
-            lhs.set_position(lhs.position() + Vec2f::new(contact.normal1.x, contact.normal1.y) * contact.dist.min(-epsilon_duration));
+            lhs.set_position(
+                lhs.position()
+                    + Vec2f::new(contact.normal1.x, contact.normal1.y)
+                        * contact.dist.min(-epsilon_duration),
+            );
         } else {
             let half_distance = contact.dist.min(-epsilon_duration) / 2.0;
-            lhs.set_position(lhs.position() + Vec2f::new(contact.normal1.x, contact.normal1.y) * (half_distance * rhs.mass() / mass_sum));
-            rhs.set_position(rhs.position() + Vec2f::new(contact.normal2.x, contact.normal2.y) * (half_distance * lhs.mass() / mass_sum));
+            lhs.set_position(
+                lhs.position()
+                    + Vec2f::new(contact.normal1.x, contact.normal1.y)
+                        * (half_distance * rhs.mass() / mass_sum),
+            );
+            rhs.set_position(
+                rhs.position()
+                    + Vec2f::new(contact.normal2.x, contact.normal2.y)
+                        * (half_distance * lhs.mass() / mass_sum),
+            );
         }
     }
     let new_lhs_effect = add_magick_power_to_effect(now, lhs.effect(), &rhs.effect().power);
@@ -1194,7 +1667,11 @@ fn apply_impact(now: f64, damage_factor: f64, epsilon_duration: f64, shape_cache
     handle_collision_damage(rhs_kinetic_energy, damage_factor, rhs_velocity, rhs);
 }
 
-fn get_contact(shape_cache: &ShapeCache, lhs: &dyn CollidingObject, rhs: &dyn CollidingObject) -> Option<Contact> {
+fn get_contact(
+    shape_cache: &ShapeCache,
+    lhs: &dyn CollidingObject,
+    rhs: &dyn CollidingObject,
+) -> Option<Contact> {
     let mut contact = None;
     lhs.with_shape(shape_cache, &mut |lhs_shape| {
         rhs.with_shape(shape_cache, &mut |rhs_shape| {
@@ -1204,7 +1681,8 @@ fn get_contact(shape_cache: &ShapeCache, lhs: &dyn CollidingObject, rhs: &dyn Co
                 &rhs.get_isometry(),
                 rhs_shape,
                 0.0,
-            ).unwrap();
+            )
+            .unwrap();
         })
     });
     contact
@@ -1320,9 +1798,17 @@ impl CollidingObject for StaticObject {
     }
 }
 
-fn handle_collision_damage(prev_kinetic_energy: f64, damage_factor: f64, velocity: Vec2f, object: &mut dyn CollidingObject) {
+fn handle_collision_damage(
+    prev_kinetic_energy: f64,
+    damage_factor: f64,
+    velocity: Vec2f,
+    object: &mut dyn CollidingObject,
+) {
     if !can_absorb_physical_damage(&object.aura().elements) {
-        *object.health() -= (get_kinetic_energy(object.mass(), velocity) - prev_kinetic_energy).abs() * damage_factor / object.mass();
+        *object.health() -= (get_kinetic_energy(object.mass(), velocity) - prev_kinetic_energy)
+            .abs()
+            * damage_factor
+            / object.mass();
     }
 }
 
@@ -1339,21 +1825,32 @@ fn is_active(bounds: &Rectf, shape: &dyn Shape, position: Vec2f, health: f64) ->
             &Cuboid::new(Vector2::new(half_extents.x, half_extents.y)),
             &Isometry::translation(position.x, position.y),
             shape,
-        ).unwrap()
+        )
+        .unwrap()
     }
 }
 
 fn handle_completed_magicks(world: &mut World) {
     for actor in world.actors.iter_mut() {
-        if actor.delayed_magick.as_ref().map(|v| v.completed).unwrap_or(false) {
+        if actor
+            .delayed_magick
+            .as_ref()
+            .map(|v| v.completed)
+            .unwrap_or(false)
+        {
             let delayed_magick = actor.delayed_magick.take().unwrap();
-            let radius = delayed_magick.power.iter().sum::<f64>() * actor.body.shape.radius / world.settings.max_magic_power;
+            let radius = delayed_magick.power.iter().sum::<f64>() * actor.body.shape.radius
+                / world.settings.max_magic_power;
             let material = Material::Stone;
             world.dynamic_objects.push(DynamicObject {
                 id: get_next_id(&mut world.id_counter),
-                body: Body { shape: Disk { radius }, material },
+                body: Body {
+                    shape: Disk { radius },
+                    material,
+                },
                 position: actor.position
-                    + actor.current_direction * (actor.body.shape.radius + radius + world.settings.margin),
+                    + actor.current_direction
+                        * (actor.body.shape.radius + radius + world.settings.margin),
                 health: 1.0,
                 effect: Effect {
                     applied: [world.time; 11],
@@ -1361,10 +1858,9 @@ fn handle_completed_magicks(world: &mut World) {
                 },
                 aura: Default::default(),
                 velocity: actor.velocity,
-                dynamic_force: actor.current_direction * (
-                    (world.time - delayed_magick.started).min(world.settings.max_magic_power)
-                        * world.settings.magic_force_multiplier
-                ),
+                dynamic_force: actor.current_direction
+                    * ((world.time - delayed_magick.started).min(world.settings.max_magic_power)
+                        * world.settings.magic_force_multiplier),
                 position_z: 1.5 * actor.body.shape.radius,
                 velocity_z: 0.0,
             });
@@ -1373,7 +1869,8 @@ fn handle_completed_magicks(world: &mut World) {
 }
 
 fn remove_count<T, F>(vec: &mut Vec<T>, mut f: F) -> usize
-    where F: FnMut(&T) -> bool
+where
+    F: FnMut(&T) -> bool,
 {
     let mut removed = 0;
     vec.retain(|v| {
@@ -1384,9 +1881,17 @@ fn remove_count<T, F>(vec: &mut Vec<T>, mut f: F) -> usize
     removed
 }
 
-fn intersection_test(shape_pos: &Isometry<Real>, shape: &dyn Shape, body_pos: &Isometry<Real>, body: &RingSector, direction: Vec2f) -> bool {
+fn intersection_test(
+    shape_pos: &Isometry<Real>,
+    shape: &dyn Shape,
+    body_pos: &Isometry<Real>,
+    body: &RingSector,
+    direction: Vec2f,
+) -> bool {
     if query::intersection_test(shape_pos, shape, body_pos, &Ball::new(body.min_radius)).unwrap()
-        || !query::intersection_test(shape_pos, shape, body_pos, &Ball::new(body.max_radius)).unwrap() {
+        || !query::intersection_test(shape_pos, shape, body_pos, &Ball::new(body.max_radius))
+            .unwrap()
+    {
         return false;
     }
     if body.angle == std::f64::consts::TAU {
@@ -1395,7 +1900,11 @@ fn intersection_test(shape_pos: &Isometry<Real>, shape: &dyn Shape, body_pos: &I
     let radius = direction * body.max_radius;
     let left = radius.rotated(body.angle / 2.0);
     let right = radius.rotated(-body.angle / 2.0);
-    let triangle = Triangle::new(Point2::new(0.0, 0.0), Point2::new(left.x, left.y), Point2::new(right.x, right.y));
+    let triangle = Triangle::new(
+        Point2::new(0.0, 0.0),
+        Point2::new(left.x, left.y),
+        Point2::new(right.x, right.y),
+    );
     query::intersection_test(shape_pos, shape, body_pos, &triangle).unwrap()
 }
 
@@ -1438,10 +1947,19 @@ mod tests {
     #[test]
     fn make_circle_arc_polyline_should_generate_vertices_along_arc_circle() {
         use std::f64::consts::{FRAC_PI_2, SQRT_2};
-        let polyline = make_circle_arc_polyline(&CircleArcKey { radius: 2.0, length: FRAC_PI_2 });
+        let polyline = make_circle_arc_polyline(&CircleArcKey {
+            radius: 2.0,
+            length: FRAC_PI_2,
+        });
         assert_eq!(polyline.num_segments(), 8);
-        assert_eq!(polyline.vertices().first(), Some(&Point2::<Real>::new(SQRT_2, -SQRT_2)));
-        assert_eq!(polyline.vertices().last(), Some(&Point2::<Real>::new(SQRT_2, SQRT_2)));
+        assert_eq!(
+            polyline.vertices().first(),
+            Some(&Point2::<Real>::new(SQRT_2, -SQRT_2))
+        );
+        assert_eq!(
+            polyline.vertices().last(),
+            Some(&Point2::<Real>::new(SQRT_2, SQRT_2))
+        );
     }
 
     #[test]
@@ -1466,7 +1984,10 @@ mod tests {
         };
         let dynamic_object = DynamicObject {
             id: 2,
-            body: Body { shape: Disk { radius: 0.2 }, material: Material::Stone },
+            body: Body {
+                shape: Disk { radius: 0.2 },
+                material: Material::Stone,
+            },
             position: Vec2f::new(-34.41147614376544, -32.89358428062188),
             health: 1.0,
             effect: Effect::default(),
@@ -1477,11 +1998,33 @@ mod tests {
             velocity_z: -0.08166666666666667,
         };
         let toi = time_of_impact(duration, &shape_cache, &static_object, &dynamic_object).unwrap();
-        assert!((toi.toi - 0.004296260825975674) <= f64::EPSILON, "{}", toi.toi);
-        assert_eq!(toi.witness1, Point2::new(4.989825741741153, -0.2589521646469748));
-        assert_eq!(toi.witness2, Point2::new(-0.18022918657654352, -0.08670317356335425));
-        assert_eq!(toi.normal1, Unit::new_unchecked(Vector2::<f64>::new(-0.9992290361820114, 0.03925981725337541)));
-        assert_eq!(toi.normal2, Unit::new_unchecked(Vector2::<f64>::new(-0.9011459910530735, -0.4335157468985109)));
+        assert!(
+            (toi.toi - 0.004296260825975674) <= f64::EPSILON,
+            "{}",
+            toi.toi
+        );
+        assert_eq!(
+            toi.witness1,
+            Point2::new(4.989825741741153, -0.2589521646469748)
+        );
+        assert_eq!(
+            toi.witness2,
+            Point2::new(-0.18022918657654352, -0.08670317356335425)
+        );
+        assert_eq!(
+            toi.normal1,
+            Unit::new_unchecked(Vector2::<f64>::new(
+                -0.9992290361820114,
+                0.03925981725337541,
+            ))
+        );
+        assert_eq!(
+            toi.normal2,
+            Unit::new_unchecked(Vector2::<f64>::new(
+                -0.9011459910530735,
+                -0.4335157468985109,
+            ))
+        );
         assert_eq!(toi.status, TOIStatus::Converged);
     }
 }

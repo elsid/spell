@@ -47,7 +47,10 @@ impl Vec2f {
 
     pub fn rotated(&self, angle: f64) -> Self {
         let (sin, cos) = angle.sin_cos();
-        Self { x: self.x * cos - self.y * sin, y: self.y * cos + self.x * sin }
+        Self {
+            x: self.x * cos - self.y * sin,
+            y: self.y * cos + self.x * sin,
+        }
     }
 
     pub fn cos(&self, other: Self) -> f64 {
@@ -75,7 +78,10 @@ impl std::ops::Add for Vec2f {
     type Output = Vec2f;
 
     fn add(self, rhs: Self) -> Self::Output {
-        Self { x: self.x + rhs.x, y: self.y + rhs.y }
+        Self {
+            x: self.x + rhs.x,
+            y: self.y + rhs.y,
+        }
     }
 }
 
@@ -83,7 +89,10 @@ impl std::ops::Sub for Vec2f {
     type Output = Vec2f;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        Self { x: self.x - rhs.x, y: self.y - rhs.y }
+        Self {
+            x: self.x - rhs.x,
+            y: self.y - rhs.y,
+        }
     }
 }
 
@@ -91,7 +100,10 @@ impl std::ops::Mul<f64> for Vec2f {
     type Output = Vec2f;
 
     fn mul(self, rhs: f64) -> Self::Output {
-        Self { x: self.x * rhs, y: self.y * rhs }
+        Self {
+            x: self.x * rhs,
+            y: self.y * rhs,
+        }
     }
 }
 
@@ -99,7 +111,10 @@ impl std::ops::Div<f64> for Vec2f {
     type Output = Vec2f;
 
     fn div(self, rhs: f64) -> Self::Output {
-        Self { x: self.x / rhs, y: self.y / rhs }
+        Self {
+            x: self.x / rhs,
+            y: self.y / rhs,
+        }
     }
 }
 
@@ -107,7 +122,10 @@ impl std::ops::Neg for Vec2f {
     type Output = Vec2f;
 
     fn neg(self) -> Self::Output {
-        Self { x: -self.x, y: -self.y }
+        Self {
+            x: -self.x,
+            y: -self.y,
+        }
     }
 }
 

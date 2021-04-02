@@ -1,22 +1,28 @@
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::Arc;
 use std::thread::spawn;
 use std::time::{Duration, Instant};
 
 use lz4_flex::decompress_size_prepended;
 use tokio::net::UdpSocket;
 
-use crate::protocol::{ClientMessage, ClientMessageData, GameUpdate, PlayerAction, ServerMessage, ServerMessageData};
+use crate::protocol::{
+    ClientMessage, ClientMessageData, GameUpdate, PlayerAction, ServerMessage, ServerMessageData,
+};
 
 #[derive(Debug)]
 pub struct UdpClientSettings {
     pub server_address: String,
 }
 
-pub async fn run_udp_client(settings: UdpClientSettings, sender: Sender<ServerMessage>,
-                            receiver: Receiver<ClientMessage>, stop: Arc<AtomicBool>) -> Result<(), std::io::Error> {
+pub async fn run_udp_client(
+    settings: UdpClientSettings,
+    sender: Sender<ServerMessage>,
+    receiver: Receiver<ClientMessage>,
+    stop: Arc<AtomicBool>,
+) -> Result<(), std::io::Error> {
     info!("Run UDP client: {:?}", settings);
     let server_address: SocketAddr = settings.server_address.parse().unwrap();
     let local_address = match server_address {
@@ -41,7 +47,9 @@ pub async fn run_udp_client(settings: UdpClientSettings, sender: Sender<ServerMe
         } else {
             Duration::from_millis(1)
         };
-        if let Ok(Ok(size)) = tokio::time::timeout(recv_timeout, socket.recv(&mut recv_buffer)).await {
+        if let Ok(Ok(size)) =
+            tokio::time::timeout(recv_timeout, socket.recv(&mut recv_buffer)).await
+        {
             let decompressed = match decompress_size_prepended(&recv_buffer[0..size]) {
                 Ok(v) => v,
                 Err(e) => {
@@ -84,7 +92,12 @@ pub struct ServerChannel {
     pub receiver: Receiver<ServerMessage>,
 }
 
-pub fn run_game_client(settings: GameClientSettings, server: ServerChannel, game: GameChannel, stop: Arc<AtomicBool>) {
+pub fn run_game_client(
+    settings: GameClientSettings,
+    server: ServerChannel,
+    game: GameChannel,
+    stop: Arc<AtomicBool>,
+) {
     info!("Run UDP client");
     let mut client_message_number = 0;
     let mut server_message_number = 0;
@@ -92,7 +105,14 @@ pub fn run_game_client(settings: GameClientSettings, server: ServerChannel, game
         if stop.load(Ordering::Acquire) {
             return;
         }
-        server.sender.send(ClientMessage { number: client_message_number, session_id: 0, data: ClientMessageData::Join }).ok();
+        server
+            .sender
+            .send(ClientMessage {
+                number: client_message_number,
+                session_id: 0,
+                data: ClientMessageData::Join,
+            })
+            .ok();
         client_message_number += 1;
         if let Ok(message) = server.receiver.recv_timeout(settings.connect_timeout) {
             if message.number <= server_message_number {
@@ -110,24 +130,65 @@ pub fn run_game_client(settings: GameClientSettings, server: ServerChannel, game
         }
     };
     info!("Joined to server with session {}", session_id);
-    let ServerChannel { sender: server_sender, receiver: server_receiver } = server;
-    let GameChannel { sender: game_sender, receiver: game_receiver } = game;
-    let sender = spawn(move || run_server_sender(session_id, client_message_number, server_sender, game_receiver));
-    run_server_receiver(session_id, server_message_number, game_sender, server_receiver, stop);
+    let ServerChannel {
+        sender: server_sender,
+        receiver: server_receiver,
+    } = server;
+    let GameChannel {
+        sender: game_sender,
+        receiver: game_receiver,
+    } = game;
+    let sender = spawn(move || {
+        run_server_sender(
+            session_id,
+            client_message_number,
+            server_sender,
+            game_receiver,
+        )
+    });
+    run_server_receiver(
+        session_id,
+        server_message_number,
+        game_sender,
+        server_receiver,
+        stop,
+    );
     sender.join().unwrap();
 }
 
-fn run_server_sender(session_id: u64, mut message_number: u64, sender: Sender<ClientMessage>, receiver: Receiver<PlayerAction>) {
+fn run_server_sender(
+    session_id: u64,
+    mut message_number: u64,
+    sender: Sender<ClientMessage>,
+    receiver: Receiver<PlayerAction>,
+) {
     info!("Run client sender for session {}", session_id);
     while let Ok(player_action) = receiver.recv() {
-        sender.send(ClientMessage { session_id, number: message_number, data: ClientMessageData::PlayerAction(player_action) }).ok();
+        sender
+            .send(ClientMessage {
+                session_id,
+                number: message_number,
+                data: ClientMessageData::PlayerAction(player_action),
+            })
+            .ok();
         message_number += 1;
     }
-    sender.send(ClientMessage { session_id, number: message_number, data: ClientMessageData::Quit }).ok();
+    sender
+        .send(ClientMessage {
+            session_id,
+            number: message_number,
+            data: ClientMessageData::Quit,
+        })
+        .ok();
 }
 
-fn run_server_receiver(session_id: u64, mut message_number: u64, sender: Sender<GameUpdate>,
-                       receiver: Receiver<ServerMessage>, stop: Arc<AtomicBool>) {
+fn run_server_receiver(
+    session_id: u64,
+    mut message_number: u64,
+    sender: Sender<GameUpdate>,
+    receiver: Receiver<ServerMessage>,
+    stop: Arc<AtomicBool>,
+) {
     info!("Run client receiver for session {}", session_id);
     while !stop.load(Ordering::Acquire) {
         match receiver.recv() {
@@ -145,7 +206,7 @@ fn run_server_receiver(session_id: u64, mut message_number: u64, sender: Sender<
                     ServerMessageData::GameUpdate(update) => match sender.send(update) {
                         Ok(..) => (),
                         Err(..) => break,
-                    }
+                    },
                 }
             }
             Err(e) => {

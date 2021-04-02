@@ -21,7 +21,8 @@ impl FpsMovingAverage {
 
     pub fn add(&mut self, time: Instant) {
         if self.times.len() >= self.max_frames
-            || (self.times.len() >= 3 && self.sum_duration >= self.max_interval) {
+            || (self.times.len() >= 3 && self.sum_duration >= self.max_interval)
+        {
             if let Some(removed) = self.times.pop_front() {
                 if let Some(first) = self.times.front() {
                     self.sum_duration -= *first - removed;
@@ -63,7 +64,8 @@ impl DurationMovingAverage {
 
     pub fn add(&mut self, duration: Duration) {
         if self.durations.len() >= self.max_frames
-            || (self.durations.len() >= 2 && self.sum_duration >= self.max_interval) {
+            || (self.durations.len() >= 2 && self.sum_duration >= self.max_interval)
+        {
             if let Some(removed) = self.durations.pop_front() {
                 self.sum_duration -= removed;
             }

@@ -22,9 +22,7 @@ pub struct ClientMessage {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Deserialize, Serialize)]
 pub enum ServerMessageData {
-    Settings {
-        update_period: Duration,
-    },
+    Settings { update_period: Duration },
     Error(String),
     GameUpdate(GameUpdate),
 }

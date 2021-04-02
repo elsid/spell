@@ -1,20 +1,24 @@
 use std::collections::VecDeque;
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::Arc;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use lz4_flex::compress_prepend_size;
-use rand::{CryptoRng, Rng, SeedableRng};
 use rand::rngs::StdRng;
+use rand::{CryptoRng, Rng, SeedableRng};
 use tokio::net::UdpSocket;
 
-use crate::engine::{add_actor_spell_element, complete_directed_magick, Engine, get_next_id,
-                    remove_actor, self_magick, start_area_of_effect_magick, start_directed_magick};
+use crate::engine::{
+    add_actor_spell_element, complete_directed_magick, get_next_id, remove_actor, self_magick,
+    start_area_of_effect_magick, start_directed_magick, Engine,
+};
 use crate::generators::generate_player_actor;
-use crate::protocol::{ClientMessage, ClientMessageData, GameUpdate, PlayerAction, ServerMessage, ServerMessageData};
+use crate::protocol::{
+    ClientMessage, ClientMessageData, GameUpdate, PlayerAction, ServerMessage, ServerMessageData,
+};
 use crate::world::World;
 
 #[derive(Debug)]
@@ -25,8 +29,12 @@ pub struct UdpServerSettings {
     pub session_timeout: Duration,
 }
 
-pub async fn run_udp_server(settings: UdpServerSettings, sender: Sender<ClientMessage>,
-                            receiver: Receiver<ServerMessage>, stop: Arc<AtomicBool>) -> Result<(), std::io::Error> {
+pub async fn run_udp_server(
+    settings: UdpServerSettings,
+    sender: Sender<ClientMessage>,
+    receiver: Receiver<ServerMessage>,
+    stop: Arc<AtomicBool>,
+) -> Result<(), std::io::Error> {
     info!("Run UDP server: {:?}", settings);
     UdpServer {
         socket: UdpSocket::bind(&settings.address).await?,
@@ -38,7 +46,9 @@ pub async fn run_udp_server(settings: UdpServerSettings, sender: Sender<ClientMe
         sessions: Vec::new(),
         rng: StdRng::from_entropy(),
         message_counter: 0,
-    }.run().await;
+    }
+    .run()
+    .await;
     Ok(())
 }
 
@@ -84,11 +94,13 @@ impl UdpServer {
         let session_timeout = self.settings.session_timeout;
         for session in self.sessions.iter() {
             if session_timeout <= now - session.last_recv_time {
-                self.sender.send(ClientMessage {
-                    session_id: session.session_id,
-                    number: u64::MAX,
-                    data: ClientMessageData::Quit,
-                }).ok();
+                self.sender
+                    .send(ClientMessage {
+                        session_id: session.session_id,
+                        number: u64::MAX,
+                        data: ClientMessageData::Quit,
+                    })
+                    .ok();
                 warn!("UDP session {} is timed out", session.session_id);
             }
         }
@@ -101,8 +113,16 @@ impl UdpServer {
         while let Ok(mut server_message) = self.receiver.try_recv() {
             server_message.number = self.message_counter;
             self.message_counter += 1;
-            if matches!(server_message.data, ServerMessageData::GameUpdate(GameUpdate::World(..))) {
-                if self.sessions.is_empty() || self.sessions.iter().all(|v| !matches!(v.state, UdpSessionState::Established)) {
+            if matches!(
+                server_message.data,
+                ServerMessageData::GameUpdate(GameUpdate::World(..))
+            ) {
+                if self.sessions.is_empty()
+                    || self
+                        .sessions
+                        .iter()
+                        .all(|v| !matches!(v.state, UdpSessionState::Established))
+                {
                     continue;
                 }
                 let buffer = bincode::serialize(&server_message).unwrap();
@@ -114,8 +134,15 @@ impl UdpServer {
                         }
                     }
                 }
-            } else if let Some(session) = self.sessions.iter_mut().find(|v| v.session_id == server_message.session_id) {
-                if matches!(server_message.data, ServerMessageData::GameUpdate(GameUpdate::SetPlayerId(..))) {
+            } else if let Some(session) = self
+                .sessions
+                .iter_mut()
+                .find(|v| v.session_id == server_message.session_id)
+            {
+                if matches!(
+                    server_message.data,
+                    ServerMessageData::GameUpdate(GameUpdate::SetPlayerId(..))
+                ) {
                     session.state = UdpSessionState::Established;
                 }
                 let buffer = bincode::serialize(&server_message).unwrap();
@@ -135,38 +162,47 @@ impl UdpServer {
             } else {
                 Duration::from_millis(1)
             };
-            if let Ok(Ok((size, peer))) = tokio::time::timeout(recv_timeout, self.socket.recv_from(&mut self.recv_buffer)).await {
-                let session_id = if let Some(session) = self.sessions.iter_mut().find(|v| v.peer == peer) {
-                    session.last_recv_time = Instant::now();
-                    session.session_id
-                } else if self.sessions.len() < self.settings.max_sessions {
-                    loop {
-                        let session_id = self.rng.gen();
-                        if self.sessions.iter_mut().any(|v| v.session_id == session_id) {
+            if let Ok(Ok((size, peer))) =
+                tokio::time::timeout(recv_timeout, self.socket.recv_from(&mut self.recv_buffer))
+                    .await
+            {
+                let session_id =
+                    if let Some(session) = self.sessions.iter_mut().find(|v| v.peer == peer) {
+                        session.last_recv_time = Instant::now();
+                        session.session_id
+                    } else if self.sessions.len() < self.settings.max_sessions {
+                        loop {
+                            let session_id = self.rng.gen();
+                            if self.sessions.iter_mut().any(|v| v.session_id == session_id) {
+                                continue;
+                            }
+                            info!("New UDP session {} from {}", session_id, peer);
+                            self.sessions.push(UdpSession {
+                                session_id,
+                                peer,
+                                last_recv_time: Instant::now(),
+                                state: UdpSessionState::New,
+                            });
+                            break session_id;
+                        }
+                    } else {
+                        continue;
+                    };
+                let mut client_message: ClientMessage =
+                    match bincode::deserialize(&self.recv_buffer[0..size]) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            warn!("Failed to deserialize client message: {}", e);
                             continue;
                         }
-                        info!("New UDP session {} from {}", session_id, peer);
-                        self.sessions.push(UdpSession {
-                            session_id,
-                            peer,
-                            last_recv_time: Instant::now(),
-                            state: UdpSessionState::New,
-                        });
-                        break session_id;
-                    }
-                } else {
-                    continue;
-                };
-                let mut client_message: ClientMessage = match bincode::deserialize(&self.recv_buffer[0..size]) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        warn!("Failed to deserialize client message: {}", e);
-                        continue;
-                    }
-                };
+                    };
                 client_message.session_id = session_id;
                 if matches!(&client_message.data, ClientMessageData::Quit) {
-                    let session = self.sessions.iter_mut().find(|v| v.session_id == session_id).unwrap();
+                    let session = self
+                        .sessions
+                        .iter_mut()
+                        .find(|v| v.session_id == session_id)
+                        .unwrap();
                     session.state = UdpSessionState::Done;
                     info!("UDP session {} is done", session.session_id);
                 }
@@ -187,7 +223,13 @@ pub struct GameServerSettings {
     pub session_timeout: Duration,
 }
 
-pub fn run_game_server(mut world: World, settings: GameServerSettings, sender: Sender<ServerMessage>, receiver: Receiver<ClientMessage>, stop: Arc<AtomicBool>) {
+pub fn run_game_server(
+    mut world: World,
+    settings: GameServerSettings,
+    sender: Sender<ServerMessage>,
+    receiver: Receiver<ClientMessage>,
+    stop: Arc<AtomicBool>,
+) {
     info!("Run game server: {:?}", settings);
     let time_step = settings.update_period.as_secs_f64();
     let mut frame_rate_limiter = FrameRateLimiter::new(settings.update_period, Instant::now());
@@ -208,29 +250,49 @@ pub fn run_game_server(mut world: World, settings: GameServerSettings, sender: S
             if settings.session_timeout <= Instant::now() - session.last_message_time {
                 warn!("Game session {} is timed out", session.session_id);
                 session.active = false;
-                sender.send(ServerMessage {
-                    session_id: session.session_id,
-                    number: 0,
-                    data: ServerMessageData::Error(String::from("Session is timed out")),
-                }).ok();
+                sender
+                    .send(ServerMessage {
+                        session_id: session.session_id,
+                        number: 0,
+                        data: ServerMessageData::Error(String::from("Session is timed out")),
+                    })
+                    .ok();
             }
         }
         while let Ok(message) = receiver.try_recv() {
-            if let Some(session) = sessions.iter_mut()
-                .find(|v| v.session_id == message.session_id) {
+            if let Some(session) = sessions
+                .iter_mut()
+                .find(|v| v.session_id == message.session_id)
+            {
                 handle_existing_session(message, session, &mut world);
             } else if sessions.len() < settings.max_players {
-                if let Some(session) = create_new_session(settings.update_period, &sender, message, &sessions, &mut world, &mut rng) {
-                    info!("New player has joined: session_id={} actor_id={}", session.session_id, session.actor_id);
+                if let Some(session) = create_new_session(
+                    settings.update_period,
+                    &sender,
+                    message,
+                    &sessions,
+                    &mut world,
+                    &mut rng,
+                ) {
+                    info!(
+                        "New player has joined: session_id={} actor_id={}",
+                        session.session_id, session.actor_id
+                    );
                     sessions.push(session);
                 }
             } else {
-                warn!("Rejected new player, server players: {}/{}", sessions.len(), settings.max_players);
-                sender.send(ServerMessage {
-                    number: 0,
-                    session_id: 0,
-                    data: ServerMessageData::Error(String::from("Server is full")),
-                }).ok();
+                warn!(
+                    "Rejected new player, server players: {}/{}",
+                    sessions.len(),
+                    settings.max_players
+                );
+                sender
+                    .send(ServerMessage {
+                        number: 0,
+                        session_id: 0,
+                        data: ServerMessageData::Error(String::from("Server is full")),
+                    })
+                    .ok();
             }
             messages_per_frame += 1;
             if messages_per_frame > sessions.len() + settings.max_players {
@@ -243,11 +305,13 @@ pub fn run_game_server(mut world: World, settings: GameServerSettings, sender: S
             session.actor_index = world.actors.iter().position(|v| v.id == session.actor_id);
         }
         messages_per_frame = 0;
-        sender.send(ServerMessage {
-            session_id: 0,
-            number: 0,
-            data: ServerMessageData::GameUpdate(GameUpdate::World(world.clone())),
-        }).ok();
+        sender
+            .send(ServerMessage {
+                session_id: 0,
+                number: 0,
+                data: ServerMessageData::GameUpdate(GameUpdate::World(world.clone())),
+            })
+            .ok();
         frame_rate_limiter.limit(Instant::now());
     }
 }
@@ -310,14 +374,24 @@ fn handle_existing_session(message: ClientMessage, session: &mut GameSession, wo
                     }
                 }
             } else {
-                warn!("Player actor is not found for session: {}", session.session_id);
+                warn!(
+                    "Player actor is not found for session: {}",
+                    session.session_id
+                );
             }
         }
         v => warn!("Existing session invalid message data: {:?}", v),
     }
 }
 
-fn create_new_session<R: CryptoRng + Rng>(update_period: Duration, sender: &Sender<ServerMessage>, message: ClientMessage, sessions: &[GameSession], world: &mut World, rng: &mut R) -> Option<GameSession> {
+fn create_new_session<R: CryptoRng + Rng>(
+    update_period: Duration,
+    sender: &Sender<ServerMessage>,
+    message: ClientMessage,
+    sessions: &[GameSession],
+    world: &mut World,
+    rng: &mut R,
+) -> Option<GameSession> {
     match message.data {
         ClientMessageData::Join => {
             let session_id = if message.session_id == 0 {
@@ -330,17 +404,21 @@ fn create_new_session<R: CryptoRng + Rng>(update_period: Duration, sender: &Send
             } else {
                 message.session_id
             };
-            sender.send(ServerMessage {
-                session_id,
-                number: 0,
-                data: ServerMessageData::Settings { update_period },
-            }).unwrap();
+            sender
+                .send(ServerMessage {
+                    session_id,
+                    number: 0,
+                    data: ServerMessageData::Settings { update_period },
+                })
+                .unwrap();
             let actor_id = add_player_actor(world, rng);
-            sender.send(ServerMessage {
-                session_id,
-                number: 0,
-                data: ServerMessageData::GameUpdate(GameUpdate::SetPlayerId(actor_id)),
-            }).unwrap();
+            sender
+                .send(ServerMessage {
+                    session_id,
+                    number: 0,
+                    data: ServerMessageData::GameUpdate(GameUpdate::SetPlayerId(actor_id)),
+                })
+                .unwrap();
             Some(GameSession {
                 session_id,
                 active: true,
@@ -367,7 +445,10 @@ struct FrameRateLimiter {
 
 impl FrameRateLimiter {
     fn new(max_frame_duration: Duration, now: Instant) -> Self {
-        Self { max_frame_duration, last_measurement: now }
+        Self {
+            max_frame_duration,
+            last_measurement: now,
+        }
     }
 
     fn limit(&mut self, now: Instant) {
@@ -383,6 +464,8 @@ impl FrameRateLimiter {
 
 fn add_player_actor<R: Rng>(world: &mut World, rng: &mut R) -> u64 {
     let actor_id = get_next_id(&mut world.id_counter);
-    world.actors.push(generate_player_actor(actor_id, &world.bounds, rng));
+    world
+        .actors
+        .push(generate_player_actor(actor_id, &world.bounds, rng));
     actor_id
 }
