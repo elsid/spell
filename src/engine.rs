@@ -951,7 +951,6 @@ fn collide_dynamic_objects(now: f64, duration: f64, damage_factor: f64, mut lhs:
         &Vector2::new(rhs.velocity.x, rhs.velocity.y),
         &Ball::new(rhs.body.radius),
         duration,
-        0.0,
     ).unwrap();
     if let Some(collision) = collision {
         let lhs_mass = lhs.body.mass();
@@ -1013,7 +1012,6 @@ fn collide_dynamic_and_static_objects(now: f64, duration: f64, damage_factor: f6
         &Vector2::new(0.0, 0.0),
         &Ball::new(rhs.body.radius),
         duration,
-        0.0,
     ).unwrap();
     if let Some(collision) = collision {
         let lhs_mass = lhs.body.mass();
