@@ -154,14 +154,14 @@ impl Engine {
         world.bounded_areas.retain(|v| v.deadline >= now);
         world.fields.retain(|v| v.deadline >= now);
         world.beams.retain(|v| v.deadline >= now);
-        intersect_objects_with_areas(world, &mut self.shape_cache);
+        intersect_objects_with_areas(world, &self.shape_cache);
         intersect_objects_with_all_fields(world);
         update_temp_areas(world.time, duration, &world.settings, &mut world.temp_areas);
         update_actors(world.time, duration, &world.settings, &mut world.actors);
         update_dynamic_objects(world.time, duration, &world.settings, &mut world.dynamic_objects);
         update_static_objects(world.time, duration, &world.settings, &mut world.static_objects);
-        self.beam_collider.update(world, &mut self.shape_cache);
-        move_objects(duration, world, &mut self.shape_cache);
+        self.beam_collider.update(world, &self.shape_cache);
+        move_objects(duration, world, &self.shape_cache);
         world.actors.iter_mut().for_each(|v| v.dynamic_force = Vec2f::ZERO);
         world.dynamic_objects.iter_mut().for_each(|v| v.dynamic_force = Vec2f::ZERO);
         let bounds = world.bounds.clone();
@@ -171,7 +171,7 @@ impl Engine {
                 && is_active(&bounds, &v.body.shape.as_shape(), v.position, v.health)
         });
         world.static_objects.retain(|v| {
-            v.aura.power > 0.0 || v.body.shape.with_shape(&mut self.shape_cache, |shape| {
+            v.aura.power > 0.0 || v.body.shape.with_shape(&self.shape_cache, |shape| {
                 is_active(&bounds, shape, v.position, v.health)
             })
         });
@@ -197,6 +197,7 @@ pub fn add_actor_spell_element(actor_index: usize, element: Element, world: &mut
     Spell::on(world.settings.max_spell_elements as usize, &mut world.actors[actor_index].spell_elements).add(element);
 }
 
+#[allow(clippy::needless_return)]
 pub fn start_directed_magick(actor_index: usize, world: &mut World) {
     let magick = Spell::on(world.settings.max_spell_elements as usize, &mut world.actors[actor_index].spell_elements).cast();
     if magick.power[Element::Shield as usize] > 0.0 {
@@ -220,6 +221,8 @@ pub fn start_directed_magick(actor_index: usize, world: &mut World) {
     }
 }
 
+#[allow(clippy::needless_return)]
+#[allow(clippy::if_same_then_else)]
 pub fn start_area_of_effect_magick(actor_index: usize, world: &mut World) {
     let magick = Spell::on(world.settings.max_spell_elements as usize,
                            &mut world.actors[actor_index].spell_elements).cast();
@@ -245,6 +248,8 @@ pub fn start_area_of_effect_magick(actor_index: usize, world: &mut World) {
     }
 }
 
+#[allow(clippy::needless_return)]
+#[allow(clippy::if_same_then_else)]
 fn cast_shield(magick: Magick, actor_index: usize, world: &mut World) {
     if magick.power[Element::Earth as usize] > 0.0 {
         cast_earth_based_shield(magick, actor_index, world);
@@ -358,9 +363,8 @@ pub fn self_magick(actor_index: usize, world: &mut World) {
         world.actors[actor_index].effect = add_magick_power_to_effect(world.time, &world.actors[actor_index].effect, &magick.power);
     } else {
         let mut elements = [false; 11];
-        for i in 0..magick.power.len() {
-            elements[i] = magick.power[i] > 0.0;
-        }
+        elements.iter_mut().zip(magick.power.iter())
+            .for_each(|(e, p)| *e = *p > 0.0);
         let power = magick.power.iter().sum();
         let radius_factor = if elements[Element::Earth as usize] || elements[Element::Ice as usize]
             || (elements[Element::Shield as usize] && elements.iter().filter(|v| **v).count() == 1) {
@@ -385,7 +389,7 @@ fn cast_spray(angle: f64, duration: f64, magick: &Magick, actor_index: usize, wo
         max_radius: actor.body.shape.radius * (1.0 + effect.power.iter().sum::<f64>()) * world.settings.spray_distance_factor,
         angle,
     };
-    if effect.power[Element::Water as usize] == effect.power.iter().sum::<f64>() {
+    if (effect.power[Element::Water as usize] - effect.power.iter().sum::<f64>()).abs() <= f64::EPSILON {
         world.fields.push(Field {
             id: get_next_id(&mut world.id_counter),
             actor_id: actor.id,
@@ -533,7 +537,7 @@ fn intersect_objects_with_areas(world: &mut World, shape_cache: &ShapeCache) {
         });
     }
     for object in world.dynamic_objects.iter_mut() {
-        intersect_static_object_with_all_bounded_areas(world.time, &world.bounded_areas, &mut world.actors, &mut IntersectingStaticObject {
+        intersect_static_object_with_all_bounded_areas(world.time, &world.bounded_areas, &world.actors, &mut IntersectingStaticObject {
             shape: &Ball::new(object.body.shape.radius),
             isometry: Isometry::translation(object.position.x, object.position.y),
             effect: &mut object.effect,
@@ -794,15 +798,15 @@ fn update_velocity_z(duration: f64, height: f64, gravitational_acceleration: f64
 }
 
 fn add_magick_power_to_effect(now: f64, target: &Effect, other: &[f64; 11]) -> Effect {
-    let mut power = target.power.clone();
-    let mut applied = target.applied.clone();
+    let mut power = target.power;
+    let mut applied = target.applied;
     for i in 0..power.len() {
         if other[i] > 0.0 {
             power[i] = power[i].max(other[i]);
             applied[i] = now;
         }
     }
-    let target_power = power.clone();
+    let target_power = power;
     if target_power[Element::Water as usize] > 0.0 && target_power[Element::Fire as usize] > 0.0 {
         power[Element::Water as usize] = 0.0;
         power[Element::Fire as usize] = 0.0;
@@ -858,7 +862,7 @@ fn get_current_direction(current_direction: Vec2f, target_direction: Vec2f, dura
 
 fn normalize_angle(angle: f64) -> f64 {
     let turns = angle / std::f64::consts::TAU + 0.5;
-    return (turns - turns.floor() - 0.5) * std::f64::consts::TAU;
+    (turns - turns.floor() - 0.5) * std::f64::consts::TAU
 }
 
 fn intersect_beam(magick: &Magick, origin: Vec2f, direction: Vec2f, depth: usize, length: &mut f64, world: &mut World, shape_cache: &ShapeCache) -> Option<EmittedBeam> {
@@ -964,9 +968,9 @@ fn find_beam_nearest_intersection<T>(origin: Vec2f, direction: Vec2f, objects: &
     where T: WithIsometry + WithShape
 {
     let mut nearest = None;
-    for i in 0..objects.len() {
-        let isometry = objects[i].get_isometry();
-        let result = with_shape(&objects[i], shape_cache, |shape| {
+    for (i, object) in objects.iter().enumerate() {
+        let isometry = object.get_isometry();
+        let result = with_shape(object, shape_cache, |shape| {
             shape.cast_ray_and_get_normal(
                 &isometry,
                 &Ray::new(Point2::new(origin.x, origin.y), Vector2::new(direction.x, direction.y)),
@@ -988,35 +992,38 @@ fn move_objects(duration: f64, world: &mut World, shape_cache: &ShapeCache) {
     loop {
         for (i, static_object) in world.static_objects.iter().enumerate() {
             for (j, actor) in world.actors.iter().enumerate() {
-                time_of_impact(duration_left, shape_cache, static_object, actor)
-                    .map(|toi| update_earliest_collision(Index::StaticObject(i), Index::Actor(j), toi, &mut earliest_collision));
+                if let Some(toi) = time_of_impact(duration_left, shape_cache, static_object, actor) {
+                    update_earliest_collision(Index::StaticObject(i), Index::Actor(j), toi, &mut earliest_collision);
+                }
             }
             for (j, dynamic_object) in world.dynamic_objects.iter().enumerate() {
-                time_of_impact(duration_left, shape_cache, static_object, dynamic_object)
-                    .map(|toi| update_earliest_collision(Index::StaticObject(i), Index::DynamicObject(j), toi, &mut earliest_collision));
+                if let Some(toi) = time_of_impact(duration_left, shape_cache, static_object, dynamic_object) {
+                    update_earliest_collision(Index::StaticObject(i), Index::DynamicObject(j), toi, &mut earliest_collision);
+                }
             }
         }
         if !world.actors.is_empty() {
             for i in 0..world.actors.len() - 1 {
                 for j in i + 1..world.actors.len() {
-                    let (left, right) = world.actors.split_at_mut(j);
-                    time_of_impact(duration_left, shape_cache, &mut left[i], &mut right[0])
-                        .map(|toi| update_earliest_collision(Index::Actor(i), Index::Actor(j), toi, &mut earliest_collision));
+                    if let Some(toi) = time_of_impact(duration_left, shape_cache, &world.actors[i], &world.actors[j]) {
+                        update_earliest_collision(Index::Actor(i), Index::Actor(j), toi, &mut earliest_collision);
+                    }
                 }
             }
         }
         for (i, dynamic_object) in world.dynamic_objects.iter().enumerate() {
             for (j, actor) in world.actors.iter().enumerate() {
-                time_of_impact(duration_left, shape_cache, dynamic_object, actor)
-                    .map(|toi| update_earliest_collision(Index::DynamicObject(i), Index::Actor(j), toi, &mut earliest_collision));
+                if let Some(toi) = time_of_impact(duration_left, shape_cache, dynamic_object, actor) {
+                    update_earliest_collision(Index::DynamicObject(i), Index::Actor(j), toi, &mut earliest_collision);
+                }
             }
         }
         if !world.dynamic_objects.is_empty() {
             for i in 0..world.dynamic_objects.len() - 1 {
                 for j in i + 1..world.dynamic_objects.len() {
-                    let (left, right) = world.dynamic_objects.split_at_mut(j);
-                    time_of_impact(duration_left, shape_cache, &mut left[i], &mut right[0])
-                        .map(|toi| update_earliest_collision(Index::DynamicObject(i), Index::DynamicObject(j), toi, &mut earliest_collision));
+                    if let Some(toi) = time_of_impact(duration_left, shape_cache, &world.dynamic_objects[i], &world.dynamic_objects[j]) {
+                        update_earliest_collision(Index::DynamicObject(i), Index::DynamicObject(j), toi, &mut earliest_collision);
+                    }
                 }
             }
         }
@@ -1037,7 +1044,7 @@ fn move_objects(duration: f64, world: &mut World, shape_cache: &ShapeCache) {
                 }
             }
             duration_left -= collision.toi.toi.max(duration / 10.0);
-            if duration_left < f64::EPSILON {
+            if duration_left <= f64::EPSILON {
                 break;
             }
             earliest_collision = None;
@@ -1350,7 +1357,7 @@ fn handle_completed_magicks(world: &mut World) {
                 health: 1.0,
                 effect: Effect {
                     applied: [world.time; 11],
-                    power: delayed_magick.power.clone(),
+                    power: delayed_magick.power,
                 },
                 aura: Default::default(),
                 velocity: actor.velocity,
@@ -1470,7 +1477,7 @@ mod tests {
             velocity_z: -0.08166666666666667,
         };
         let toi = time_of_impact(duration, &shape_cache, &static_object, &dynamic_object).unwrap();
-        assert_eq!(toi.toi, 0.004296260825975674);
+        assert!((toi.toi - 0.004296260825975674) <= f64::EPSILON, "{}", toi.toi);
         assert_eq!(toi.witness1, Point2::new(4.989825741741153, -0.2589521646469748));
         assert_eq!(toi.witness2, Point2::new(-0.18022918657654352, -0.08670317356335425));
         assert_eq!(toi.normal1, Unit::new_unchecked(Vector2::<f64>::new(-0.9992290361820114, 0.03925981725337541)));

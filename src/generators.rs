@@ -9,12 +9,12 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
     let settings = WorldSettings::default();
     let mut id_counter = 1;
     let mut actors = Vec::new();
-    generate_actors(&Material::Flesh, 10, &bounds, &mut id_counter, &mut actors, rng);
+    generate_actors(Material::Flesh, 10, &bounds, &mut id_counter, &mut actors, rng);
     let mut dynamic_objects = Vec::new();
     let mut static_objects = Vec::new();
     for material in &[Material::Flesh, Material::Stone] {
-        generate_dynamic_objects(material, 10, &bounds, &mut id_counter, &mut dynamic_objects, rng);
-        generate_static_objects(material, 10, &bounds, &mut id_counter, &mut static_objects, rng);
+        generate_dynamic_objects(*material, 10, &bounds, &mut id_counter, &mut dynamic_objects, rng);
+        generate_static_objects(*material, 10, &bounds, &mut id_counter, &mut static_objects, rng);
     }
     let mut static_areas = vec![
         StaticArea {
@@ -78,9 +78,9 @@ pub fn generate_player_actor<R: Rng>(id: u64, bounds: &Rectf, rng: &mut R) -> Ac
     }
 }
 
-pub fn generate_actors<R: Rng>(material: &Material, number: usize, bounds: &Rectf, id_counter: &mut u64, actors: &mut Vec<Actor>, rng: &mut R) {
+pub fn generate_actors<R: Rng>(material: Material, number: usize, bounds: &Rectf, id_counter: &mut u64, actors: &mut Vec<Actor>, rng: &mut R) {
     for _ in 0..number {
-        actors.push(generate_actor(material.clone(), get_next_id(id_counter), bounds, rng));
+        actors.push(generate_actor(material, get_next_id(id_counter), bounds, rng));
     }
 }
 
@@ -108,9 +108,9 @@ pub fn generate_actor<R: Rng>(material: Material, id: u64, bounds: &Rectf, rng: 
     }
 }
 
-pub fn generate_dynamic_objects<R: Rng>(material: &Material, number: usize, bounds: &Rectf, id_counter: &mut u64, dynamic_objects: &mut Vec<DynamicObject>, rng: &mut R) {
+pub fn generate_dynamic_objects<R: Rng>(material: Material, number: usize, bounds: &Rectf, id_counter: &mut u64, dynamic_objects: &mut Vec<DynamicObject>, rng: &mut R) {
     for _ in 0..number {
-        dynamic_objects.push(generate_dynamic_object(material.clone(), get_next_id(id_counter), bounds, rng));
+        dynamic_objects.push(generate_dynamic_object(material, get_next_id(id_counter), bounds, rng));
     }
 }
 
@@ -133,9 +133,9 @@ pub fn generate_dynamic_object<R: Rng>(material: Material, id: u64, bounds: &Rec
     }
 }
 
-pub fn generate_static_objects<R: Rng>(material: &Material, number: usize, bounds: &Rectf, id_counter: &mut u64, static_objects: &mut Vec<StaticObject>, rng: &mut R) {
+pub fn generate_static_objects<R: Rng>(material: Material, number: usize, bounds: &Rectf, id_counter: &mut u64, static_objects: &mut Vec<StaticObject>, rng: &mut R) {
     for _ in 0..number {
-        static_objects.push(generate_static_object(material.clone(), get_next_id(id_counter), bounds, rng));
+        static_objects.push(generate_static_object(material, get_next_id(id_counter), bounds, rng));
     }
 }
 

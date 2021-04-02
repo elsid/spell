@@ -114,16 +114,14 @@ impl UdpServer {
                         }
                     }
                 }
-            } else {
-                if let Some(session) = self.sessions.iter_mut().find(|v| v.session_id == server_message.session_id) {
-                    if matches!(server_message.data, ServerMessageData::GameUpdate(GameUpdate::SetPlayerId(..))) {
-                        session.state = UdpSessionState::Established;
-                    }
-                    let buffer = bincode::serialize(&server_message).unwrap();
-                    let compressed = compress_prepend_size(&buffer);
-                    if let Err(e) = self.socket.send_to(&compressed, session.peer).await {
-                        warn!("Failed to send: {}", e);
-                    }
+            } else if let Some(session) = self.sessions.iter_mut().find(|v| v.session_id == server_message.session_id) {
+                if matches!(server_message.data, ServerMessageData::GameUpdate(GameUpdate::SetPlayerId(..))) {
+                    session.state = UdpSessionState::Established;
+                }
+                let buffer = bincode::serialize(&server_message).unwrap();
+                let compressed = compress_prepend_size(&buffer);
+                if let Err(e) = self.socket.send_to(&compressed, session.peer).await {
+                    warn!("Failed to send: {}", e);
                 }
             }
         }
@@ -319,7 +317,7 @@ fn handle_existing_session(message: ClientMessage, session: &mut GameSession, wo
     }
 }
 
-fn create_new_session<R: CryptoRng + Rng>(update_period: Duration, sender: &Sender<ServerMessage>, message: ClientMessage, sessions: &Vec<GameSession>, world: &mut World, rng: &mut R) -> Option<GameSession> {
+fn create_new_session<R: CryptoRng + Rng>(update_period: Duration, sender: &Sender<ServerMessage>, message: ClientMessage, sessions: &[GameSession], world: &mut World, rng: &mut R) -> Option<GameSession> {
     match message.data {
         ClientMessageData::Join => {
             let session_id = if message.session_id == 0 {

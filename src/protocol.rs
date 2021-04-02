@@ -19,6 +19,7 @@ pub struct ClientMessage {
     pub data: ClientMessageData,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Deserialize, Serialize)]
 pub enum ServerMessageData {
     Settings {
@@ -35,6 +36,7 @@ pub enum ClientMessageData {
     PlayerAction(PlayerAction),
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Deserialize, Serialize)]
 pub enum GameUpdate {
     SetPlayerId(u64),

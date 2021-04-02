@@ -147,8 +147,8 @@ impl PartialEq for Vec2f {
 
 impl Eq for Vec2f {}
 
-impl Into<[f64; 2]> for Vec2f {
-    fn into(self) -> [f64; 2] {
-        [self.x, self.y]
+impl From<Vec2f> for [f64; 2] {
+    fn from(value: Vec2f) -> Self {
+        [value.x, value.y]
     }
 }

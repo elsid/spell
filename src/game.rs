@@ -38,6 +38,7 @@ use crate::protocol::{GameUpdate, PlayerAction};
 use crate::vec2::Vec2f;
 use crate::world::{Aura, Disk, Element, Material, RingSector, StaticShape, World};
 
+#[allow(clippy::option_map_unit_fn)]
 pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver: Receiver<GameUpdate>) {
     info!("Run game");
     let opengl = OpenGL::V2_1;
@@ -172,7 +173,7 @@ pub fn run_game(mut world: World, sender: Option<Sender<PlayerAction>>, receiver
             last_mouse_pos = Vec2f::new(args[0], args[1]);
         }
 
-        if let Some(_) = e.update_args() {
+        if e.update_args().is_some() {
             while let Ok(update) = receiver.try_recv() {
                 match update {
                     GameUpdate::GameOver => player_id = None,
@@ -535,21 +536,17 @@ fn get_material_color(material: Material, alpha: f32) -> [f32; 4] {
 fn get_magick_power_color<T: Default + PartialEq>(power: &[T; 11]) -> [f32; 4] {
     let mut result: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
     let mut colors = 0;
-    for i in 0..power.len() {
-        if power[i] != T::default() {
+    power.iter().enumerate()
+        .filter(|(_, p)| **p != T::default())
+        .for_each(|(i, _)| {
             let color = get_element_color(Element::from(i));
-            for i in 0..4 {
-                result[i] += color[i];
-            }
+            result.iter_mut().zip(color.iter()).for_each(|(r, c)| *r += *c);
             colors += 1;
-        }
-    }
+        });
     if colors == 0 {
         return [0.0, 0.0, 0.0, 0.0];
     }
-    for i in 0..4 {
-        result[i] /= colors as f32;
-    }
+    result.iter_mut().for_each(|v| *v /= colors as f32);
     result
 }
 

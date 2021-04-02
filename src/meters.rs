@@ -73,7 +73,7 @@ impl DurationMovingAverage {
     }
 
     pub fn get(&self) -> f64 {
-        if self.durations.len() >= 1 {
+        if !self.durations.is_empty() {
             self.sum_duration.as_secs_f64() / self.durations.len() as f64
         } else {
             0.0
