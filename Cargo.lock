@@ -1064,6 +1064,7 @@ dependencies = [
  "env_logger",
  "log",
  "lz4_flex",
+ "nalgebra",
  "parry2d-f64",
  "piston",
  "piston2d-graphics",

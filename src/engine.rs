@@ -1923,6 +1923,7 @@ fn make_circle_arc_polyline(arc: &CircleArcKey) -> Polyline {
 
 #[cfg(test)]
 mod tests {
+    use nalgebra::distance;
     use parry2d_f64::na::Unit;
     use parry2d_f64::query::TOIStatus;
 
@@ -1953,13 +1954,17 @@ mod tests {
             length: FRAC_PI_2,
         });
         assert_eq!(polyline.num_segments(), 8);
-        assert_eq!(
-            polyline.vertices().first(),
-            Some(&Point2::<Real>::new(SQRT_2, -SQRT_2))
+        assert!(
+            distance(
+                &polyline.vertices().first().unwrap(),
+                &Point2::new(SQRT_2, -SQRT_2)
+            ) <= f64::EPSILON
         );
-        assert_eq!(
-            polyline.vertices().last(),
-            Some(&Point2::<Real>::new(SQRT_2, SQRT_2))
+        assert!(
+            distance(
+                &polyline.vertices().last().unwrap(),
+                &Point2::new(SQRT_2, SQRT_2)
+            ) <= f64::EPSILON
         );
     }
 
