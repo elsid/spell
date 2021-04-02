@@ -11,14 +11,19 @@ use clap::Clap;
 use rand::thread_rng;
 use tokio::runtime::Builder;
 
+#[cfg(feature = "render")]
 use crate::client::{
     run_game_client, run_udp_client, GameChannel, GameClientSettings, ServerChannel,
     UdpClientSettings,
 };
+#[cfg(feature = "render")]
 use crate::engine::get_next_id;
 #[cfg(feature = "render")]
 use crate::game::run_game;
-use crate::generators::{generate_player_actor, generate_world};
+#[cfg(feature = "render")]
+use crate::generators::generate_player_actor;
+use crate::generators::generate_world;
+#[cfg(feature = "render")]
 use crate::protocol::GameUpdate;
 use crate::rect::Rectf;
 use crate::server::{run_game_server, run_udp_server, GameServerSettings, UdpServerSettings};
@@ -26,6 +31,7 @@ use crate::vec2::Vec2f;
 #[cfg(feature = "render")]
 use crate::world::World;
 
+#[cfg(feature = "render")]
 mod client;
 mod engine;
 #[cfg(feature = "render")]
@@ -47,11 +53,14 @@ struct Args {
 
 #[derive(Clap)]
 enum Command {
+    #[cfg(feature = "render")]
     SinglePlayer,
+    #[cfg(feature = "render")]
     MultiPlayer(MultiPlayerParams),
     Server(ServerParams),
 }
 
+#[cfg(feature = "render")]
 #[derive(Clap)]
 struct MultiPlayerParams {
     server_address: String,
@@ -82,12 +91,15 @@ struct ServerParams {
 fn main() {
     env_logger::init();
     match Args::parse().command {
+        #[cfg(feature = "render")]
         Command::SinglePlayer => run_single_player(),
+        #[cfg(feature = "render")]
         Command::MultiPlayer(params) => run_multi_player(params),
         Command::Server(params) => run_server(params),
     }
 }
 
+#[cfg(feature = "render")]
 fn run_single_player() {
     let mut rng = thread_rng();
     let mut world = generate_world(Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)), &mut rng);
@@ -97,12 +109,10 @@ fn run_single_player() {
         .push(generate_player_actor(id, &world.bounds, &mut rng));
     let (sender, receiver) = channel();
     sender.send(GameUpdate::SetPlayerId(id)).unwrap();
-    #[cfg(feature = "render")]
-    {
-        run_game(world, None, receiver);
-    }
+    run_game(world, None, receiver);
 }
 
+#[cfg(feature = "render")]
 fn run_multi_player(params: MultiPlayerParams) {
     let (update_sender, update_receiver) = channel();
     let (action_sender, action_receiver) = channel();
@@ -142,10 +152,7 @@ fn run_multi_player(params: MultiPlayerParams) {
                 .unwrap();
         })
     };
-    #[cfg(feature = "render")]
-    {
-        run_game(World::default(), Some(action_sender), update_receiver);
-    }
+    run_game(World::default(), Some(action_sender), update_receiver);
     stop_game_client.store(true, Ordering::Release);
     game_client.join().unwrap();
     stop_udp_client.store(true, Ordering::Release);

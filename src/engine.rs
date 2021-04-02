@@ -236,6 +236,7 @@ pub fn remove_actor(actor_index: usize, world: &mut World) {
     world.actors.remove(actor_index);
 }
 
+#[cfg(feature = "render")]
 pub fn set_actor_moving(actor_index: usize, value: bool, world: &mut World) {
     world.actors[actor_index].moving = value;
 }
