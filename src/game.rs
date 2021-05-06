@@ -21,11 +21,13 @@ use crate::protocol::{GameUpdate, PlayerAction};
 use crate::vec2::Vec2f;
 use crate::world::{Aura, Disk, Element, Material, RingSector, StaticShape, World};
 
-pub fn run_game(
-    mut world: World,
-    sender: Option<Sender<PlayerAction>>,
-    receiver: Receiver<GameUpdate>,
-) {
+pub struct Server {
+    pub address: String,
+    pub port: u16,
+    pub sender: Sender<PlayerAction>,
+}
+
+pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<GameUpdate>) {
     info!("Run game");
     let opengl = OpenGL::V2_1;
     let mut window: GlfwWindow = WindowSettings::new("spell", [1920, 1080])
@@ -52,6 +54,7 @@ pub fn run_game(
     let mut last_received_world_revision = 0;
     let mut last_received_world_time = 0.0;
     let mut lshift = false;
+    let sender = server.as_ref().map(|v| &v.sender);
 
     while let Some(e) = events.next(&mut window) {
         if let Some(v) = e.press_args() {
@@ -59,7 +62,7 @@ pub fn run_game(
                 Button::Mouse(MouseButton::Left) => {
                     if let Some(player_index) = last_player_index {
                         send_or_apply_player_action(
-                            sender.as_ref(),
+                            sender,
                             PlayerAction::Move(true),
                             player_index,
                             &mut world,
@@ -70,14 +73,14 @@ pub fn run_game(
                     if let Some(player_index) = last_player_index {
                         if lshift {
                             send_or_apply_player_action(
-                                sender.as_ref(),
+                                sender,
                                 PlayerAction::StartAreaOfEffectMagick,
                                 player_index,
                                 &mut world,
                             );
                         } else {
                             send_or_apply_player_action(
-                                sender.as_ref(),
+                                sender,
                                 PlayerAction::StartDirectedMagick,
                                 player_index,
                                 &mut world,
@@ -95,7 +98,7 @@ pub fn run_game(
                 Button::Mouse(MouseButton::Left) => {
                     if let Some(player_index) = last_player_index {
                         send_or_apply_player_action(
-                            sender.as_ref(),
+                            sender,
                             PlayerAction::Move(false),
                             player_index,
                             &mut world,
@@ -105,7 +108,7 @@ pub fn run_game(
                 Button::Mouse(MouseButton::Right) => {
                     if let Some(player_index) = last_player_index {
                         send_or_apply_player_action(
-                            sender.as_ref(),
+                            sender,
                             PlayerAction::CompleteDirectedMagick,
                             player_index,
                             &mut world,
@@ -115,7 +118,7 @@ pub fn run_game(
                 Button::Mouse(MouseButton::Middle) => {
                     if let Some(player_index) = last_player_index {
                         send_or_apply_player_action(
-                            sender.as_ref(),
+                            sender,
                             PlayerAction::SelfMagick,
                             player_index,
                             &mut world,
@@ -126,7 +129,7 @@ pub fn run_game(
                 Button::Keyboard(Key::Q) => {
                     if let Some(player_index) = last_player_index {
                         send_or_apply_player_action(
-                            sender.as_ref(),
+                            sender,
                             PlayerAction::AddSpellElement(Element::Water),
                             player_index,
                             &mut world,
@@ -136,7 +139,7 @@ pub fn run_game(
                 Button::Keyboard(Key::A) => {
                     if let Some(player_index) = last_player_index {
                         send_or_apply_player_action(
-                            sender.as_ref(),
+                            sender,
                             PlayerAction::AddSpellElement(Element::Lightning),
                             player_index,
                             &mut world,
@@ -146,7 +149,7 @@ pub fn run_game(
                 Button::Keyboard(Key::W) => {
                     if let Some(player_index) = last_player_index {
                         send_or_apply_player_action(
-                            sender.as_ref(),
+                            sender,
                             PlayerAction::AddSpellElement(Element::Life),
                             player_index,
                             &mut world,
@@ -156,7 +159,7 @@ pub fn run_game(
                 Button::Keyboard(Key::S) => {
                     if let Some(player_index) = last_player_index {
                         send_or_apply_player_action(
-                            sender.as_ref(),
+                            sender,
                             PlayerAction::AddSpellElement(Element::Arcane),
                             player_index,
                             &mut world,
@@ -166,7 +169,7 @@ pub fn run_game(
                 Button::Keyboard(Key::E) => {
                     if let Some(player_index) = last_player_index {
                         send_or_apply_player_action(
-                            sender.as_ref(),
+                            sender,
                             PlayerAction::AddSpellElement(Element::Shield),
                             player_index,
                             &mut world,
@@ -176,7 +179,7 @@ pub fn run_game(
                 Button::Keyboard(Key::D) => {
                     if let Some(player_index) = last_player_index {
                         send_or_apply_player_action(
-                            sender.as_ref(),
+                            sender,
                             PlayerAction::AddSpellElement(Element::Earth),
                             player_index,
                             &mut world,
@@ -186,7 +189,7 @@ pub fn run_game(
                 Button::Keyboard(Key::R) => {
                     if let Some(player_index) = last_player_index {
                         send_or_apply_player_action(
-                            sender.as_ref(),
+                            sender,
                             PlayerAction::AddSpellElement(Element::Cold),
                             player_index,
                             &mut world,
@@ -196,7 +199,7 @@ pub fn run_game(
                 Button::Keyboard(Key::F) => {
                     if let Some(player_index) = last_player_index {
                         send_or_apply_player_action(
-                            sender.as_ref(),
+                            sender,
                             PlayerAction::AddSpellElement(Element::Fire),
                             player_index,
                             &mut world,
@@ -236,7 +239,7 @@ pub fn run_game(
                 let norm = target_direction.norm();
                 if norm <= f64::EPSILON {
                     send_or_apply_player_action(
-                        sender.as_ref(),
+                        sender,
                         PlayerAction::SetTargetDirection(
                             world.actors[player_index].current_direction,
                         ),
@@ -245,7 +248,7 @@ pub fn run_game(
                     );
                 } else {
                     send_or_apply_player_action(
-                        sender.as_ref(),
+                        sender,
                         PlayerAction::SetTargetDirection(target_direction / norm),
                         player_index,
                         &mut world,
@@ -636,163 +639,88 @@ pub fn run_game(
                     }
                 }
 
-                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
-                    .draw(
-                        &format!("EPS: {0:.3}", eps.get())[..],
-                        &mut glyphs,
-                        &ctx.draw_state,
-                        ctx.transform.trans(10.0, 1.0 * 24.0),
-                        g,
-                    )
-                    .unwrap();
-
-                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
-                    .draw(
-                        &format!("Render: {0:.3} ms", render_duration.get() * 1000.0)[..],
-                        &mut glyphs,
-                        &ctx.draw_state,
-                        ctx.transform.trans(10.0, 2.0 * 24.0),
-                        g,
-                    )
-                    .unwrap();
-
-                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
-                    .draw(
-                        &format!("Update: {0:.3} ms", update_duration.get() * 1000.0)[..],
-                        &mut glyphs,
-                        &ctx.draw_state,
-                        ctx.transform.trans(10.0, 3.0 * 24.0),
-                        g,
-                    )
-                    .unwrap();
-
-                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
-                    .draw(
-                        &format!("Player: {:?} {:?}", player_id, last_player_index)[..],
-                        &mut glyphs,
-                        &ctx.draw_state,
-                        ctx.transform.trans(10.0, 4.0 * 24.0),
-                        g,
-                    )
-                    .unwrap();
-
-                let world_revision = if sender.is_some() {
-                    format!(
-                        "World revision: {} (+{})",
-                        world.revision,
-                        world.revision - last_received_world_revision
-                    )
-                } else {
-                    format!("World revision: {}", world.revision)
+                let format_eps = || Some(format!("Events/s: {0:.3}", eps.get()));
+                let format_render =
+                    || Some(format!("Render: {0:.3} ms", render_duration.get() * 1000.0));
+                let format_update =
+                    || Some(format!("Update: {0:.3} ms", update_duration.get() * 1000.0));
+                let format_server = || {
+                    server
+                        .as_ref()
+                        .map(|v| format!("Server: {}:{}", v.address, v.port))
                 };
-                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
-                    .draw(
-                        &world_revision[..],
-                        &mut glyphs,
-                        &ctx.draw_state,
-                        ctx.transform.trans(10.0, 5.0 * 24.0),
-                        g,
-                    )
-                    .unwrap();
-
-                let world_time = if sender.is_some() {
-                    format!(
-                        "World time: {:.3} (+{:.3})",
-                        world.time,
-                        world.time - last_received_world_time
-                    )
-                } else {
-                    format!("World time: {:.3}", world.time)
+                let format_world_revision = || {
+                    Some(if server.is_some() {
+                        format!(
+                            "World revision: {} (+{})",
+                            world.revision,
+                            world.revision - last_received_world_revision
+                        )
+                    } else {
+                        format!("World revision: {}", world.revision)
+                    })
                 };
-                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
-                    .draw(
-                        &world_time[..],
-                        &mut glyphs,
-                        &ctx.draw_state,
-                        ctx.transform.trans(10.0, 6.0 * 24.0),
-                        g,
-                    )
-                    .unwrap();
+                let format_world_time = || {
+                    Some(if server.is_some() {
+                        format!(
+                            "World time: {:.3} (+{:.3})",
+                            world.time,
+                            world.time - last_received_world_time
+                        )
+                    } else {
+                        format!("World time: {:.3}", world.time)
+                    })
+                };
+                let format_player =
+                    || Some(format!("Player: {:?} {:?}", player_id, last_player_index));
+                let format_actors = || Some(format!("Actors: {}", world.actors.len()));
+                let format_dynamic_objects =
+                    || Some(format!("Dynamic objects: {}", world.dynamic_objects.len()));
+                let format_static_objects =
+                    || Some(format!("Static objects: {}", world.static_objects.len()));
+                let format_beams = || Some(format!("Beams: {}", world.beams.len()));
+                let format_static_areas =
+                    || Some(format!("Static areas: {}", world.static_areas.len()));
+                let format_temp_areas = || Some(format!("Temp areas: {}", world.temp_areas.len()));
+                let format_bounded_areas =
+                    || Some(format!("Bounded areas: {}", world.bounded_areas.len()));
+                let format_fields = || Some(format!("Fields: {}", world.fields.len()));
 
-                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
-                    .draw(
-                        &format!("Actors: {}", world.actors.len())[..],
-                        &mut glyphs,
-                        &ctx.draw_state,
-                        ctx.transform.trans(10.0, 7.0 * 24.0),
-                        g,
-                    )
-                    .unwrap();
+                type FormatRef<'a> = &'a dyn Fn() -> Option<String>;
 
-                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
-                    .draw(
-                        &format!("Dynamic objects: {}", world.dynamic_objects.len())[..],
-                        &mut glyphs,
-                        &ctx.draw_state,
-                        ctx.transform.trans(10.0, 8.0 * 24.0),
-                        g,
-                    )
-                    .unwrap();
+                let formats: &[FormatRef] = &[
+                    &format_eps as FormatRef,
+                    &format_render as FormatRef,
+                    &format_update as FormatRef,
+                    &format_server as FormatRef,
+                    &format_world_revision as FormatRef,
+                    &format_world_time as FormatRef,
+                    &format_player as FormatRef,
+                    &format_actors as FormatRef,
+                    &format_dynamic_objects as FormatRef,
+                    &format_static_objects as FormatRef,
+                    &format_beams as FormatRef,
+                    &format_static_areas as FormatRef,
+                    &format_temp_areas as FormatRef,
+                    &format_bounded_areas as FormatRef,
+                    &format_fields as FormatRef,
+                ];
 
-                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
-                    .draw(
-                        &format!("Static objects: {}", world.static_objects.len())[..],
-                        &mut glyphs,
-                        &ctx.draw_state,
-                        ctx.transform.trans(10.0, 9.0 * 24.0),
-                        g,
-                    )
-                    .unwrap();
-
-                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
-                    .draw(
-                        &format!("Beams: {}", world.beams.len())[..],
-                        &mut glyphs,
-                        &ctx.draw_state,
-                        ctx.transform.trans(10.0, 10.0 * 24.0),
-                        g,
-                    )
-                    .unwrap();
-
-                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
-                    .draw(
-                        &format!("Static areas: {}", world.static_areas.len())[..],
-                        &mut glyphs,
-                        &ctx.draw_state,
-                        ctx.transform.trans(10.0, 11.0 * 24.0),
-                        g,
-                    )
-                    .unwrap();
-
-                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
-                    .draw(
-                        &format!("Temp areas: {}", world.temp_areas.len())[..],
-                        &mut glyphs,
-                        &ctx.draw_state,
-                        ctx.transform.trans(10.0, 12.0 * 24.0),
-                        g,
-                    )
-                    .unwrap();
-
-                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
-                    .draw(
-                        &format!("Bounded areas: {}", world.bounded_areas.len())[..],
-                        &mut glyphs,
-                        &ctx.draw_state,
-                        ctx.transform.trans(10.0, 13.0 * 24.0),
-                        g,
-                    )
-                    .unwrap();
-
-                text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
-                    .draw(
-                        &format!("Fields: {}", world.fields.len())[..],
-                        &mut glyphs,
-                        &ctx.draw_state,
-                        ctx.transform.trans(10.0, 14.0 * 24.0),
-                        g,
-                    )
-                    .unwrap();
+                let mut text_counter = 0;
+                for f in formats.iter() {
+                    if let Some(text) = f() {
+                        text_counter += 1;
+                        text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
+                            .draw(
+                                &text[..],
+                                &mut glyphs,
+                                &ctx.draw_state,
+                                ctx.transform.trans(10.0, (4 + text_counter * 24) as f64),
+                                g,
+                            )
+                            .unwrap();
+                    }
+                }
             });
 
             render_duration.add(Instant::now() - start);

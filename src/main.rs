@@ -19,7 +19,7 @@ use crate::client::{
 #[cfg(feature = "render")]
 use crate::engine::get_next_id;
 #[cfg(feature = "render")]
-use crate::game::run_game;
+use crate::game::{run_game, Server};
 #[cfg(feature = "render")]
 use crate::generators::generate_player_actor;
 use crate::generators::generate_world;
@@ -153,7 +153,15 @@ fn run_multi_player(params: MultiPlayerParams) {
                 .unwrap();
         })
     };
-    run_game(World::default(), Some(action_sender), update_receiver);
+    run_game(
+        World::default(),
+        Some(Server {
+            address: params.server_address,
+            port: params.server_port,
+            sender: action_sender,
+        }),
+        update_receiver,
+    );
     stop_game_client.store(true, Ordering::Release);
     game_client.join().unwrap();
     stop_udp_client.store(true, Ordering::Release);
