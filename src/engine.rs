@@ -1161,7 +1161,7 @@ fn add_magick_power_to_effect(now: f64, target: &Effect, other: &[f64; 11]) -> E
             target_power[Element::Water as usize].max(target_power[Element::Water as usize]);
         applied[Element::Ice as usize] = now;
     }
-    Effect { power, applied }
+    Effect { applied, power }
 }
 
 fn get_damage(power: &[f64; 11]) -> f64 {
