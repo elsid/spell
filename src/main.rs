@@ -8,7 +8,8 @@ use std::thread::spawn;
 use std::time::Duration;
 
 use clap::Clap;
-use rand::thread_rng;
+use rand::rngs::SmallRng;
+use rand::SeedableRng;
 use tokio::runtime::Builder;
 
 #[cfg(feature = "render")]
@@ -55,10 +56,17 @@ struct Args {
 #[derive(Clap)]
 enum Command {
     #[cfg(feature = "render")]
-    SinglePlayer,
+    SinglePlayer(SinglePlayerParams),
     #[cfg(feature = "render")]
     MultiPlayer(MultiPlayerParams),
     Server(ServerParams),
+}
+
+#[cfg(feature = "render")]
+#[derive(Clap)]
+struct SinglePlayerParams {
+    #[clap(long)]
+    random_seed: Option<u64>,
 }
 
 #[cfg(feature = "render")]
@@ -87,13 +95,15 @@ struct ServerParams {
     game_session_timeout: f64,
     #[clap(long, default_value = "60")]
     update_frequency: f64,
+    #[clap(long)]
+    random_seed: Option<u64>,
 }
 
 fn main() {
     env_logger::init();
     match Args::parse().command {
         #[cfg(feature = "render")]
-        Command::SinglePlayer => run_single_player(),
+        Command::SinglePlayer(params) => run_single_player(params),
         #[cfg(feature = "render")]
         Command::MultiPlayer(params) => run_multi_player(params),
         Command::Server(params) => run_server(params),
@@ -101,8 +111,8 @@ fn main() {
 }
 
 #[cfg(feature = "render")]
-fn run_single_player() {
-    let mut rng = thread_rng();
+fn run_single_player(params: SinglePlayerParams) {
+    let mut rng = make_rng(params.random_seed);
     let mut world = generate_world(Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)), &mut rng);
     let id = get_next_id(&mut world.id_counter);
     world
@@ -172,7 +182,7 @@ fn run_server(params: ServerParams) {
     let runtime = Builder::new_current_thread().enable_all().build().unwrap();
     let world = generate_world(
         Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)),
-        &mut thread_rng(),
+        &mut make_rng(params.random_seed),
     );
     let (server_sender, server_receiver) = channel();
     let (client_sender, client_receiver) = channel();
@@ -203,4 +213,12 @@ fn run_server(params: ServerParams) {
         .unwrap();
     stop_game_server.store(true, Ordering::Release);
     server.join().unwrap();
+}
+
+fn make_rng(random_seed: Option<u64>) -> SmallRng {
+    if let Some(value) = random_seed {
+        SeedableRng::seed_from_u64(value)
+    } else {
+        SeedableRng::from_entropy()
+    }
 }
