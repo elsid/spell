@@ -1,7 +1,7 @@
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
-use glfw_window::GlfwWindow;
+use glutin_window::GlutinWindow;
 use graphics::{
     ellipse, line, math, polygon, rectangle, text, types, DrawState, Graphics, Polygon, Transformed,
 };
@@ -30,12 +30,12 @@ pub struct Server {
 pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<GameUpdate>) {
     info!("Run game");
     let opengl = OpenGL::V2_1;
-    let mut window: GlfwWindow = WindowSettings::new("spell", [640, 480])
+    let mut window: GlutinWindow = WindowSettings::new("spell", [640, 480])
         .graphics_api(opengl)
         .exit_on_esc(true)
         .build()
         .unwrap();
-    window.window.maximize();
+    window.ctx.window().set_maximized(true);
     let mut gl = GlGraphics::new(opengl);
     let mut engine = Engine::default();
     let mut events = Events::new(EventSettings::new().max_fps(60).ups(60));
@@ -711,12 +711,12 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                 for f in formats.iter() {
                     if let Some(text) = f() {
                         text_counter += 1;
-                        text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
+                        text::Text::new_color([1.0, 1.0, 1.0, 1.0], 14)
                             .draw(
                                 &text[..],
                                 &mut glyphs,
                                 &ctx.draw_state,
-                                ctx.transform.trans(10.0, (4 + text_counter * 24) as f64),
+                                ctx.transform.trans(10.0, (4 + text_counter * 18) as f64),
                                 g,
                             )
                             .unwrap();
