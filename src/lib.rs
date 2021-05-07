@@ -158,7 +158,7 @@ pub fn run_multi_player(params: MultiPlayerParams) {
     info!("Exit multiplayer");
 }
 
-pub fn run_server(params: ServerParams) {
+pub fn run_server(params: ServerParams, stop: Arc<AtomicBool>) {
     info!("Run server: {:?}", params);
     let runtime = Builder::new_current_thread().enable_all().build().unwrap();
     let world = generate_world(
@@ -189,7 +189,7 @@ pub fn run_server(params: ServerParams) {
             settings,
             client_sender,
             server_receiver,
-            Arc::new(AtomicBool::new(false)),
+            stop,
         ))
         .unwrap();
     info!("Stopping game server...");
