@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::rect::Rectf;
 use crate::vec2::Vec2f;
 
-#[derive(Default, Debug, Clone, Deserialize, Serialize)]
+#[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct World {
     pub revision: u64,
     pub settings: WorldSettings,
@@ -20,7 +20,7 @@ pub struct World {
     pub fields: Vec<Field>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct WorldSettings {
     pub max_magic_power: f64,
     pub decay_factor: f64,
@@ -67,7 +67,7 @@ impl Default for WorldSettings {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Actor {
     pub id: u64,
     pub active: bool,
@@ -87,7 +87,7 @@ pub struct Actor {
     pub velocity_z: f64,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct DynamicObject {
     pub id: u64,
     pub body: Body<Disk>,
@@ -101,7 +101,7 @@ pub struct DynamicObject {
     pub velocity_z: f64,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct StaticObject {
     pub id: u64,
     pub body: Body<StaticShape>,
@@ -111,7 +111,7 @@ pub struct StaticObject {
     pub aura: Aura,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Beam {
     pub id: u64,
     pub actor_id: u64,
@@ -119,7 +119,7 @@ pub struct Beam {
     pub deadline: f64,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct StaticArea {
     pub id: u64,
     pub body: Body<Disk>,
@@ -127,7 +127,7 @@ pub struct StaticArea {
     pub magick: Magick,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct TempArea {
     pub id: u64,
     pub body: Body<Disk>,
@@ -135,7 +135,7 @@ pub struct TempArea {
     pub effect: Effect,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct BoundedArea {
     pub id: u64,
     pub actor_id: u64,
@@ -144,7 +144,7 @@ pub struct BoundedArea {
     pub deadline: f64,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Field {
     pub id: u64,
     pub actor_id: u64,
@@ -153,19 +153,19 @@ pub struct Field {
     pub deadline: f64,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Body<Shape> {
     pub shape: Shape,
     pub material: Material,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub enum StaticShape {
     CircleArc(CircleArc),
     Disk(Disk),
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Disk {
     pub radius: f64,
 }
@@ -177,25 +177,25 @@ pub struct CircleArc {
     pub rotation: f64,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct RingSector {
     pub min_radius: f64,
     pub max_radius: f64,
     pub angle: f64,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
 pub struct Magick {
     pub power: [f64; 11],
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
 pub struct Effect {
     pub applied: [f64; 11],
     pub power: [f64; 11],
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
 pub struct Aura {
     pub applied: f64,
     pub power: f64,
@@ -203,7 +203,7 @@ pub struct Aura {
     pub elements: [bool; 11],
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct DelayedMagick {
     pub actor_id: u64,
     pub started: f64,

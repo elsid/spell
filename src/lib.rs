@@ -2,13 +2,9 @@
 extern crate log;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::channel;
-#[cfg(feature = "render")]
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
-use std::thread::spawn;
-#[cfg(feature = "render")]
-use std::thread::JoinHandle;
+use std::thread::{spawn, JoinHandle};
 use std::time::Duration;
 
 use clap::Clap;
@@ -16,7 +12,6 @@ use rand::rngs::SmallRng;
 use rand::SeedableRng;
 use tokio::runtime::Builder;
 
-#[cfg(feature = "render")]
 use crate::client::{
     run_game_client, run_udp_client, GameChannel, GameClientSettings, ServerChannel,
     UdpClientSettings,
@@ -28,7 +23,6 @@ use crate::game::{run_game, Server};
 #[cfg(feature = "render")]
 use crate::generators::generate_player_actor;
 use crate::generators::generate_world;
-#[cfg(feature = "render")]
 use crate::protocol::{ClientMessage, GameUpdate, PlayerAction, ServerMessage};
 use crate::rect::Rectf;
 use crate::server::{run_game_server, run_udp_server, GameServerSettings, UdpServerSettings};
@@ -36,8 +30,7 @@ use crate::vec2::Vec2f;
 #[cfg(feature = "render")]
 use crate::world::World;
 
-#[cfg(feature = "render")]
-mod client;
+pub mod client;
 mod control;
 mod engine;
 #[cfg(feature = "render")]
@@ -45,7 +38,7 @@ mod game;
 mod generators;
 #[cfg(feature = "render")]
 mod meters;
-mod protocol;
+pub mod protocol;
 mod rect;
 mod server;
 mod vec2;
@@ -133,7 +126,6 @@ pub fn run_multi_player(params: MultiPlayerParams) {
     info!("Exit multiplayer");
 }
 
-#[cfg(feature = "render")]
 pub fn with_background_client<F>(
     game_client_settings: GameClientSettings,
     udp_client_settings: UdpClientSettings,
@@ -147,7 +139,6 @@ pub fn with_background_client<F>(
     with_background_udp_client(udp_client_settings, w);
 }
 
-#[cfg(feature = "render")]
 pub fn with_background_game_client<F>(
     settings: GameClientSettings,
     client_sender: Sender<ClientMessage>,
@@ -173,7 +164,6 @@ pub fn with_background_game_client<F>(
     game_client.join().unwrap();
 }
 
-#[cfg(feature = "render")]
 pub fn with_background_udp_client<F>(settings: UdpClientSettings, f: F)
 where
     F: FnOnce(Sender<ClientMessage>, Receiver<ServerMessage>),
@@ -189,7 +179,6 @@ where
     udp_client.join().unwrap();
 }
 
-#[cfg(feature = "render")]
 pub fn run_background_game_client(
     settings: GameClientSettings,
     update_sender: Sender<GameUpdate>,
@@ -209,7 +198,6 @@ pub fn run_background_game_client(
     spawn(move || run_game_client(settings, server_channel, game_channel, stop))
 }
 
-#[cfg(feature = "render")]
 pub fn run_background_udp_client(
     settings: UdpClientSettings,
     server_sender: Sender<ServerMessage>,

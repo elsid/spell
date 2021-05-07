@@ -22,7 +22,7 @@ pub struct ClientMessage {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub enum ServerMessageData {
     NewPlayer {
         update_period: Duration,
@@ -41,7 +41,7 @@ pub enum ClientMessageData {
 }
 
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub enum GameUpdate {
     SetPlayerId(u64),
     World(World),

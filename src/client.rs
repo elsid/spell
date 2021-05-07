@@ -13,7 +13,7 @@ use crate::protocol::{
     ServerMessage, ServerMessageData, HEARTBEAT_PERIOD,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UdpClientSettings {
     pub id: u64,
     pub server_address: String,
@@ -151,7 +151,7 @@ async fn send_with_retries(
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GameClientSettings {
     pub id: u64,
     pub connect_timeout: Duration,

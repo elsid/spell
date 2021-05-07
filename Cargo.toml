@@ -21,6 +21,9 @@ lz4_flex = "0.7.5"
 nalgebra = "0.26.2"
 ctrlc = "3.1.9"
 
+[dev-dependencies]
+portpicker = "0.1.0"
+
 [features]
 default = []
 render = ["piston", "piston2d-graphics", "pistoncore-glfw_window", "piston2d-opengl_graphics"]
