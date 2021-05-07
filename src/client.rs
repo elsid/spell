@@ -2,7 +2,7 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
-use std::thread::spawn;
+use std::thread::{sleep, spawn};
 use std::time::{Duration, Instant};
 
 use lz4_flex::decompress_size_prepended;
@@ -107,6 +107,7 @@ async fn send_with_retries(
 #[derive(Debug)]
 pub struct GameClientSettings {
     pub connect_timeout: Duration,
+    pub retry_period: Duration,
 }
 
 pub struct GameChannel {
@@ -128,36 +129,54 @@ pub fn run_game_client(
     info!("Run game client");
     let mut client_message_number = 0;
     let mut server_message_number = 0;
+    let now = Instant::now();
+    let connect_deadline = now + settings.connect_timeout;
+    let mut last_send = now - settings.retry_period;
     let session_id = loop {
+        if Instant::now() >= connect_deadline {
+            info!("Game client has timed out to connect to server.");
+            return;
+        }
         if stop.load(Ordering::Acquire) {
             return;
         }
-        info!("Game client is trying to join server...");
-        server
-            .sender
-            .send(ClientMessage {
-                number: client_message_number,
-                session_id: 0,
-                data: ClientMessageData::Join,
-            })
-            .ok();
+        let since_last_send = Instant::now() - last_send;
+        if since_last_send < settings.retry_period {
+            sleep(settings.retry_period - since_last_send);
+        }
+        if stop.load(Ordering::Acquire) {
+            return;
+        }
+        debug!("Game client is trying to join server...");
+        if let Err(e) = server.sender.send(ClientMessage {
+            number: client_message_number,
+            session_id: 0,
+            data: ClientMessageData::Join,
+        }) {
+            debug!("Game client has failed to send join message: {}", e);
+        }
+        last_send = Instant::now();
         client_message_number += 1;
-        if let Ok(message) = server.receiver.recv_timeout(settings.connect_timeout) {
-            if message.number <= server_message_number {
-                continue;
-            }
-            server_message_number = message.number;
-            match message.data {
-                ServerMessageData::Settings { .. } => break message.session_id,
-                ServerMessageData::Error(err) => {
-                    error!("Join to server error: {}", err);
-                    return;
+        debug!("Game client is waiting for server response...");
+        match server.receiver.recv_timeout(settings.retry_period) {
+            Ok(message) => {
+                if message.number <= server_message_number {
+                    continue;
                 }
-                v => warn!(
-                    "Game client has received invalid server response type: {}",
-                    get_server_message_data_type(&v)
-                ),
+                server_message_number = message.number;
+                match message.data {
+                    ServerMessageData::Settings { .. } => break message.session_id,
+                    ServerMessageData::Error(err) => {
+                        error!("Join to server error: {}", err);
+                        return;
+                    }
+                    v => warn!(
+                        "Game client has received invalid server response type: {}",
+                        get_server_message_data_type(&v)
+                    ),
+                }
             }
+            Err(e) => debug!("Game client has failed to receive message: {}", e),
         }
     };
     info!("Joined to server with session {}", session_id);

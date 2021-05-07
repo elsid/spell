@@ -62,6 +62,8 @@ pub struct MultiPlayerParams {
     pub server_port: u16,
     #[clap(long, default_value = "3")]
     pub connect_timeout: f64,
+    #[clap(long, default_value = "0.25")]
+    pub retry_period: f64,
 }
 
 #[derive(Clap, Debug)]
@@ -110,6 +112,7 @@ pub fn run_multi_player(params: MultiPlayerParams) {
     let game_client = {
         let settings = GameClientSettings {
             connect_timeout: Duration::from_secs_f64(params.connect_timeout),
+            retry_period: Duration::from_secs_f64(params.retry_period),
         };
         let game_channel = GameChannel {
             sender: update_sender,
