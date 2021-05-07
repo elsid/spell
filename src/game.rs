@@ -30,11 +30,12 @@ pub struct Server {
 pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<GameUpdate>) {
     info!("Run game");
     let opengl = OpenGL::V2_1;
-    let mut window: GlfwWindow = WindowSettings::new("spell", [1920, 1080])
+    let mut window: GlfwWindow = WindowSettings::new("spell", [640, 480])
         .graphics_api(opengl)
         .exit_on_esc(true)
         .build()
         .unwrap();
+    window.window.maximize();
     let mut gl = GlGraphics::new(opengl);
     let mut engine = Engine::default();
     let mut events = Events::new(EventSettings::new().max_fps(60).ups(60));
