@@ -43,7 +43,10 @@ pub async fn run_udp_client(
     while !stop.load(Ordering::Acquire) {
         while let Ok(client_message) = receiver.try_recv() {
             let buffer = bincode::serialize(&client_message).unwrap();
-            socket.send(&buffer).await?;
+            if let Err(e) = send_with_retries(&socket, &buffer, 3).await {
+                error!("UDP client has failed to send message to server: {:?}", e);
+                return Err(e);
+            }
         }
         let now = Instant::now();
         let recv_timeout = if now - last_update < update_period {
@@ -80,6 +83,25 @@ pub async fn run_udp_client(
     }
     info!("UDP client has stopped");
     Ok(())
+}
+
+async fn send_with_retries(
+    socket: &UdpSocket,
+    buffer: &[u8],
+    max_retries: usize,
+) -> std::io::Result<usize> {
+    let mut retries: usize = 0;
+    loop {
+        match socket.send(&buffer).await {
+            Err(e) => {
+                if retries >= max_retries {
+                    break Err(e);
+                }
+                retries += 1;
+            }
+            v => break v,
+        }
+    }
 }
 
 #[derive(Debug)]
