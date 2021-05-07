@@ -20,6 +20,9 @@ use crate::protocol::{
 };
 use crate::world::World;
 
+const MAX_SESSION_MESSAGES_PER_FRAME: u8 = 3;
+const MAX_DELAYED_MESSAGES_PER_SESSION: usize = 10;
+
 #[derive(Debug)]
 pub struct UdpServerSettings {
     pub address: String,
@@ -245,75 +248,23 @@ pub fn run_game_server(
     let mut sessions: Vec<GameSession> = Vec::new();
     let mut rng = StdRng::from_entropy();
     let mut engine = Engine::default();
-    let mut messages_per_frame: usize = 0;
     while !stop.load(Ordering::Acquire) {
-        for session in sessions.iter_mut() {
-            session.messages_per_frame = 0;
-            while let Some(message) = session.delayed_messages.pop_front() {
-                handle_existing_session(message, session, &mut world);
-                session.messages_per_frame += 1;
-                if session.messages_per_frame > 3 {
-                    break;
-                }
-            }
-            if settings.session_timeout <= Instant::now() - session.last_message_time {
-                warn!("Game session {} is timed out", session.session_id);
-                session.active = false;
-                sender
-                    .send(ServerMessage {
-                        session_id: session.session_id,
-                        number: 0,
-                        data: ServerMessageData::Error(String::from("Session is timed out")),
-                    })
-                    .ok();
-            }
-        }
-        while let Ok(message) = receiver.try_recv() {
-            if let Some(session) = sessions
-                .iter_mut()
-                .find(|v| v.session_id == message.session_id)
-            {
-                handle_existing_session(message, session, &mut world);
-            } else if sessions.len() < settings.max_players {
-                if let Some(session) = create_new_session(
-                    settings.update_period,
-                    &sender,
-                    message,
-                    &sessions,
-                    &mut world,
-                    &mut rng,
-                ) {
-                    info!(
-                        "New player has joined: session_id={} actor_id={}",
-                        session.session_id, session.actor_id
-                    );
-                    sessions.push(session);
-                }
-            } else {
-                warn!(
-                    "Rejected new player, server players: {}/{}",
-                    sessions.len(),
-                    settings.max_players
-                );
-                sender
-                    .send(ServerMessage {
-                        number: 0,
-                        session_id: 0,
-                        data: ServerMessageData::Error(String::from("Server is full")),
-                    })
-                    .ok();
-            }
-            messages_per_frame += 1;
-            if messages_per_frame > sessions.len() + settings.max_players {
-                break;
-            }
-        }
+        handle_delayed_messages(&mut sessions, &mut world);
+        handle_new_messages(
+            &settings,
+            &sender,
+            &receiver,
+            &mut sessions,
+            &mut rng,
+            &mut world,
+        );
+        close_timed_outed_sessions(settings.session_timeout, &sender, &mut sessions);
+        handle_dropped_messages(&mut sessions);
         engine.update(time_step, &mut world);
         sessions.retain(|v| v.active);
         for session in sessions.iter_mut() {
             session.actor_index = world.actors.iter().position(|v| v.id == session.actor_id);
         }
-        messages_per_frame = 0;
         sender
             .send(ServerMessage {
                 session_id: 0,
@@ -335,17 +286,131 @@ struct GameSession {
     last_message_time: Instant,
     last_message_number: u64,
     messages_per_frame: u8,
+    dropped_messages: usize,
     delayed_messages: VecDeque<ClientMessage>,
 }
 
-fn handle_existing_session(message: ClientMessage, session: &mut GameSession, world: &mut World) {
+fn handle_delayed_messages(sessions: &mut [GameSession], world: &mut World) {
+    for session in sessions.iter_mut() {
+        session.messages_per_frame = 0;
+        handle_delayed_session_messages(session, world);
+    }
+}
+
+fn close_timed_outed_sessions(
+    session_timeout: Duration,
+    sender: &Sender<ServerMessage>,
+    sessions: &mut [GameSession],
+) {
+    for session in sessions.iter_mut() {
+        if session_timeout <= Instant::now() - session.last_message_time {
+            warn!("Game session {} is timed out", session.session_id);
+            session.active = false;
+            sender
+                .send(ServerMessage {
+                    session_id: session.session_id,
+                    number: 0,
+                    data: ServerMessageData::Error(String::from("Session is timed out")),
+                })
+                .ok();
+        }
+    }
+}
+
+fn handle_delayed_session_messages(session: &mut GameSession, world: &mut World) {
+    while session.messages_per_frame < MAX_SESSION_MESSAGES_PER_FRAME {
+        if let Some(message) = session.delayed_messages.pop_front() {
+            if !handle_delayed_session_message(message, session, world) {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+}
+
+fn handle_delayed_session_message(
+    message: ClientMessage,
+    session: &mut GameSession,
+    world: &mut World,
+) -> bool {
+    if message.number <= session.last_message_number {
+        return false;
+    }
+    handle_session_message(message, session, world);
+    true
+}
+
+fn handle_new_messages<R: Rng + CryptoRng>(
+    settings: &GameServerSettings,
+    sender: &Sender<ServerMessage>,
+    receiver: &Receiver<ClientMessage>,
+    sessions: &mut Vec<GameSession>,
+    rng: &mut R,
+    world: &mut World,
+) {
+    let mut messages_per_frame: usize = 0;
+    while let Ok(message) = receiver.try_recv() {
+        if let Some(session) = sessions
+            .iter_mut()
+            .find(|v| v.session_id == message.session_id)
+        {
+            handle_new_session_message(message, session, world);
+        } else if sessions.len() < settings.max_players {
+            if let Some(session) = create_new_session(
+                settings.update_period,
+                sender,
+                message,
+                &sessions,
+                world,
+                rng,
+            ) {
+                info!(
+                    "New player has joined: session_id={} actor_id={}",
+                    session.session_id, session.actor_id
+                );
+                sessions.push(session);
+            }
+        } else {
+            warn!(
+                "Rejected new player, server players: {}/{}",
+                sessions.len(),
+                settings.max_players
+            );
+            sender
+                .send(ServerMessage {
+                    number: 0,
+                    session_id: 0,
+                    data: ServerMessageData::Error(String::from("Server is full")),
+                })
+                .ok();
+        }
+        messages_per_frame += 1;
+        if messages_per_frame > sessions.len() + settings.max_players {
+            break;
+        }
+    }
+}
+
+fn handle_new_session_message(
+    message: ClientMessage,
+    session: &mut GameSession,
+    world: &mut World,
+) {
     if message.number <= session.last_message_number {
         return;
     }
-    if session.messages_per_frame > 3 {
-        session.delayed_messages.push_back(message);
+    if session.messages_per_frame < MAX_SESSION_MESSAGES_PER_FRAME {
+        return handle_session_message(message, session, world);
+    }
+    if session.delayed_messages.len() >= MAX_DELAYED_MESSAGES_PER_SESSION {
+        session.dropped_messages += 1;
         return;
     }
+    session.delayed_messages.push_back(message);
+}
+
+fn handle_session_message(message: ClientMessage, session: &mut GameSession, world: &mut World) {
     session.last_message_time = Instant::now();
     session.last_message_number = message.number;
     session.messages_per_frame += 1;
@@ -363,7 +428,7 @@ fn handle_existing_session(message: ClientMessage, session: &mut GameSession, wo
                 apply_player_action(&player_action, actor_index, world);
             } else {
                 warn!(
-                    "Player actor is not found for session: {}",
+                    "Player actor is not found for game session: {}",
                     session.session_id
                 );
             }
@@ -373,6 +438,18 @@ fn handle_existing_session(message: ClientMessage, session: &mut GameSession, wo
             session.session_id,
             get_client_message_data_type(&v),
         ),
+    }
+}
+
+fn handle_dropped_messages(sessions: &mut [GameSession]) {
+    for session in sessions.iter_mut() {
+        if session.dropped_messages > 0 {
+            warn!(
+                "Dropped {} messages for game session {}",
+                session.dropped_messages, session.session_id
+            );
+            session.dropped_messages = 0;
+        }
     }
 }
 
@@ -419,7 +496,8 @@ fn create_new_session<R: CryptoRng + Rng>(
                 last_message_time: Instant::now(),
                 last_message_number: message.number,
                 messages_per_frame: 1,
-                delayed_messages: VecDeque::new(),
+                delayed_messages: VecDeque::with_capacity(MAX_DELAYED_MESSAGES_PER_SESSION),
+                dropped_messages: 0,
             })
         }
         ClientMessageData::Quit => None,
