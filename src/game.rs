@@ -729,6 +729,7 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
 
         eps.add(Instant::now());
     }
+    info!("Game has stopped");
 }
 
 fn with_disk_body_and_magick<F>(

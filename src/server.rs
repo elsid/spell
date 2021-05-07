@@ -15,7 +15,8 @@ use crate::control::apply_player_action;
 use crate::engine::{get_next_id, remove_actor, Engine};
 use crate::generators::generate_player_actor;
 use crate::protocol::{
-    ClientMessage, ClientMessageData, GameUpdate, ServerMessage, ServerMessageData,
+    get_client_message_data_type, ClientMessage, ClientMessageData, GameUpdate, ServerMessage,
+    ServerMessageData,
 };
 use crate::world::World;
 
@@ -47,6 +48,7 @@ pub async fn run_udp_server(
     }
     .run()
     .await;
+    info!("UDP server has stopped");
     Ok(())
 }
 
@@ -77,7 +79,10 @@ enum UdpSessionState {
 
 impl UdpServer {
     async fn run(&mut self) {
-        info!("Listening on {}", self.socket.local_addr().unwrap());
+        info!(
+            "UDP server is listening on {}",
+            self.socket.local_addr().unwrap()
+        );
         let mut last_update = Instant::now();
         while !self.stop.load(Ordering::Acquire) {
             self.clean_udp_sessions();
@@ -184,13 +189,19 @@ impl UdpServer {
                             break session_id;
                         }
                     } else {
+                        warn!(
+                            "Ignore new session from {}, sessions: {}/{}",
+                            peer,
+                            self.sessions.len(),
+                            self.settings.max_sessions
+                        );
                         continue;
                     };
                 let mut client_message: ClientMessage =
                     match bincode::deserialize(&self.recv_buffer[0..size]) {
                         Ok(v) => v,
                         Err(e) => {
-                            warn!("Failed to deserialize client message: {}", e);
+                            debug!("Failed to deserialize client message: {}", e);
                             continue;
                         }
                     };
@@ -312,6 +323,7 @@ pub fn run_game_server(
             .ok();
         frame_rate_limiter.limit(Instant::now());
     }
+    info!("Game server has stopped");
 }
 
 #[derive(Debug)]
@@ -356,7 +368,11 @@ fn handle_existing_session(message: ClientMessage, session: &mut GameSession, wo
                 );
             }
         }
-        v => warn!("Existing session invalid message data: {:?}", v),
+        v => warn!(
+            "Existing session {} invalid message data: {}",
+            session.session_id,
+            get_client_message_data_type(&v),
+        ),
     }
 }
 
@@ -408,7 +424,10 @@ fn create_new_session<R: CryptoRng + Rng>(
         }
         ClientMessageData::Quit => None,
         v => {
-            warn!("New session invalid message data: {:?}", v);
+            warn!(
+                "New session invalid message type: {}",
+                get_client_message_data_type(&v)
+            );
             None
         }
     }

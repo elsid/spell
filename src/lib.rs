@@ -48,14 +48,14 @@ mod vec2;
 mod world;
 
 #[cfg(feature = "render")]
-#[derive(Clap)]
+#[derive(Clap, Debug)]
 pub struct SinglePlayerParams {
     #[clap(long)]
     pub random_seed: Option<u64>,
 }
 
 #[cfg(feature = "render")]
-#[derive(Clap)]
+#[derive(Clap, Debug)]
 pub struct MultiPlayerParams {
     pub server_address: String,
     #[clap(long, default_value = "21227")]
@@ -64,7 +64,7 @@ pub struct MultiPlayerParams {
     pub connect_timeout: f64,
 }
 
-#[derive(Clap)]
+#[derive(Clap, Debug)]
 pub struct ServerParams {
     #[clap(long, default_value = "127.0.0.1")]
     pub address: String,
@@ -86,6 +86,7 @@ pub struct ServerParams {
 
 #[cfg(feature = "render")]
 pub fn run_single_player(params: SinglePlayerParams) {
+    info!("Run single player: {:?}", params);
     let mut rng = make_rng(params.random_seed);
     let mut world = generate_world(Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)), &mut rng);
     let id = get_next_id(&mut world.id_counter);
@@ -95,10 +96,12 @@ pub fn run_single_player(params: SinglePlayerParams) {
     let (sender, receiver) = channel();
     sender.send(GameUpdate::SetPlayerId(id)).unwrap();
     run_game(world, None, receiver);
+    info!("Exit single player");
 }
 
 #[cfg(feature = "render")]
 pub fn run_multi_player(params: MultiPlayerParams) {
+    info!("Run multiplayer: {:?}", params);
     let (update_sender, update_receiver) = channel();
     let (action_sender, action_receiver) = channel();
     let (server_sender, server_receiver) = channel();
@@ -146,13 +149,17 @@ pub fn run_multi_player(params: MultiPlayerParams) {
         }),
         update_receiver,
     );
+    info!("Stopping game client...");
     stop_game_client.store(true, Ordering::Release);
     game_client.join().unwrap();
+    info!("Stopping UDP client...");
     stop_udp_client.store(true, Ordering::Release);
     udp_server.join().unwrap();
+    info!("Exit multiplayer");
 }
 
 pub fn run_server(params: ServerParams) {
+    info!("Run server: {:?}", params);
     let runtime = Builder::new_current_thread().enable_all().build().unwrap();
     let world = generate_world(
         Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)),
@@ -185,8 +192,10 @@ pub fn run_server(params: ServerParams) {
             Arc::new(AtomicBool::new(false)),
         ))
         .unwrap();
+    info!("Stopping game server...");
     stop_game_server.store(true, Ordering::Release);
     server.join().unwrap();
+    info!("Exit server");
 }
 
 fn make_rng(random_seed: Option<u64>) -> SmallRng {

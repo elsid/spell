@@ -9,7 +9,8 @@ use lz4_flex::decompress_size_prepended;
 use tokio::net::UdpSocket;
 
 use crate::protocol::{
-    ClientMessage, ClientMessageData, GameUpdate, PlayerAction, ServerMessage, ServerMessageData,
+    get_server_message_data_type, ClientMessage, ClientMessageData, GameUpdate, PlayerAction,
+    ServerMessage, ServerMessageData,
 };
 
 #[derive(Debug)]
@@ -30,9 +31,12 @@ pub async fn run_udp_client(
         SocketAddr::V6(..) => SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)),
     };
     let socket = UdpSocket::bind(local_address).await?;
-    info!("Listening on {}", socket.local_addr().unwrap());
+    info!(
+        "UDP client is listening on {}",
+        socket.local_addr().unwrap()
+    );
     socket.connect(server_address).await?;
-    info!("Connected to {}", server_address);
+    info!("UDP client is connected to {}", server_address);
     let mut recv_buffer = vec![0u8; 65_507];
     let mut last_update = Instant::now();
     let mut update_period = Duration::from_secs_f64(1.0);
@@ -68,12 +72,13 @@ pub async fn run_udp_client(
                 update_period = *v;
             }
             if let Err(e) = sender.send(server_message) {
-                error!("UDP client has failed to send a message: {}", e);
+                debug!("UDP client has failed to send a message: {}", e);
                 break;
             }
         }
         last_update = Instant::now();
     }
+    info!("UDP client has stopped");
     Ok(())
 }
 
@@ -98,13 +103,14 @@ pub fn run_game_client(
     game: GameChannel,
     stop: Arc<AtomicBool>,
 ) {
-    info!("Run UDP client");
+    info!("Run game client");
     let mut client_message_number = 0;
     let mut server_message_number = 0;
     let session_id = loop {
         if stop.load(Ordering::Acquire) {
             return;
         }
+        info!("Game client is trying to join server...");
         server
             .sender
             .send(ClientMessage {
@@ -125,7 +131,10 @@ pub fn run_game_client(
                     error!("Join to server error: {}", err);
                     return;
                 }
-                v => warn!("Invalid server response: {:?}", v),
+                v => warn!(
+                    "Game client has received invalid server response type: {}",
+                    get_server_message_data_type(&v)
+                ),
             }
         }
     };
@@ -154,6 +163,7 @@ pub fn run_game_client(
         stop,
     );
     sender.join().unwrap();
+    info!("Game client has stopped for session {}", session_id);
 }
 
 fn run_server_sender(
@@ -162,7 +172,7 @@ fn run_server_sender(
     sender: Sender<ClientMessage>,
     receiver: Receiver<PlayerAction>,
 ) {
-    info!("Run client sender for session {}", session_id);
+    info!("Run server sender for session {}", session_id);
     while let Ok(player_action) = receiver.recv() {
         sender
             .send(ClientMessage {
@@ -173,13 +183,21 @@ fn run_server_sender(
             .ok();
         message_number += 1;
     }
-    sender
-        .send(ClientMessage {
-            session_id,
-            number: message_number,
-            data: ClientMessageData::Quit,
-        })
-        .ok();
+    debug!(
+        "Server sender is sending quit for session {}...",
+        session_id
+    );
+    if let Err(e) = sender.send(ClientMessage {
+        session_id,
+        number: message_number,
+        data: ClientMessageData::Quit,
+    }) {
+        warn!(
+            "Server sender has failed to send quit for session {}: {}",
+            session_id, e
+        );
+    }
+    info!("Server sender has stopped for session {}", session_id);
 }
 
 fn run_server_receiver(
@@ -189,7 +207,7 @@ fn run_server_receiver(
     receiver: Receiver<ServerMessage>,
     stop: Arc<AtomicBool>,
 ) {
-    info!("Run client receiver for session {}", session_id);
+    info!("Run server receiver for session {}", session_id);
     while !stop.load(Ordering::Acquire) {
         match receiver.recv() {
             Ok(message) => {
@@ -202,17 +220,28 @@ fn run_server_receiver(
                 message_number = message.number;
                 match message.data {
                     ServerMessageData::Settings { .. } => (),
-                    ServerMessageData::Error(error) => warn!("Server error: {}", error),
+                    ServerMessageData::Error(error) => {
+                        warn!("Server error for session {}: {}", session_id, error);
+                    }
                     ServerMessageData::GameUpdate(update) => match sender.send(update) {
                         Ok(..) => (),
-                        Err(..) => break,
+                        Err(e) => {
+                            debug!(
+                                "Server receiver has failed to send a message for session {}: {}",
+                                session_id, e
+                            );
+                        }
                     },
                 }
             }
             Err(e) => {
-                error!("Game client has failed to receive a message: {}", e);
+                debug!(
+                    "Server receiver has failed to receive a message for session {}: {}",
+                    session_id, e
+                );
                 break;
             }
         }
     }
+    info!("Server receiver has stopped for session {}", session_id);
 }

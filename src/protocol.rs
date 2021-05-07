@@ -52,3 +52,19 @@ pub enum PlayerAction {
     SelfMagick,
     StartAreaOfEffectMagick,
 }
+
+pub fn get_server_message_data_type(value: &ServerMessageData) -> &'static str {
+    match value {
+        ServerMessageData::Settings { .. } => "Settings",
+        ServerMessageData::Error(..) => "Error",
+        ServerMessageData::GameUpdate(..) => "GameUpdate",
+    }
+}
+
+pub fn get_client_message_data_type(value: &ClientMessageData) -> &'static str {
+    match value {
+        ClientMessageData::Join => "Join",
+        ClientMessageData::Quit => "Quit",
+        ClientMessageData::PlayerAction(..) => "PlayerAction",
+    }
+}
