@@ -238,22 +238,16 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
             if let Some(player_index) = last_player_index {
                 let target_direction = (last_mouse_pos - last_viewport_shift) / scale;
                 let norm = target_direction.norm();
-                if norm <= f64::EPSILON {
-                    send_or_apply_player_action(
-                        sender,
-                        PlayerAction::SetTargetDirection(
-                            world.actors[player_index].current_direction,
-                        ),
-                        player_index,
-                        &mut world,
-                    );
-                } else {
-                    send_or_apply_player_action(
-                        sender,
-                        PlayerAction::SetTargetDirection(target_direction / norm),
-                        player_index,
-                        &mut world,
-                    );
+                if norm > f64::EPSILON {
+                    let direction = target_direction / norm;
+                    if direction != world.actors[player_index].target_direction {
+                        send_or_apply_player_action(
+                            sender,
+                            PlayerAction::SetTargetDirection(direction),
+                            player_index,
+                            &mut world,
+                        );
+                    }
                 }
             }
             if sender.is_some() {
