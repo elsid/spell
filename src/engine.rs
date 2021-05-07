@@ -1963,13 +1963,13 @@ mod tests {
         assert!(
             distance(
                 &polyline.vertices().first().unwrap(),
-                &Point2::new(SQRT_2, -SQRT_2)
+                &Point2::new(SQRT_2, -SQRT_2),
             ) <= f64::EPSILON
         );
         assert!(
             distance(
                 &polyline.vertices().last().unwrap(),
-                &Point2::new(SQRT_2, SQRT_2)
+                &Point2::new(SQRT_2, SQRT_2),
             ) <= f64::EPSILON
         );
     }
