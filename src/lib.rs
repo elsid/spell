@@ -126,7 +126,7 @@ pub fn run_multi_player(params: MultiPlayerParams) {
         server_address: format!("{}:{}", params.server_address, params.server_port),
     };
     let stop_udp_client = Arc::new(AtomicBool::new(false));
-    let udp_server = {
+    let udp_client = {
         let stop = stop_udp_client.clone();
         spawn(move || {
             let runtime = Builder::new_current_thread().enable_all().build().unwrap();
@@ -154,7 +154,7 @@ pub fn run_multi_player(params: MultiPlayerParams) {
     game_client.join().unwrap();
     info!("Stopping UDP client...");
     stop_udp_client.store(true, Ordering::Release);
-    udp_server.join().unwrap();
+    udp_client.join().unwrap();
     info!("Exit multiplayer");
 }
 
