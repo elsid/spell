@@ -15,8 +15,8 @@ use crate::control::apply_player_action;
 use crate::engine::{get_next_id, remove_actor, Engine};
 use crate::generators::generate_player_actor;
 use crate::protocol::{
-    get_client_message_data_type, ClientMessage, ClientMessageData, GameUpdate, ServerMessage,
-    ServerMessageData,
+    get_client_message_data_type, ClientMessage, ClientMessageData, GameUpdate, PlayerAction,
+    ServerMessage, ServerMessageData,
 };
 use crate::world::World;
 
@@ -423,8 +423,9 @@ fn handle_session_message(message: ClientMessage, session: &mut GameSession, wor
             session.active = false;
             info!("Game session {} is done", session.session_id);
         }
-        ClientMessageData::PlayerAction(player_action) => {
+        ClientMessageData::PlayerAction(mut player_action) => {
             if let Some(actor_index) = session.actor_index {
+                sanitize_player_action(&mut player_action, actor_index, world);
                 apply_player_action(&player_action, actor_index, world);
             } else {
                 warn!(
@@ -541,4 +542,19 @@ fn add_player_actor<R: Rng>(world: &mut World, rng: &mut R) -> u64 {
         .actors
         .push(generate_player_actor(actor_id, &world.bounds, rng));
     actor_id
+}
+
+fn sanitize_player_action(player_action: &mut PlayerAction, actor_index: usize, world: &mut World) {
+    #[allow(clippy::single_match)]
+    match player_action {
+        PlayerAction::SetTargetDirection(target_direction) => {
+            let norm = target_direction.norm();
+            if norm > f64::EPSILON {
+                *target_direction /= norm;
+            } else {
+                *target_direction = world.actors[actor_index].target_direction;
+            }
+        }
+        _ => (),
+    }
 }
