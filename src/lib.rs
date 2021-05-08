@@ -163,6 +163,12 @@ pub fn run_multi_player(params: MultiPlayerParams) {
 
 pub fn run_server(params: ServerParams, stop: Arc<AtomicBool>) {
     info!("Run server: {:?}", params);
+    if params.udp_session_timeout < params.game_session_timeout {
+        warn!(
+            "UDP server session timeout {:?} is less than game session timeout {:?}",
+            params.udp_session_timeout, params.game_session_timeout
+        );
+    }
     let runtime = Builder::new_current_thread().enable_all().build().unwrap();
     let world = generate_world(
         Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)),

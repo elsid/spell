@@ -1,6 +1,6 @@
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::thread::{sleep, spawn};
 use std::time::{Duration, Instant};
@@ -10,7 +10,7 @@ use tokio::net::UdpSocket;
 
 use crate::protocol::{
     get_server_message_data_type, ClientMessage, ClientMessageData, GameUpdate, PlayerAction,
-    ServerMessage, ServerMessageData,
+    ServerMessage, ServerMessageData, HEARTBEAT_PERIOD,
 };
 
 #[derive(Debug)]
@@ -214,15 +214,40 @@ fn run_server_sender(
     receiver: Receiver<PlayerAction>,
 ) {
     info!("Run server sender for session {}", session_id);
-    while let Ok(player_action) = receiver.recv() {
-        sender
-            .send(ClientMessage {
-                session_id,
-                number: message_number,
-                data: ClientMessageData::PlayerAction(player_action),
-            })
-            .ok();
-        message_number += 1;
+    loop {
+        match receiver.recv_timeout(HEARTBEAT_PERIOD) {
+            Ok(player_action) => {
+                if let Err(e) = sender.send(ClientMessage {
+                    session_id,
+                    number: message_number,
+                    data: ClientMessageData::PlayerAction(player_action),
+                }) {
+                    error!(
+                        "Server sender has failed to send player action for session {}: {}",
+                        session_id, e
+                    );
+                    break;
+                }
+                message_number += 1;
+            }
+            Err(e) => match e {
+                RecvTimeoutError::Timeout => {
+                    if let Err(e) = sender.send(ClientMessage {
+                        session_id,
+                        number: message_number,
+                        data: ClientMessageData::Heartbeat,
+                    }) {
+                        error!(
+                            "Server sender has failed to send heartbeat for session {}: {}",
+                            session_id, e
+                        );
+                        break;
+                    }
+                    message_number += 1;
+                }
+                RecvTimeoutError::Disconnected => break,
+            },
+        }
     }
     debug!(
         "Server sender is sending quit for session {}...",

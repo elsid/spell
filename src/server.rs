@@ -16,7 +16,7 @@ use crate::engine::{get_next_id, remove_actor, Engine};
 use crate::generators::generate_player_actor;
 use crate::protocol::{
     get_client_message_data_type, ClientMessage, ClientMessageData, GameUpdate, PlayerAction,
-    ServerMessage, ServerMessageData,
+    ServerMessage, ServerMessageData, HEARTBEAT_PERIOD,
 };
 use crate::world::World;
 
@@ -38,6 +38,12 @@ pub async fn run_udp_server(
     stop: Arc<AtomicBool>,
 ) -> Result<(), std::io::Error> {
     info!("Run UDP server: {:?}", settings);
+    if settings.session_timeout < HEARTBEAT_PERIOD {
+        warn!(
+            "UDP server session timeout {:?} is less than heartbeat period {:?}",
+            settings.session_timeout, HEARTBEAT_PERIOD
+        );
+    }
     UdpServer {
         socket: UdpSocket::bind(&settings.address).await?,
         stop,
@@ -243,6 +249,12 @@ pub fn run_game_server(
     stop: Arc<AtomicBool>,
 ) {
     info!("Run game server: {:?}", settings);
+    if settings.session_timeout < HEARTBEAT_PERIOD {
+        warn!(
+            "Game server session timeout {:?} is less than heartbeat period {:?}",
+            settings.session_timeout, HEARTBEAT_PERIOD
+        );
+    }
     let time_step = settings.update_period.as_secs_f64();
     let mut frame_rate_limiter = FrameRateLimiter::new(settings.update_period, Instant::now());
     let mut sessions: Vec<GameSession> = Vec::new();
@@ -423,6 +435,7 @@ fn handle_session_message(message: ClientMessage, session: &mut GameSession, wor
             session.active = false;
             info!("Game session {} is done", session.session_id);
         }
+        ClientMessageData::Heartbeat => (),
         ClientMessageData::PlayerAction(mut player_action) => {
             if let Some(actor_index) = session.actor_index {
                 sanitize_player_action(&mut player_action, actor_index, world);

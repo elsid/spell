@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::vec2::Vec2f;
 use crate::world::{Element, World};
 
+pub const HEARTBEAT_PERIOD: Duration = Duration::from_secs(1);
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ServerMessage {
     pub session_id: u64,
@@ -31,6 +33,7 @@ pub enum ServerMessageData {
 pub enum ClientMessageData {
     Join,
     Quit,
+    Heartbeat,
     PlayerAction(PlayerAction),
 }
 
@@ -65,6 +68,7 @@ pub fn get_client_message_data_type(value: &ClientMessageData) -> &'static str {
     match value {
         ClientMessageData::Join => "Join",
         ClientMessageData::Quit => "Quit",
+        ClientMessageData::Heartbeat => "Heartbeat",
         ClientMessageData::PlayerAction(..) => "PlayerAction",
     }
 }
