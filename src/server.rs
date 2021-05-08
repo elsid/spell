@@ -151,10 +151,7 @@ impl UdpServer {
                 .iter_mut()
                 .find(|v| v.session_id == server_message.session_id)
             {
-                if matches!(
-                    server_message.data,
-                    ServerMessageData::GameUpdate(GameUpdate::SetPlayerId(..))
-                ) {
+                if matches!(server_message.data, ServerMessageData::NewPlayer { .. }) {
                     session.state = UdpSessionState::Established;
                 }
                 let buffer = bincode::serialize(&server_message).unwrap();
@@ -261,7 +258,7 @@ pub fn run_game_server(
     let mut rng = StdRng::from_entropy();
     let mut engine = Engine::default();
     while !stop.load(Ordering::Acquire) {
-        handle_delayed_messages(&mut sessions, &mut world);
+        handle_delayed_messages(&settings, &sender, &mut sessions, &mut world);
         handle_new_messages(
             &settings,
             &sender,
@@ -270,7 +267,7 @@ pub fn run_game_server(
             &mut rng,
             &mut world,
         );
-        close_timed_outed_sessions(settings.session_timeout, &sender, &mut sessions);
+        close_timed_out_sessions(settings.session_timeout, &sender, &mut sessions);
         handle_dropped_messages(&mut sessions);
         remove_inactive_actors(&mut sessions, &mut world);
         engine.update(time_step, &mut world);
@@ -301,14 +298,19 @@ struct GameSession {
     delayed_messages: VecDeque<ClientMessage>,
 }
 
-fn handle_delayed_messages(sessions: &mut [GameSession], world: &mut World) {
+fn handle_delayed_messages(
+    settings: &GameServerSettings,
+    sender: &Sender<ServerMessage>,
+    sessions: &mut [GameSession],
+    world: &mut World,
+) {
     for session in sessions.iter_mut() {
         session.messages_per_frame = 0;
-        handle_delayed_session_messages(session, world);
+        handle_session_delayed_messages(settings, sender, session, world);
     }
 }
 
-fn close_timed_outed_sessions(
+fn close_timed_out_sessions(
     session_timeout: Duration,
     sender: &Sender<ServerMessage>,
     sessions: &mut [GameSession],
@@ -328,10 +330,15 @@ fn close_timed_outed_sessions(
     }
 }
 
-fn handle_delayed_session_messages(session: &mut GameSession, world: &mut World) {
+fn handle_session_delayed_messages(
+    settings: &GameServerSettings,
+    sender: &Sender<ServerMessage>,
+    session: &mut GameSession,
+    world: &mut World,
+) {
     while session.messages_per_frame < MAX_SESSION_MESSAGES_PER_FRAME {
         if let Some(message) = session.delayed_messages.pop_front() {
-            if !handle_delayed_session_message(message, session, world) {
+            if !handle_session_delayed_message(message, settings, sender, session, world) {
                 break;
             }
         } else {
@@ -340,15 +347,17 @@ fn handle_delayed_session_messages(session: &mut GameSession, world: &mut World)
     }
 }
 
-fn handle_delayed_session_message(
+fn handle_session_delayed_message(
     message: ClientMessage,
+    settings: &GameServerSettings,
+    sender: &Sender<ServerMessage>,
     session: &mut GameSession,
     world: &mut World,
 ) -> bool {
     if message.number <= session.last_message_number {
         return false;
     }
-    handle_session_message(message, session, world);
+    handle_session_message(message, settings, sender, session, world);
     true
 }
 
@@ -366,7 +375,7 @@ fn handle_new_messages<R: Rng + CryptoRng>(
             .iter_mut()
             .find(|v| v.session_id == message.session_id)
         {
-            handle_new_session_message(message, session, world);
+            handle_session_new_message(message, settings, sender, session, world);
         } else if sessions.len() < settings.max_players {
             if let Some(session) = create_new_session(
                 settings.update_period,
@@ -403,8 +412,10 @@ fn handle_new_messages<R: Rng + CryptoRng>(
     }
 }
 
-fn handle_new_session_message(
+fn handle_session_new_message(
     message: ClientMessage,
+    settings: &GameServerSettings,
+    sender: &Sender<ServerMessage>,
     session: &mut GameSession,
     world: &mut World,
 ) {
@@ -412,7 +423,7 @@ fn handle_new_session_message(
         return;
     }
     if session.messages_per_frame < MAX_SESSION_MESSAGES_PER_FRAME {
-        return handle_session_message(message, session, world);
+        return handle_session_message(message, settings, sender, session, world);
     }
     if session.delayed_messages.len() >= MAX_DELAYED_MESSAGES_PER_SESSION {
         session.dropped_messages += 1;
@@ -421,7 +432,13 @@ fn handle_new_session_message(
     session.delayed_messages.push_back(message);
 }
 
-fn handle_session_message(message: ClientMessage, session: &mut GameSession, world: &mut World) {
+fn handle_session_message(
+    message: ClientMessage,
+    settings: &GameServerSettings,
+    sender: &Sender<ServerMessage>,
+    session: &mut GameSession,
+    world: &mut World,
+) {
     session.last_message_time = Instant::now();
     session.last_message_number = message.number;
     session.messages_per_frame += 1;
@@ -435,6 +452,16 @@ fn handle_session_message(message: ClientMessage, session: &mut GameSession, wor
             info!("Game session {} is done", session.session_id);
         }
         ClientMessageData::Heartbeat => (),
+        ClientMessageData::Join => sender
+            .send(ServerMessage {
+                session_id: session.session_id,
+                number: 0,
+                data: ServerMessageData::NewPlayer {
+                    update_period: settings.update_period,
+                    actor_id: session.actor_id,
+                },
+            })
+            .unwrap(),
         ClientMessageData::PlayerAction(mut player_action) => {
             if let Some(actor_index) = session.actor_index {
                 sanitize_player_action(&mut player_action, actor_index, world);
@@ -446,11 +473,6 @@ fn handle_session_message(message: ClientMessage, session: &mut GameSession, wor
                 );
             }
         }
-        v => warn!(
-            "Existing session {} invalid message data: {}",
-            session.session_id,
-            get_client_message_data_type(&v),
-        ),
     }
 }
 
@@ -503,19 +525,15 @@ fn create_new_session<R: CryptoRng + Rng>(
             } else {
                 message.session_id
             };
-            sender
-                .send(ServerMessage {
-                    session_id,
-                    number: 0,
-                    data: ServerMessageData::Settings { update_period },
-                })
-                .unwrap();
             let actor_id = add_player_actor(world, rng);
             sender
                 .send(ServerMessage {
                     session_id,
                     number: 0,
-                    data: ServerMessageData::GameUpdate(GameUpdate::SetPlayerId(actor_id)),
+                    data: ServerMessageData::NewPlayer {
+                        update_period,
+                        actor_id,
+                    },
                 })
                 .unwrap();
             Some(GameSession {

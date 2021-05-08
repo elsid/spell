@@ -68,7 +68,10 @@ pub async fn run_udp_client(
                     continue;
                 }
             };
-            if let ServerMessageData::Settings { update_period: v } = &server_message.data {
+            if let ServerMessageData::NewPlayer {
+                update_period: v, ..
+            } = &server_message.data
+            {
                 update_period = *v;
             }
             if let Err(e) = sender.send(server_message) {
@@ -151,7 +154,7 @@ pub fn run_game_client(
     let now = Instant::now();
     let connect_deadline = now + settings.connect_timeout;
     let mut last_send = now - settings.retry_period;
-    let session_id = loop {
+    let (session_id, actor_id) = loop {
         if Instant::now() >= connect_deadline {
             info!("Game client has timed out to connect to server.");
             return;
@@ -184,7 +187,9 @@ pub fn run_game_client(
                 }
                 server_message_number = message.number;
                 match message.data {
-                    ServerMessageData::Settings { .. } => break message.session_id,
+                    ServerMessageData::NewPlayer { actor_id, .. } => {
+                        break (message.session_id, actor_id)
+                    }
                     ServerMessageData::Error(err) => {
                         error!("Join to server error: {}", err);
                         return;
@@ -198,7 +203,10 @@ pub fn run_game_client(
             Err(e) => debug!("Game client has failed to receive message: {}", e),
         }
     };
-    info!("Joined to server with session {}", session_id);
+    info!(
+        "Joined to server with session {} as actor {}",
+        session_id, actor_id
+    );
     let ServerChannel {
         sender: server_sender,
         receiver: server_receiver,
@@ -207,6 +215,7 @@ pub fn run_game_client(
         sender: game_sender,
         receiver: game_receiver,
     } = game;
+    game_sender.send(GameUpdate::SetPlayerId(actor_id)).unwrap();
     let sender = spawn(move || {
         run_server_sender(
             session_id,
@@ -304,7 +313,7 @@ fn run_server_receiver(
                 }
                 message_number = message.number;
                 match message.data {
-                    ServerMessageData::Settings { .. } => (),
+                    ServerMessageData::NewPlayer { .. } => (),
                     ServerMessageData::Error(error) => {
                         warn!("Server error for session {}: {}", session_id, error);
                     }

@@ -24,7 +24,10 @@ pub struct ClientMessage {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Deserialize, Serialize)]
 pub enum ServerMessageData {
-    Settings { update_period: Duration },
+    NewPlayer {
+        update_period: Duration,
+        actor_id: u64,
+    },
     Error(String),
     GameUpdate(GameUpdate),
 }
@@ -58,7 +61,7 @@ pub enum PlayerAction {
 
 pub fn get_server_message_data_type(value: &ServerMessageData) -> &'static str {
     match value {
-        ServerMessageData::Settings { .. } => "Settings",
+        ServerMessageData::NewPlayer { .. } => "NewPlayer",
         ServerMessageData::Error(..) => "Error",
         ServerMessageData::GameUpdate(..) => "GameUpdate",
     }
