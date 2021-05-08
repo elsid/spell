@@ -41,7 +41,10 @@ pub async fn run_udp_client(
     let mut last_update = Instant::now();
     let mut update_period = Duration::from_secs_f64(1.0);
     while !stop.load(Ordering::Acquire) {
-        send_client_messages(&receiver, &socket, Instant::now() + update_period / 2).await?;
+        if !send_client_messages(&receiver, &socket, Instant::now() + update_period / 2).await? {
+            debug!("UDP client is quitting...");
+            break;
+        }
         let left = Instant::now() - last_update;
         let recv_timeout = if left < update_period {
             update_period - left
@@ -83,7 +86,7 @@ async fn send_client_messages(
     receiver: &Receiver<ClientMessage>,
     socket: &UdpSocket,
     until: Instant,
-) -> std::io::Result<()> {
+) -> std::io::Result<bool> {
     while Instant::now() < until {
         if let Ok(client_message) = receiver.try_recv() {
             let buffer = bincode::serialize(&client_message).unwrap();
@@ -91,11 +94,14 @@ async fn send_client_messages(
                 error!("UDP client has failed to send message to server: {}", e);
                 return Err(e);
             }
+            if matches!(client_message.data, ClientMessageData::Quit) {
+                return Ok(false);
+            }
         } else {
             break;
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 async fn send_with_retries(
