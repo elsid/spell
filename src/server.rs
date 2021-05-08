@@ -272,11 +272,10 @@ pub fn run_game_server(
         );
         close_timed_outed_sessions(settings.session_timeout, &sender, &mut sessions);
         handle_dropped_messages(&mut sessions);
+        remove_inactive_actors(&mut sessions, &mut world);
         engine.update(time_step, &mut world);
         sessions.retain(|v| v.active);
-        for session in sessions.iter_mut() {
-            session.actor_index = world.actors.iter().position(|v| v.id == session.actor_id);
-        }
+        update_actor_index(&world, &mut sessions);
         sender
             .send(ServerMessage {
                 session_id: 0,
@@ -464,6 +463,23 @@ fn handle_dropped_messages(sessions: &mut [GameSession]) {
             );
             session.dropped_messages = 0;
         }
+    }
+}
+
+fn remove_inactive_actors(sessions: &mut [GameSession], world: &mut World) {
+    for session in sessions.iter_mut() {
+        if !session.active {
+            if let Some(actor_index) = session.actor_index {
+                remove_actor(actor_index, world);
+                session.actor_index = None;
+            }
+        }
+    }
+}
+
+fn update_actor_index(world: &World, sessions: &mut [GameSession]) {
+    for session in sessions.iter_mut() {
+        session.actor_index = world.actors.iter().position(|v| v.id == session.actor_id);
     }
 }
 
