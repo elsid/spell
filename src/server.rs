@@ -380,10 +380,10 @@ fn handle_new_messages<R: Rng + CryptoRng>(
             sender
                 .send(ServerMessage {
                     number: 0,
-                    session_id: 0,
+                    session_id: message.session_id,
                     data: ServerMessageData::Error(String::from("Server is full")),
                 })
-                .ok();
+                .unwrap();
         }
         messages_per_frame += 1;
         if messages_per_frame > sessions.len() + settings.max_players {
