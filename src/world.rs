@@ -70,6 +70,7 @@ impl Default for WorldSettings {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Actor {
     pub id: u64,
+    pub active: bool,
     pub body: Body<Disk>,
     pub position: Vec2f,
     pub health: f64,

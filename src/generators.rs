@@ -98,6 +98,7 @@ pub fn generate_player_actor<R: Rng>(id: u64, bounds: &Rectf, rng: &mut R) -> Ac
     let radius = 1.0;
     Actor {
         id,
+        active: true,
         body: Body {
             shape: Disk { radius },
             material,
@@ -143,6 +144,7 @@ pub fn generate_actor<R: Rng>(material: Material, id: u64, bounds: &Rectf, rng: 
     let radius = 1.0;
     Actor {
         id,
+        active: true,
         body: Body {
             shape: Disk { radius },
             material,

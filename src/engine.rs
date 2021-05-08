@@ -209,9 +209,9 @@ impl Engine {
             .iter_mut()
             .for_each(|v| v.dynamic_force = Vec2f::ZERO);
         let bounds = world.bounds.clone();
-        world
-            .actors
-            .retain(|v| is_active(&bounds, &v.body.shape.as_shape(), v.position, v.health));
+        world.actors.retain(|v| {
+            v.active && is_active(&bounds, &v.body.shape.as_shape(), v.position, v.health)
+        });
         world.dynamic_objects.retain(|v| {
             (v.velocity_z > f64::EPSILON || v.velocity.norm() > f64::EPSILON)
                 && is_active(&bounds, &v.body.shape.as_shape(), v.position, v.health)
@@ -244,7 +244,7 @@ pub fn get_next_id(counter: &mut u64) -> u64 {
 }
 
 pub fn remove_actor(actor_index: usize, world: &mut World) {
-    world.actors.remove(actor_index);
+    world.actors[actor_index].active = false;
 }
 
 pub fn add_actor_spell_element(actor_index: usize, element: Element, world: &mut World) {
