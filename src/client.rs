@@ -170,6 +170,7 @@ pub fn run_game_client(
             return;
         }
         debug!("Game client is trying to join server...");
+        client_message_number += 1;
         if let Err(e) = server.sender.send(ClientMessage {
             number: client_message_number,
             session_id: 0,
@@ -178,7 +179,6 @@ pub fn run_game_client(
             debug!("Game client has failed to send join message: {}", e);
         }
         last_send = Instant::now();
-        client_message_number += 1;
         debug!("Game client is waiting for server response...");
         match server.receiver.recv_timeout(settings.retry_period) {
             Ok(message) => {

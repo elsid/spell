@@ -123,8 +123,8 @@ impl UdpServer {
 
     async fn handle_game_messages(&mut self) {
         while let Ok(mut server_message) = self.receiver.try_recv() {
-            server_message.number = self.message_counter;
             self.message_counter += 1;
+            server_message.number = self.message_counter;
             if matches!(
                 server_message.data,
                 ServerMessageData::GameUpdate(GameUpdate::World(..))
