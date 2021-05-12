@@ -3,8 +3,12 @@ extern crate log;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::channel;
+#[cfg(feature = "render")]
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 use std::thread::spawn;
+#[cfg(feature = "render")]
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use clap::Clap;
@@ -25,7 +29,7 @@ use crate::game::{run_game, Server};
 use crate::generators::generate_player_actor;
 use crate::generators::generate_world;
 #[cfg(feature = "render")]
-use crate::protocol::GameUpdate;
+use crate::protocol::{ClientMessage, GameUpdate, PlayerAction, ServerMessage};
 use crate::rect::Rectf;
 use crate::server::{run_game_server, run_udp_server, GameServerSettings, UdpServerSettings};
 use crate::vec2::Vec2f;
@@ -104,61 +108,123 @@ pub fn run_single_player(params: SinglePlayerParams) {
 #[cfg(feature = "render")]
 pub fn run_multi_player(params: MultiPlayerParams) {
     info!("Run multiplayer: {:?}", params);
-    let (update_sender, update_receiver) = channel();
-    let (action_sender, action_receiver) = channel();
-    let (server_sender, server_receiver) = channel();
-    let (client_sender, client_receiver) = channel();
-    let stop_game_client = Arc::new(AtomicBool::new(false));
-    let game_client = {
-        let settings = GameClientSettings {
+    with_background_client(
+        GameClientSettings {
             connect_timeout: Duration::from_secs_f64(params.connect_timeout),
             retry_period: Duration::from_secs_f64(params.retry_period),
-        };
-        let game_channel = GameChannel {
-            sender: update_sender,
-            receiver: action_receiver,
-        };
-        let server_channel = ServerChannel {
-            sender: client_sender,
-            receiver: server_receiver,
-        };
-        let stop = stop_game_client.clone();
-        spawn(move || run_game_client(settings, server_channel, game_channel, stop))
-    };
-    let settings = UdpClientSettings {
-        server_address: format!("{}:{}", params.server_address, params.server_port),
-    };
-    let stop_udp_client = Arc::new(AtomicBool::new(false));
-    let udp_client = {
-        let stop = stop_udp_client.clone();
-        spawn(move || {
-            let runtime = Builder::new_current_thread().enable_all().build().unwrap();
-            runtime
-                .block_on(run_udp_client(
-                    settings,
-                    server_sender,
-                    client_receiver,
-                    stop,
-                ))
-                .unwrap();
-        })
-    };
-    run_game(
-        World::default(),
-        Some(Server {
-            address: params.server_address,
-            port: params.server_port,
-            sender: action_sender,
-        }),
-        update_receiver,
+        },
+        UdpClientSettings {
+            server_address: format!("{}:{}", params.server_address, params.server_port),
+        },
+        move |action_sender, update_receiver| {
+            run_game(
+                World::default(),
+                Some(Server {
+                    address: params.server_address,
+                    port: params.server_port,
+                    sender: action_sender,
+                }),
+                update_receiver,
+            );
+        },
     );
-    info!("Stopping game client...");
-    stop_game_client.store(true, Ordering::Release);
-    game_client.join().unwrap();
-    info!("Stopping UDP client...");
-    stop_udp_client.store(true, Ordering::Release);
-    udp_client.join().unwrap();
     info!("Exit multiplayer");
+}
+
+#[cfg(feature = "render")]
+pub fn with_background_client<F>(
+    game_client_settings: GameClientSettings,
+    udp_client_settings: UdpClientSettings,
+    f: F,
+) where
+    F: FnOnce(Sender<PlayerAction>, Receiver<GameUpdate>),
+{
+    let w = move |client_sender, server_receiver| {
+        with_background_game_client(game_client_settings, client_sender, server_receiver, f);
+    };
+    with_background_udp_client(udp_client_settings, w);
+}
+
+#[cfg(feature = "render")]
+pub fn with_background_game_client<F>(
+    settings: GameClientSettings,
+    client_sender: Sender<ClientMessage>,
+    server_receiver: Receiver<ServerMessage>,
+    f: F,
+) where
+    F: FnOnce(Sender<PlayerAction>, Receiver<GameUpdate>),
+{
+    let (update_sender, update_receiver) = channel();
+    let (action_sender, action_receiver) = channel();
+    let stop = Arc::new(AtomicBool::new(false));
+    let game_client = run_background_game_client(
+        settings,
+        update_sender,
+        action_receiver,
+        client_sender,
+        server_receiver,
+        stop.clone(),
+    );
+    f(action_sender, update_receiver);
+    info!("Stopping game client...");
+    stop.store(true, Ordering::Release);
+    game_client.join().unwrap();
+}
+
+#[cfg(feature = "render")]
+pub fn with_background_udp_client<F>(settings: UdpClientSettings, f: F)
+where
+    F: FnOnce(Sender<ClientMessage>, Receiver<ServerMessage>),
+{
+    let (server_sender, server_receiver) = channel();
+    let (client_sender, client_receiver) = channel();
+    let stop = Arc::new(AtomicBool::new(false));
+    let udp_client =
+        run_background_udp_client(settings, server_sender, client_receiver, stop.clone());
+    f(client_sender, server_receiver);
+    info!("Stopping UDP client...");
+    stop.store(true, Ordering::Release);
+    udp_client.join().unwrap();
+}
+
+#[cfg(feature = "render")]
+pub fn run_background_game_client(
+    settings: GameClientSettings,
+    update_sender: Sender<GameUpdate>,
+    action_receiver: Receiver<PlayerAction>,
+    client_sender: Sender<ClientMessage>,
+    server_receiver: Receiver<ServerMessage>,
+    stop: Arc<AtomicBool>,
+) -> JoinHandle<()> {
+    let game_channel = GameChannel {
+        sender: update_sender,
+        receiver: action_receiver,
+    };
+    let server_channel = ServerChannel {
+        sender: client_sender,
+        receiver: server_receiver,
+    };
+    spawn(move || run_game_client(settings, server_channel, game_channel, stop))
+}
+
+#[cfg(feature = "render")]
+pub fn run_background_udp_client(
+    settings: UdpClientSettings,
+    server_sender: Sender<ServerMessage>,
+    client_receiver: Receiver<ClientMessage>,
+    stop: Arc<AtomicBool>,
+) -> JoinHandle<()> {
+    spawn(move || {
+        let runtime = Builder::new_current_thread().enable_all().build().unwrap();
+        runtime
+            .block_on(run_udp_client(
+                settings,
+                server_sender,
+                client_receiver,
+                stop,
+            ))
+            .unwrap();
+    })
 }
 
 pub fn run_server(params: ServerParams, stop: Arc<AtomicBool>) {

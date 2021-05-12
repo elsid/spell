@@ -188,7 +188,7 @@ pub fn run_game_client(
                 server_message_number = message.number;
                 match message.data {
                     ServerMessageData::NewPlayer { actor_id, .. } => {
-                        break (message.session_id, actor_id)
+                        break (message.session_id, actor_id);
                     }
                     ServerMessageData::Error(err) => {
                         error!("Join to server error: {}", err);
