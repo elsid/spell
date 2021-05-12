@@ -177,6 +177,8 @@ pub fn run_game_client(
             data: ClientMessageData::Join,
         }) {
             debug!("Game client has failed to send join message: {}", e);
+            last_send = Instant::now();
+            continue;
         }
         last_send = Instant::now();
         debug!("Game client is waiting for server response...");
