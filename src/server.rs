@@ -195,7 +195,7 @@ impl UdpServer {
                             break session_id;
                         }
                     } else {
-                        warn!(
+                        debug!(
                             "Ignore new session from {}, sessions: {}/{}",
                             peer,
                             self.sessions.len(),
@@ -211,6 +211,14 @@ impl UdpServer {
                             continue;
                         }
                     };
+                if client_message.session_id != session_id
+                    && !(matches!(client_message.data, ClientMessageData::Join)
+                        && client_message.session_id == 0)
+                {
+                    debug!("Server has received client message {} with invalid session_id: {}, expected: {}",
+                           get_client_message_data_type(&client_message.data), client_message.session_id, session_id);
+                    continue;
+                }
                 client_message.session_id = session_id;
                 if matches!(&client_message.data, ClientMessageData::Quit) {
                     let session = self
@@ -377,14 +385,9 @@ fn handle_new_messages<R: Rng + CryptoRng>(
         {
             handle_session_new_message(message, settings, sender, session, world);
         } else if sessions.len() < settings.max_players {
-            if let Some(session) = create_new_session(
-                settings.update_period,
-                sender,
-                message,
-                &sessions,
-                world,
-                rng,
-            ) {
+            if let Some(session) =
+                create_new_session(settings.update_period, sender, message, world, rng)
+            {
                 info!(
                     "New player has joined: session_id={} actor_id={}",
                     session.session_id, session.actor_id
@@ -509,26 +512,15 @@ fn create_new_session<R: CryptoRng + Rng>(
     update_period: Duration,
     sender: &Sender<ServerMessage>,
     message: ClientMessage,
-    sessions: &[GameSession],
     world: &mut World,
     rng: &mut R,
 ) -> Option<GameSession> {
     match message.data {
         ClientMessageData::Join => {
-            let session_id = if message.session_id == 0 {
-                loop {
-                    let session_id = rng.gen();
-                    if sessions.iter().all(|v| v.session_id != session_id) {
-                        break session_id;
-                    }
-                }
-            } else {
-                message.session_id
-            };
             let actor_id = add_player_actor(world, rng);
             sender
                 .send(ServerMessage {
-                    session_id,
+                    session_id: message.session_id,
                     number: 0,
                     data: ServerMessageData::NewPlayer {
                         update_period,
@@ -537,7 +529,7 @@ fn create_new_session<R: CryptoRng + Rng>(
                 })
                 .unwrap();
             Some(GameSession {
-                session_id,
+                session_id: message.session_id,
                 active: true,
                 actor_id,
                 actor_index: None,
