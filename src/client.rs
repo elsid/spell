@@ -15,6 +15,7 @@ use crate::protocol::{
 
 #[derive(Debug)]
 pub struct UdpClientSettings {
+    pub id: u64,
     pub server_address: String,
 }
 
@@ -24,7 +25,7 @@ pub async fn run_udp_client(
     receiver: Receiver<ClientMessage>,
     stop: Arc<AtomicBool>,
 ) -> Result<(), std::io::Error> {
-    info!("Run UDP client: {:?}", settings);
+    info!("[{}] Run UDP client: {:?}", settings.id, settings);
     let server_address: SocketAddr = settings.server_address.parse().unwrap();
     let local_address = match server_address {
         SocketAddr::V4(..) => SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
@@ -32,17 +33,28 @@ pub async fn run_udp_client(
     };
     let socket = UdpSocket::bind(local_address).await?;
     info!(
-        "UDP client is listening on {}",
+        "[{}] UDP client is listening on {}",
+        settings.id,
         socket.local_addr().unwrap()
     );
     socket.connect(server_address).await?;
-    info!("UDP client is connected to {}", server_address);
+    info!(
+        "[{}] UDP client is connected to {}",
+        settings.id, server_address
+    );
     let mut recv_buffer = vec![0u8; 65_507];
     let mut last_update = Instant::now();
     let mut update_period = Duration::from_secs_f64(1.0);
     while !stop.load(Ordering::Acquire) {
-        if !send_client_messages(&receiver, &socket, Instant::now() + update_period / 2).await? {
-            debug!("UDP client is quitting...");
+        if !send_client_messages(
+            &settings,
+            &receiver,
+            &socket,
+            Instant::now() + update_period / 2,
+        )
+        .await?
+        {
+            debug!("[{}] UDP client is quitting...", settings.id);
             break;
         }
         let left = Instant::now() - last_update;
@@ -57,14 +69,20 @@ pub async fn run_udp_client(
             let decompressed = match decompress_size_prepended(&recv_buffer[0..size]) {
                 Ok(v) => v,
                 Err(e) => {
-                    warn!("Failed to decompress server message: {}", e);
+                    warn!(
+                        "[{}] Failed to decompress server message: {}",
+                        settings.id, e
+                    );
                     continue;
                 }
             };
             let server_message: ServerMessage = match bincode::deserialize(&decompressed) {
                 Ok(v) => v,
                 Err(e) => {
-                    warn!("Failed to deserialize server message: {}", e);
+                    warn!(
+                        "[{}] Failed to deserialize server message: {}",
+                        settings.id, e
+                    );
                     continue;
                 }
             };
@@ -75,7 +93,10 @@ pub async fn run_udp_client(
                 update_period = *v;
             }
             if let Err(e) = sender.send(server_message) {
-                debug!("UDP client has failed to send a message: {}", e);
+                debug!(
+                    "[{}] UDP client has failed to send a message: {}",
+                    settings.id, e
+                );
                 break;
             }
         }
@@ -86,6 +107,7 @@ pub async fn run_udp_client(
 }
 
 async fn send_client_messages(
+    settings: &UdpClientSettings,
     receiver: &Receiver<ClientMessage>,
     socket: &UdpSocket,
     until: Instant,
@@ -94,7 +116,10 @@ async fn send_client_messages(
         if let Ok(client_message) = receiver.try_recv() {
             let buffer = bincode::serialize(&client_message).unwrap();
             if let Err(e) = send_with_retries(&socket, &buffer, 3).await {
-                error!("UDP client has failed to send message to server: {}", e);
+                error!(
+                    "[{}] UDP client has failed to send message to server: {}",
+                    settings.id, e
+                );
                 return Err(e);
             }
             if matches!(client_message.data, ClientMessageData::Quit) {
@@ -128,6 +153,7 @@ async fn send_with_retries(
 
 #[derive(Debug)]
 pub struct GameClientSettings {
+    pub id: u64,
     pub connect_timeout: Duration,
     pub retry_period: Duration,
 }
@@ -148,7 +174,7 @@ pub fn run_game_client(
     game: GameChannel,
     stop: Arc<AtomicBool>,
 ) {
-    info!("Run game client");
+    info!("[{}] Run game client", settings.id);
     let mut client_message_number = 0;
     let mut server_message_number = 0;
     let now = Instant::now();
@@ -156,7 +182,10 @@ pub fn run_game_client(
     let mut last_send = now - settings.retry_period;
     let (session_id, actor_id) = loop {
         if Instant::now() >= connect_deadline {
-            info!("Game client has timed out to connect to server.");
+            info!(
+                "[{}] Game client has timed out to connect to server.",
+                settings.id
+            );
             return;
         }
         if stop.load(Ordering::Acquire) {
@@ -169,21 +198,37 @@ pub fn run_game_client(
         if stop.load(Ordering::Acquire) {
             return;
         }
-        debug!("Game client is trying to join server...");
+        debug!("[{}] Game client is trying to join server...", settings.id);
         client_message_number += 1;
         if let Err(e) = server.sender.send(ClientMessage {
             number: client_message_number,
             session_id: 0,
             data: ClientMessageData::Join,
         }) {
-            debug!("Game client has failed to send join message: {}", e);
+            debug!(
+                "[{}] Game client has failed to send join message: {}",
+                settings.id, e
+            );
             last_send = Instant::now();
             continue;
         }
         last_send = Instant::now();
-        debug!("Game client is waiting for server response...");
+        client_message_number += 1;
+        debug!(
+            "[{}] Game client is waiting for server response...",
+            settings.id
+        );
         match server.receiver.recv_timeout(settings.retry_period) {
             Ok(message) => {
+                if !matches!(message.data, ServerMessageData::GameUpdate(..)) {
+                    debug!("[{}] Client handle: {:?}", settings.id, message);
+                } else {
+                    debug!(
+                        "[{}] Client handle: {}",
+                        settings.id,
+                        get_server_message_data_type(&message.data)
+                    );
+                }
                 if message.number <= server_message_number {
                     continue;
                 }
@@ -193,21 +238,25 @@ pub fn run_game_client(
                         break (message.session_id, actor_id);
                     }
                     ServerMessageData::Error(err) => {
-                        error!("Join to server error: {}", err);
+                        error!("[{}] Join to server error: {}", settings.id, err);
                         return;
                     }
                     v => warn!(
-                        "Game client has received invalid server response type: {}",
+                        "[{}] Game client has received invalid server response type: {}",
+                        settings.id,
                         get_server_message_data_type(&v)
                     ),
                 }
             }
-            Err(e) => debug!("Game client has failed to receive message: {}", e),
+            Err(e) => debug!(
+                "[{}] Game client has failed to receive message: {}",
+                settings.id, e
+            ),
         }
     };
     info!(
-        "Joined to server with session {} as actor {}",
-        session_id, actor_id
+        "[{}] Joined to server with session {} as actor {}",
+        settings.id, session_id, actor_id
     );
     let ServerChannel {
         sender: server_sender,
@@ -218,8 +267,10 @@ pub fn run_game_client(
         receiver: game_receiver,
     } = game;
     game_sender.send(GameUpdate::SetPlayerId(actor_id)).unwrap();
+    let client_id = settings.id;
     let sender = spawn(move || {
         run_server_sender(
+            client_id,
             session_id,
             client_message_number,
             server_sender,
@@ -227,6 +278,7 @@ pub fn run_game_client(
         )
     });
     run_server_receiver(
+        client_id,
         session_id,
         server_message_number,
         game_sender,
@@ -234,16 +286,23 @@ pub fn run_game_client(
         stop,
     );
     sender.join().unwrap();
-    info!("Game client has stopped for session {}", session_id);
+    info!(
+        "[{}] Game client has stopped for session {}",
+        settings.id, session_id
+    );
 }
 
 fn run_server_sender(
+    client_id: u64,
     session_id: u64,
     mut message_number: u64,
     sender: Sender<ClientMessage>,
     receiver: Receiver<PlayerAction>,
 ) {
-    info!("Run server sender for session {}", session_id);
+    info!(
+        "[{}] Run server sender for session {}",
+        client_id, session_id
+    );
     loop {
         match receiver.recv_timeout(HEARTBEAT_PERIOD) {
             Ok(player_action) => {
@@ -253,8 +312,8 @@ fn run_server_sender(
                     data: ClientMessageData::PlayerAction(player_action),
                 }) {
                     error!(
-                        "Server sender has failed to send player action for session {}: {}",
-                        session_id, e
+                        "[{}] Server sender has failed to send player action for session {}: {}",
+                        client_id, session_id, e
                     );
                     break;
                 }
@@ -268,8 +327,8 @@ fn run_server_sender(
                         data: ClientMessageData::Heartbeat,
                     }) {
                         error!(
-                            "Server sender has failed to send heartbeat for session {}: {}",
-                            session_id, e
+                            "[{}] Server sender has failed to send heartbeat for session {}: {}",
+                            client_id, session_id, e
                         );
                         break;
                     }
@@ -280,8 +339,8 @@ fn run_server_sender(
         }
     }
     debug!(
-        "Server sender is sending quit for session {}...",
-        session_id
+        "[{}] Server sender is sending quit for session {}...",
+        client_id, session_id
     );
     if let Err(e) = sender.send(ClientMessage {
         session_id,
@@ -289,21 +348,28 @@ fn run_server_sender(
         data: ClientMessageData::Quit,
     }) {
         warn!(
-            "Server sender has failed to send quit for session {}: {}",
-            session_id, e
+            "[{}] Server sender has failed to send quit for session {}: {}",
+            client_id, session_id, e
         );
     }
-    info!("Server sender has stopped for session {}", session_id);
+    info!(
+        "[{}] Server sender has stopped for session {}",
+        client_id, session_id
+    );
 }
 
 fn run_server_receiver(
+    client_id: u64,
     session_id: u64,
     mut message_number: u64,
     sender: Sender<GameUpdate>,
     receiver: Receiver<ServerMessage>,
     stop: Arc<AtomicBool>,
 ) {
-    info!("Run server receiver for session {}", session_id);
+    info!(
+        "[{}] Run server receiver for session {}",
+        client_id, session_id
+    );
     while !stop.load(Ordering::Acquire) {
         match receiver.recv() {
             Ok(message) => {
@@ -317,14 +383,17 @@ fn run_server_receiver(
                 match message.data {
                     ServerMessageData::NewPlayer { .. } => (),
                     ServerMessageData::Error(error) => {
-                        warn!("Server error for session {}: {}", session_id, error);
+                        warn!(
+                            "[{}] Server error for session {}: {}",
+                            client_id, session_id, error
+                        );
                     }
                     ServerMessageData::GameUpdate(update) => match sender.send(update) {
                         Ok(..) => (),
                         Err(e) => {
                             debug!(
-                                "Server receiver has failed to send a message for session {}: {}",
-                                session_id, e
+                                "[{}] Server receiver has failed to send a message for session {}: {}",
+                                client_id, session_id, e
                             );
                         }
                     },
@@ -339,5 +408,8 @@ fn run_server_receiver(
             }
         }
     }
-    info!("Server receiver has stopped for session {}", session_id);
+    info!(
+        "[{}] Server receiver has stopped for session {}",
+        client_id, session_id
+    );
 }

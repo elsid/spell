@@ -110,10 +110,12 @@ pub fn run_multi_player(params: MultiPlayerParams) {
     info!("Run multiplayer: {:?}", params);
     with_background_client(
         GameClientSettings {
+            id: 1,
             connect_timeout: Duration::from_secs_f64(params.connect_timeout),
             retry_period: Duration::from_secs_f64(params.retry_period),
         },
         UdpClientSettings {
+            id: 1,
             server_address: format!("{}:{}", params.server_address, params.server_port),
         },
         move |action_sender, update_receiver| {
