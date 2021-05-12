@@ -177,82 +177,18 @@ pub fn run_game_client(
     info!("[{}] Run game client", settings.id);
     let mut client_message_number = 0;
     let mut server_message_number = 0;
-    let now = Instant::now();
-    let connect_deadline = now + settings.connect_timeout;
-    let mut last_send = now - settings.retry_period;
-    let (session_id, actor_id) = loop {
-        if Instant::now() >= connect_deadline {
-            info!(
-                "[{}] Game client has timed out to connect to server.",
-                settings.id
-            );
-            return;
-        }
-        if stop.load(Ordering::Acquire) {
-            return;
-        }
-        let since_last_send = Instant::now() - last_send;
-        if since_last_send < settings.retry_period {
-            sleep(settings.retry_period - since_last_send);
-        }
-        if stop.load(Ordering::Acquire) {
-            return;
-        }
-        debug!("[{}] Game client is trying to join server...", settings.id);
-        client_message_number += 1;
-        if let Err(e) = server.sender.send(ClientMessage {
-            number: client_message_number,
-            session_id: 0,
-            data: ClientMessageData::Join,
-        }) {
-            debug!(
-                "[{}] Game client has failed to send join message: {}",
-                settings.id, e
-            );
-            last_send = Instant::now();
-            continue;
-        }
-        last_send = Instant::now();
-        client_message_number += 1;
-        debug!(
-            "[{}] Game client is waiting for server response...",
-            settings.id
-        );
-        match server.receiver.recv_timeout(settings.retry_period) {
-            Ok(message) => {
-                if !matches!(message.data, ServerMessageData::GameUpdate(..)) {
-                    debug!("[{}] Client handle: {:?}", settings.id, message);
-                } else {
-                    debug!(
-                        "[{}] Client handle: {}",
-                        settings.id,
-                        get_server_message_data_type(&message.data)
-                    );
-                }
-                if message.number <= server_message_number {
-                    continue;
-                }
-                server_message_number = message.number;
-                match message.data {
-                    ServerMessageData::NewPlayer { actor_id, .. } => {
-                        break (message.session_id, actor_id);
-                    }
-                    ServerMessageData::Error(err) => {
-                        error!("[{}] Join to server error: {}", settings.id, err);
-                        return;
-                    }
-                    v => warn!(
-                        "[{}] Game client has received invalid server response type: {}",
-                        settings.id,
-                        get_server_message_data_type(&v)
-                    ),
-                }
-            }
-            Err(e) => debug!(
-                "[{}] Game client has failed to receive message: {}",
-                settings.id, e
-            ),
-        }
+    let ServerInfo {
+        session_id,
+        actor_id,
+    } = match try_join_server(
+        &settings,
+        &server,
+        &stop,
+        &mut client_message_number,
+        &mut server_message_number,
+    ) {
+        Some(v) => v,
+        None => return,
     };
     info!(
         "[{}] Joined to server with session {} as actor {}",
@@ -290,6 +226,100 @@ pub fn run_game_client(
         "[{}] Game client has stopped for session {}",
         settings.id, session_id
     );
+}
+
+struct ServerInfo {
+    session_id: u64,
+    actor_id: u64,
+}
+
+fn try_join_server(
+    settings: &GameClientSettings,
+    server: &ServerChannel,
+    stop: &Arc<AtomicBool>,
+    client_message_number: &mut u64,
+    server_message_number: &mut u64,
+) -> Option<ServerInfo> {
+    let now = Instant::now();
+    let connect_deadline = now + settings.connect_timeout;
+    let mut last_send = now - settings.retry_period;
+    loop {
+        if Instant::now() >= connect_deadline {
+            info!(
+                "[{}] Game client has timed out to connect to server.",
+                settings.id
+            );
+            return None;
+        }
+        if stop.load(Ordering::Acquire) {
+            return None;
+        }
+        let since_last_send = Instant::now() - last_send;
+        if since_last_send < settings.retry_period {
+            sleep(settings.retry_period - since_last_send);
+        }
+        if stop.load(Ordering::Acquire) {
+            return None;
+        }
+        debug!("[{}] Game client is trying to join server...", settings.id);
+        *client_message_number += 1;
+        if let Err(e) = server.sender.send(ClientMessage {
+            number: *client_message_number,
+            session_id: 0,
+            data: ClientMessageData::Join,
+        }) {
+            debug!(
+                "[{}] Game client has failed to send join message: {}",
+                settings.id, e
+            );
+            last_send = Instant::now();
+            continue;
+        }
+        last_send = Instant::now();
+        *client_message_number += 1;
+        debug!(
+            "[{}] Game client is waiting for server response...",
+            settings.id
+        );
+        match server.receiver.recv_timeout(settings.retry_period) {
+            Ok(message) => {
+                if !matches!(message.data, ServerMessageData::GameUpdate(..)) {
+                    debug!("[{}] Client handle: {:?}", settings.id, message);
+                } else {
+                    debug!(
+                        "[{}] Client handle: {}",
+                        settings.id,
+                        get_server_message_data_type(&message.data)
+                    );
+                }
+                if message.number <= *server_message_number {
+                    continue;
+                }
+                *server_message_number = message.number;
+                match message.data {
+                    ServerMessageData::NewPlayer { actor_id, .. } => {
+                        break Some(ServerInfo {
+                            session_id: message.session_id,
+                            actor_id,
+                        });
+                    }
+                    ServerMessageData::Error(err) => {
+                        error!("[{}] Join to server error: {}", settings.id, err);
+                        return None;
+                    }
+                    v => warn!(
+                        "[{}] Game client has received invalid server response type: {}",
+                        settings.id,
+                        get_server_message_data_type(&v)
+                    ),
+                }
+            }
+            Err(e) => debug!(
+                "[{}] Game client has failed to receive message: {}",
+                settings.id, e
+            ),
+        }
+    }
 }
 
 fn run_server_sender(
