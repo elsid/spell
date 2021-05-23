@@ -102,7 +102,7 @@ pub async fn run_udp_client(
         }
         last_update = Instant::now();
     }
-    info!("UDP client has stopped");
+    info!("[{}] UDP client has stopped", settings.id);
     Ok(())
 }
 

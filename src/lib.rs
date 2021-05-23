@@ -150,6 +150,7 @@ pub fn with_background_game_client<F>(
     let (update_sender, update_receiver) = channel();
     let (action_sender, action_receiver) = channel();
     let stop = Arc::new(AtomicBool::new(false));
+    let id = settings.id;
     let game_client = run_background_game_client(
         settings,
         update_sender,
@@ -159,7 +160,7 @@ pub fn with_background_game_client<F>(
         stop.clone(),
     );
     f(action_sender, update_receiver);
-    info!("Stopping game client...");
+    info!("[{}] Stopping game client...", id);
     stop.store(true, Ordering::Release);
     game_client.join().unwrap();
 }
@@ -171,10 +172,11 @@ where
     let (server_sender, server_receiver) = channel();
     let (client_sender, client_receiver) = channel();
     let stop = Arc::new(AtomicBool::new(false));
+    let id = settings.id;
     let udp_client =
         run_background_udp_client(settings, server_sender, client_receiver, stop.clone());
     f(client_sender, server_receiver);
-    info!("Stopping UDP client...");
+    info!("[{}] Stopping UDP client...", id);
     stop.store(true, Ordering::Release);
     udp_client.join().unwrap();
 }
