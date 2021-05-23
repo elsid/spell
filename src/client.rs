@@ -202,7 +202,13 @@ pub fn run_game_client(
         sender: game_sender,
         receiver: game_receiver,
     } = game;
-    game_sender.send(GameUpdate::SetPlayerId(actor_id)).unwrap();
+    if let Err(..) = game_sender.send(GameUpdate::SetPlayerId(actor_id)) {
+        info!(
+            "[{}] Game client has stopped for session {}",
+            settings.id, session_id
+        );
+        return;
+    }
     let client_id = settings.id;
     let sender = spawn(move || {
         run_server_sender(
