@@ -15,13 +15,26 @@ use crate::control::apply_player_action;
 use crate::engine::{get_next_id, remove_actor, Engine};
 use crate::generators::generate_player_actor;
 use crate::protocol::{
-    get_client_message_data_type, ClientMessage, ClientMessageData, GameUpdate, PlayerAction,
-    ServerMessage, ServerMessageData, HEARTBEAT_PERIOD,
+    get_client_message_data_type, make_world_update, ClientMessage, ClientMessageData, GameUpdate,
+    PlayerAction, PlayerUpdate, ServerMessage, ServerMessageData, WorldUpdate, HEARTBEAT_PERIOD,
 };
 use crate::world::World;
 
 const MAX_SESSION_MESSAGES_PER_FRAME: u8 = 3;
 const MAX_DELAYED_MESSAGES_PER_SESSION: usize = 10;
+const MAX_WORLD_HISTORY_SIZE: usize = 120;
+
+pub enum InternalServerMessage {
+    Unicast {
+        session_id: u64,
+        data: ServerMessageData,
+    },
+    Multicast {
+        session_ids: Vec<u64>,
+        data: ServerMessageData,
+    },
+    Broadcast(ServerMessageData),
+}
 
 #[derive(Debug)]
 pub struct UdpServerSettings {
@@ -34,7 +47,7 @@ pub struct UdpServerSettings {
 pub async fn run_udp_server(
     settings: UdpServerSettings,
     sender: Sender<ClientMessage>,
-    receiver: Receiver<ServerMessage>,
+    receiver: Receiver<InternalServerMessage>,
     stop: Arc<AtomicBool>,
 ) -> Result<(), std::io::Error> {
     info!("Run UDP server: {:?}", settings);
@@ -65,7 +78,7 @@ struct UdpServer {
     stop: Arc<AtomicBool>,
     settings: UdpServerSettings,
     sender: Sender<ClientMessage>,
-    receiver: Receiver<ServerMessage>,
+    receiver: Receiver<InternalServerMessage>,
     socket: UdpSocket,
     recv_buffer: Vec<u8>,
     sessions: Vec<UdpSession>,
@@ -122,40 +135,70 @@ impl UdpServer {
     }
 
     async fn handle_game_messages(&mut self) {
-        while let Ok(mut server_message) = self.receiver.try_recv() {
+        while let Ok(message) = self.receiver.try_recv() {
             self.message_counter += 1;
-            server_message.number = self.message_counter;
-            if matches!(
-                server_message.data,
-                ServerMessageData::GameUpdate(GameUpdate::World(..))
-            ) {
-                if self.sessions.is_empty()
-                    || self
-                        .sessions
-                        .iter()
-                        .all(|v| !matches!(v.state, UdpSessionState::Established))
-                {
-                    continue;
+            match message {
+                InternalServerMessage::Unicast { session_id, data } => {
+                    self.send_server_message_for_session(&ServerMessage {
+                        session_id,
+                        number: self.message_counter,
+                        data,
+                    })
+                    .await;
                 }
-                let buffer = bincode::serialize(&server_message).unwrap();
-                let compressed = compress_prepend_size(&buffer);
-                for session in self.sessions.iter() {
-                    if matches!(session.state, UdpSessionState::Established) {
-                        if let Err(e) = self.socket.send_to(&compressed, session.peer).await {
-                            warn!("Failed to send: {}", e);
-                        }
+                InternalServerMessage::Multicast { session_ids, data } => {
+                    let mut server_message = ServerMessage {
+                        session_id: 0,
+                        number: self.message_counter,
+                        data,
+                    };
+                    for session_id in session_ids {
+                        server_message.session_id = session_id;
+                        self.send_server_message_for_session(&server_message).await;
                     }
                 }
-            } else if let Some(session) = self
-                .sessions
-                .iter_mut()
-                .find(|v| v.session_id == server_message.session_id)
-            {
-                if matches!(server_message.data, ServerMessageData::NewPlayer { .. }) {
-                    session.state = UdpSessionState::Established;
+                InternalServerMessage::Broadcast(data) => {
+                    self.send_broadcast_server_message(&ServerMessage {
+                        session_id: 0,
+                        number: self.message_counter,
+                        data,
+                    })
+                    .await;
                 }
-                let buffer = bincode::serialize(&server_message).unwrap();
-                let compressed = compress_prepend_size(&buffer);
+            }
+        }
+    }
+
+    async fn send_server_message_for_session(&mut self, server_message: &ServerMessage) {
+        if let Some(session) = self
+            .sessions
+            .iter_mut()
+            .find(|v| v.session_id == server_message.session_id)
+        {
+            if matches!(server_message.data, ServerMessageData::NewPlayer { .. }) {
+                session.state = UdpSessionState::Established;
+            }
+            let buffer = bincode::serialize(&server_message).unwrap();
+            let compressed = compress_prepend_size(&buffer);
+            if let Err(e) = self.socket.send_to(&compressed, session.peer).await {
+                warn!("Failed to send: {}", e);
+            }
+        }
+    }
+
+    async fn send_broadcast_server_message(&mut self, server_message: &ServerMessage) {
+        if self.sessions.is_empty()
+            || self
+                .sessions
+                .iter()
+                .all(|v| !matches!(v.state, UdpSessionState::Established))
+        {
+            return;
+        }
+        let buffer = bincode::serialize(server_message).unwrap();
+        let compressed = compress_prepend_size(&buffer);
+        for session in self.sessions.iter() {
+            if matches!(session.state, UdpSessionState::Established) {
                 if let Err(e) = self.socket.send_to(&compressed, session.peer).await {
                     warn!("Failed to send: {}", e);
                 }
@@ -249,7 +292,7 @@ pub struct GameServerSettings {
 pub fn run_game_server(
     mut world: World,
     settings: GameServerSettings,
-    sender: Sender<ServerMessage>,
+    sender: Sender<InternalServerMessage>,
     receiver: Receiver<ClientMessage>,
     stop: Arc<AtomicBool>,
 ) {
@@ -265,6 +308,13 @@ pub fn run_game_server(
     let mut sessions: Vec<GameSession> = Vec::new();
     let mut rng = StdRng::from_entropy();
     let mut engine = Engine::default();
+    let mut world_history = VecDeque::with_capacity(MAX_WORLD_HISTORY_SIZE);
+    world_history.push_back(world.clone());
+    sender
+        .send(InternalServerMessage::Broadcast(
+            ServerMessageData::GameUpdate(GameUpdate::WorldSnapshot(world.clone())),
+        ))
+        .ok();
     while !stop.load(Ordering::Acquire) {
         handle_delayed_messages(&settings, &sender, &mut sessions, &mut world);
         handle_new_messages(
@@ -281,13 +331,11 @@ pub fn run_game_server(
         engine.update(time_step, &mut world);
         sessions.retain(|v| v.active);
         update_actor_index(&world, &mut sessions);
-        sender
-            .send(ServerMessage {
-                session_id: 0,
-                number: 0,
-                data: ServerMessageData::GameUpdate(GameUpdate::World(world.clone())),
-            })
-            .ok();
+        if world_history.len() >= MAX_WORLD_HISTORY_SIZE {
+            world_history.pop_front();
+        }
+        send_world_messages(&sender, &world, &world_history, &sessions);
+        world_history.push_back(world.clone());
         frame_rate_limiter.limit(Instant::now());
     }
     info!("Game server has stopped");
@@ -304,11 +352,12 @@ struct GameSession {
     messages_per_frame: u8,
     dropped_messages: usize,
     delayed_messages: VecDeque<ClientMessage>,
+    ack_world_revision: u64,
 }
 
 fn handle_delayed_messages(
     settings: &GameServerSettings,
-    sender: &Sender<ServerMessage>,
+    sender: &Sender<InternalServerMessage>,
     sessions: &mut [GameSession],
     world: &mut World,
 ) {
@@ -320,7 +369,7 @@ fn handle_delayed_messages(
 
 fn close_timed_out_sessions(
     session_timeout: Duration,
-    sender: &Sender<ServerMessage>,
+    sender: &Sender<InternalServerMessage>,
     sessions: &mut [GameSession],
 ) {
     for session in sessions.iter_mut() {
@@ -328,9 +377,8 @@ fn close_timed_out_sessions(
             warn!("Game session {} is timed out", session.session_id);
             session.active = false;
             sender
-                .send(ServerMessage {
+                .send(InternalServerMessage::Unicast {
                     session_id: session.session_id,
-                    number: 0,
                     data: ServerMessageData::Error(String::from("Session is timed out")),
                 })
                 .ok();
@@ -340,7 +388,7 @@ fn close_timed_out_sessions(
 
 fn handle_session_delayed_messages(
     settings: &GameServerSettings,
-    sender: &Sender<ServerMessage>,
+    sender: &Sender<InternalServerMessage>,
     session: &mut GameSession,
     world: &mut World,
 ) {
@@ -358,7 +406,7 @@ fn handle_session_delayed_messages(
 fn handle_session_delayed_message(
     message: ClientMessage,
     settings: &GameServerSettings,
-    sender: &Sender<ServerMessage>,
+    sender: &Sender<InternalServerMessage>,
     session: &mut GameSession,
     world: &mut World,
 ) -> bool {
@@ -371,7 +419,7 @@ fn handle_session_delayed_message(
 
 fn handle_new_messages<R: Rng + CryptoRng>(
     settings: &GameServerSettings,
-    sender: &Sender<ServerMessage>,
+    sender: &Sender<InternalServerMessage>,
     receiver: &Receiver<ClientMessage>,
     sessions: &mut Vec<GameSession>,
     rng: &mut R,
@@ -401,8 +449,7 @@ fn handle_new_messages<R: Rng + CryptoRng>(
                 settings.max_players
             );
             sender
-                .send(ServerMessage {
-                    number: 0,
+                .send(InternalServerMessage::Unicast {
                     session_id: message.session_id,
                     data: ServerMessageData::Error(String::from("Server is full")),
                 })
@@ -418,7 +465,7 @@ fn handle_new_messages<R: Rng + CryptoRng>(
 fn handle_session_new_message(
     message: ClientMessage,
     settings: &GameServerSettings,
-    sender: &Sender<ServerMessage>,
+    sender: &Sender<InternalServerMessage>,
     session: &mut GameSession,
     world: &mut World,
 ) {
@@ -438,7 +485,7 @@ fn handle_session_new_message(
 fn handle_session_message(
     message: ClientMessage,
     settings: &GameServerSettings,
-    sender: &Sender<ServerMessage>,
+    sender: &Sender<InternalServerMessage>,
     session: &mut GameSession,
     world: &mut World,
 ) {
@@ -456,26 +503,30 @@ fn handle_session_message(
         }
         ClientMessageData::Heartbeat => (),
         ClientMessageData::Join => sender
-            .send(ServerMessage {
+            .send(InternalServerMessage::Unicast {
                 session_id: session.session_id,
-                number: 0,
                 data: ServerMessageData::NewPlayer {
                     update_period: settings.update_period,
                     actor_id: session.actor_id,
                 },
             })
             .unwrap(),
-        ClientMessageData::PlayerAction(mut player_action) => {
-            if let Some(actor_index) = session.actor_index {
-                sanitize_player_action(&mut player_action, actor_index, world);
-                apply_player_action(&player_action, actor_index, world);
-            } else {
-                warn!(
-                    "Player actor is not found for game session: {}",
-                    session.session_id
-                );
+        ClientMessageData::PlayerUpdate(player_update) => match player_update {
+            PlayerUpdate::Action(mut player_action) => {
+                if let Some(actor_index) = session.actor_index {
+                    sanitize_player_action(&mut player_action, actor_index, world);
+                    apply_player_action(&player_action, actor_index, world);
+                } else {
+                    warn!(
+                        "Player actor is not found for game session: {}",
+                        session.session_id
+                    );
+                }
             }
-        }
+            PlayerUpdate::AckWorldRevision(revision) => {
+                session.ack_world_revision = revision.min(world.revision);
+            }
+        },
     }
 }
 
@@ -510,7 +561,7 @@ fn update_actor_index(world: &World, sessions: &mut [GameSession]) {
 
 fn create_new_session<R: CryptoRng + Rng>(
     update_period: Duration,
-    sender: &Sender<ServerMessage>,
+    sender: &Sender<InternalServerMessage>,
     message: ClientMessage,
     world: &mut World,
     rng: &mut R,
@@ -519,9 +570,8 @@ fn create_new_session<R: CryptoRng + Rng>(
         ClientMessageData::Join => {
             let actor_id = add_player_actor(world, rng);
             sender
-                .send(ServerMessage {
+                .send(InternalServerMessage::Unicast {
                     session_id: message.session_id,
-                    number: 0,
                     data: ServerMessageData::NewPlayer {
                         update_period,
                         actor_id,
@@ -538,6 +588,7 @@ fn create_new_session<R: CryptoRng + Rng>(
                 messages_per_frame: 1,
                 delayed_messages: VecDeque::with_capacity(MAX_DELAYED_MESSAGES_PER_SESSION),
                 dropped_messages: 0,
+                ack_world_revision: 0,
             })
         }
         ClientMessageData::Quit => None,
@@ -595,5 +646,51 @@ fn sanitize_player_action(player_action: &mut PlayerAction, actor_index: usize, 
             }
         }
         _ => (),
+    }
+}
+
+fn send_world_messages(
+    sender: &Sender<InternalServerMessage>,
+    world: &World,
+    world_history: &VecDeque<World>,
+    sessions: &[GameSession],
+) {
+    let mut world_snapshot_session_ids = Vec::new();
+    let mut world_updates: Vec<(usize, Vec<u64>, WorldUpdate)> = Vec::new();
+    for session in sessions.iter() {
+        if session.ack_world_revision == 0 {
+            world_snapshot_session_ids.push(session.session_id);
+            continue;
+        }
+        let offset = (world.revision - session.ack_world_revision) as usize;
+        if offset > world_history.len() {
+            world_snapshot_session_ids.push(session.session_id);
+            continue;
+        }
+        if let Some((_, session_ids, _)) = world_updates.iter_mut().find(|(v, _, _)| *v == offset) {
+            session_ids.push(session.session_id);
+            continue;
+        }
+        world_updates.push((
+            offset,
+            vec![session.session_id],
+            make_world_update(&world_history[world_history.len() - offset], &world),
+        ));
+    }
+    for (_, session_ids, world_update) in world_updates {
+        sender
+            .send(InternalServerMessage::Multicast {
+                session_ids,
+                data: ServerMessageData::GameUpdate(GameUpdate::WorldUpdate(world_update.clone())),
+            })
+            .ok();
+    }
+    if !world_snapshot_session_ids.is_empty() {
+        sender
+            .send(InternalServerMessage::Multicast {
+                session_ids: world_snapshot_session_ids,
+                data: ServerMessageData::GameUpdate(GameUpdate::WorldSnapshot(world.clone())),
+            })
+            .ok();
     }
 }

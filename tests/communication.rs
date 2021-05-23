@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use portpicker::pick_unused_port;
 
 use spell::client::{GameClientSettings, UdpClientSettings};
-use spell::protocol::{GameUpdate, PlayerAction};
+use spell::protocol::{GameUpdate, PlayerAction, PlayerUpdate};
 use spell::{run_server, with_background_client, ServerParams};
 
 #[test]
@@ -98,18 +98,20 @@ fn server_should_move_player() {
                 unreachable!()
             };
             let start = Instant::now();
-            action_sender.send(PlayerAction::Move(true)).unwrap();
+            action_sender
+                .send(PlayerUpdate::Action(PlayerAction::Move(true)))
+                .unwrap();
             let mut moving = false;
             while !moving && Instant::now() - start < Duration::from_secs(3) {
-                let world_update = update_receiver
+                let world_snapshot = update_receiver
                     .recv_timeout(Duration::from_secs(1))
                     .unwrap();
                 assert!(
-                    matches!(world_update, GameUpdate::World(..)),
+                    matches!(world_snapshot, GameUpdate::WorldSnapshot(..)),
                     "{:?}",
-                    world_update
+                    world_snapshot
                 );
-                if let GameUpdate::World(world) = world_update {
+                if let GameUpdate::WorldSnapshot(world) = world_snapshot {
                     moving = world
                         .actors
                         .iter()
@@ -319,6 +321,65 @@ fn server_should_support_multiple_players() {
     });
 }
 
+#[test]
+fn server_should_move_send_world_update_after_ack() {
+    init_logger();
+    let server_params = ServerParams {
+        address: String::from("127.0.0.4"),
+        port: pick_unused_port().unwrap(),
+        max_sessions: 1,
+        max_players: 1,
+        udp_session_timeout: 4.0,
+        game_session_timeout: 3.0,
+        update_frequency: 60.0,
+        random_seed: Some(42),
+    };
+    with_background_server_and_client(
+        server_params,
+        GameClientSettings {
+            id: 1,
+            connect_timeout: Duration::from_secs(3),
+            retry_period: Duration::from_secs_f64(0.25),
+        },
+        |action_sender, update_receiver| {
+            let set_player_id = update_receiver
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap();
+            assert!(
+                matches!(set_player_id, GameUpdate::SetPlayerId(..)),
+                "{:?}",
+                set_player_id
+            );
+            let start = Instant::now();
+            action_sender
+                .send(PlayerUpdate::Action(PlayerAction::Move(true)))
+                .unwrap();
+            while Instant::now() - start < Duration::from_secs(3) {
+                let server_message = update_receiver
+                    .recv_timeout(Duration::from_secs(1))
+                    .unwrap();
+                match server_message {
+                    GameUpdate::WorldUpdate(..) => break,
+                    GameUpdate::WorldSnapshot(world) => {
+                        action_sender
+                            .send(PlayerUpdate::AckWorldRevision(world.revision))
+                            .unwrap();
+                    }
+                    _ => (),
+                }
+            }
+            let world_update = update_receiver
+                .recv_timeout(Duration::from_secs(1))
+                .unwrap();
+            assert!(
+                matches!(world_update, GameUpdate::WorldUpdate(..)),
+                "{:?}",
+                world_update
+            );
+        },
+    );
+}
+
 fn init_logger() {
     env_logger::try_init().ok();
 }
@@ -328,7 +389,7 @@ fn with_background_server_and_client<F>(
     game_client_settings: GameClientSettings,
     f: F,
 ) where
-    F: FnOnce(Sender<PlayerAction>, Receiver<GameUpdate>),
+    F: FnOnce(Sender<PlayerUpdate>, Receiver<GameUpdate>),
 {
     let upd_client_settings = UdpClientSettings {
         id: game_client_settings.id,

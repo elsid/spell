@@ -17,14 +17,14 @@ use piston::EventLoop;
 use crate::control::apply_player_action;
 use crate::engine::Engine;
 use crate::meters::{DurationMovingAverage, FpsMovingAverage};
-use crate::protocol::{GameUpdate, PlayerAction};
+use crate::protocol::{apply_world_update, GameUpdate, PlayerAction, PlayerUpdate};
 use crate::vec2::Vec2f;
 use crate::world::{Aura, Disk, Element, Material, RingSector, StaticShape, World};
 
 pub struct Server {
     pub address: String,
     pub port: u16,
-    pub sender: Sender<PlayerAction>,
+    pub sender: Sender<PlayerUpdate>,
 }
 
 pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<GameUpdate>) {
@@ -52,8 +52,8 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
     let mut render_duration = DurationMovingAverage::new(100, Duration::from_secs(1));
     let mut update_duration = DurationMovingAverage::new(100, Duration::from_secs(1));
     let mut player_id = None;
-    let mut last_received_world_revision = 0;
-    let mut last_received_world_time = 0.0;
+    let mut local_world_revision = 0;
+    let mut local_world_time = 0.0;
     let mut lshift = false;
     let sender = server.as_ref().map(|v| &v.sender);
 
@@ -220,21 +220,30 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
         }
 
         if e.update_args().is_some() {
+            let start = Instant::now();
             while let Ok(update) = receiver.try_recv() {
                 match update {
                     GameUpdate::GameOver => player_id = None,
                     GameUpdate::SetPlayerId(v) => player_id = Some(v),
-                    GameUpdate::World(v) => {
-                        last_received_world_revision = v.revision;
-                        last_received_world_time = v.time;
+                    GameUpdate::WorldSnapshot(v) => {
                         world = v;
+                        if let Some(player_id) = player_id {
+                            last_player_index = world.actors.iter().position(|v| v.id == player_id);
+                        }
+                    }
+                    GameUpdate::WorldUpdate(world_update) => {
+                        apply_world_update(world_update, &mut world);
                         if let Some(player_id) = player_id {
                             last_player_index = world.actors.iter().position(|v| v.id == player_id);
                         }
                     }
                 }
             }
-            let start = Instant::now();
+            if let Some(sender) = sender.as_ref() {
+                if let Err(..) = sender.send(PlayerUpdate::AckWorldRevision(world.revision)) {
+                    break;
+                }
+            }
             if let Some(player_index) = last_player_index {
                 let target_direction = (last_mouse_pos - last_viewport_shift) / scale;
                 let norm = target_direction.norm();
@@ -251,7 +260,12 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                 }
             }
             if sender.is_some() {
-                engine.update_visual(time_step, &mut world);
+                local_world_revision = (local_world_revision + 1).max(world.revision);
+                local_world_time += time_step;
+                if local_world_time < world.time {
+                    local_world_time = world.time;
+                }
+                engine.update_visual(&mut world);
             } else {
                 engine.update(time_step, &mut world);
             }
@@ -649,7 +663,7 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                         format!(
                             "World revision: {} (+{})",
                             world.revision,
-                            world.revision - last_received_world_revision
+                            local_world_revision - world.revision
                         )
                     } else {
                         format!("World revision: {}", world.revision)
@@ -660,7 +674,7 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                         format!(
                             "World time: {:.3} (+{:.3})",
                             world.time,
-                            world.time - last_received_world_time
+                            local_world_time - world.time
                         )
                     } else {
                         format!("World time: {:.3}", world.time)
@@ -877,13 +891,13 @@ fn draw_ring_sector<G>(
 }
 
 fn send_or_apply_player_action(
-    sender: Option<&Sender<PlayerAction>>,
+    sender: Option<&Sender<PlayerUpdate>>,
     player_action: PlayerAction,
     actor_index: usize,
     world: &mut World,
 ) {
     if let Some(s) = sender {
-        s.send(player_action).unwrap();
+        s.send(PlayerUpdate::Action(player_action)).unwrap();
     } else {
         apply_player_action(&player_action, actor_index, world);
     }

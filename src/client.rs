@@ -9,7 +9,7 @@ use lz4_flex::decompress_size_prepended;
 use tokio::net::UdpSocket;
 
 use crate::protocol::{
-    get_server_message_data_type, ClientMessage, ClientMessageData, GameUpdate, PlayerAction,
+    get_server_message_data_type, ClientMessage, ClientMessageData, GameUpdate, PlayerUpdate,
     ServerMessage, ServerMessageData, HEARTBEAT_PERIOD,
 };
 
@@ -160,7 +160,7 @@ pub struct GameClientSettings {
 
 pub struct GameChannel {
     pub sender: Sender<GameUpdate>,
-    pub receiver: Receiver<PlayerAction>,
+    pub receiver: Receiver<PlayerUpdate>,
 }
 
 pub struct ServerChannel {
@@ -333,7 +333,7 @@ fn run_server_sender(
     session_id: u64,
     mut message_number: u64,
     sender: Sender<ClientMessage>,
-    receiver: Receiver<PlayerAction>,
+    receiver: Receiver<PlayerUpdate>,
 ) {
     info!(
         "[{}] Run server sender for session {}",
@@ -341,11 +341,11 @@ fn run_server_sender(
     );
     loop {
         match receiver.recv_timeout(HEARTBEAT_PERIOD) {
-            Ok(player_action) => {
+            Ok(player_update) => {
                 if let Err(e) = sender.send(ClientMessage {
                     session_id,
                     number: message_number,
-                    data: ClientMessageData::PlayerAction(player_action),
+                    data: ClientMessageData::PlayerUpdate(player_update),
                 }) {
                     error!(
                         "[{}] Server sender has failed to send player action for session {}: {}",

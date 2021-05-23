@@ -14,7 +14,7 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
     let mut actors = Vec::new();
     generate_actors(
         Material::Flesh,
-        10,
+        rng.gen_range(8..12),
         &bounds,
         &mut id_counter,
         &mut actors,
@@ -25,7 +25,7 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
     for material in &[Material::Flesh, Material::Stone] {
         generate_dynamic_objects(
             *material,
-            10,
+            rng.gen_range(8..12),
             &bounds,
             &mut id_counter,
             &mut dynamic_objects,
@@ -33,7 +33,7 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
         );
         generate_static_objects(
             *material,
-            10,
+            rng.gen_range(8..12),
             &bounds,
             &mut id_counter,
             &mut static_objects,
@@ -54,7 +54,7 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
     generate_static_areas(
         Material::Grass,
         Magick::default(),
-        10,
+        rng.gen_range(8..12),
         &bounds,
         &mut id_counter,
         &mut static_areas,
@@ -68,7 +68,7 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
     generate_static_areas(
         Material::Water,
         water_magick,
-        10,
+        rng.gen_range(8..12),
         &bounds,
         &mut id_counter,
         &mut static_areas,

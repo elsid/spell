@@ -226,9 +226,7 @@ impl Engine {
     }
 
     #[cfg(feature = "render")]
-    pub fn update_visual(&mut self, duration: f64, world: &mut World) {
-        world.revision += 1;
-        world.time += duration;
+    pub fn update_visual(&mut self, world: &mut World) {
         self.update_beams(world);
     }
 

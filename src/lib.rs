@@ -23,7 +23,7 @@ use crate::game::{run_game, Server};
 #[cfg(feature = "render")]
 use crate::generators::generate_player_actor;
 use crate::generators::generate_world;
-use crate::protocol::{ClientMessage, GameUpdate, PlayerAction, ServerMessage};
+use crate::protocol::{ClientMessage, GameUpdate, PlayerUpdate, ServerMessage};
 use crate::rect::Rectf;
 use crate::server::{run_game_server, run_udp_server, GameServerSettings, UdpServerSettings};
 use crate::vec2::Vec2f;
@@ -131,7 +131,7 @@ pub fn with_background_client<F>(
     udp_client_settings: UdpClientSettings,
     f: F,
 ) where
-    F: FnOnce(Sender<PlayerAction>, Receiver<GameUpdate>),
+    F: FnOnce(Sender<PlayerUpdate>, Receiver<GameUpdate>),
 {
     let w = move |client_sender, server_receiver| {
         with_background_game_client(game_client_settings, client_sender, server_receiver, f);
@@ -145,7 +145,7 @@ pub fn with_background_game_client<F>(
     server_receiver: Receiver<ServerMessage>,
     f: F,
 ) where
-    F: FnOnce(Sender<PlayerAction>, Receiver<GameUpdate>),
+    F: FnOnce(Sender<PlayerUpdate>, Receiver<GameUpdate>),
 {
     let (update_sender, update_receiver) = channel();
     let (action_sender, action_receiver) = channel();
@@ -184,7 +184,7 @@ where
 pub fn run_background_game_client(
     settings: GameClientSettings,
     update_sender: Sender<GameUpdate>,
-    action_receiver: Receiver<PlayerAction>,
+    action_receiver: Receiver<PlayerUpdate>,
     client_sender: Sender<ClientMessage>,
     server_receiver: Receiver<ServerMessage>,
     stop: Arc<AtomicBool>,
