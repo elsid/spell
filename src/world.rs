@@ -111,7 +111,7 @@ pub struct StaticObject {
     pub aura: Aura,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
 pub struct Beam {
     pub id: u64,
     pub actor_id: u64,
@@ -252,5 +252,88 @@ impl From<usize> for Element {
             10 => Element::Poison,
             _ => unimplemented!(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rand::rngs::SmallRng;
+    use rand::SeedableRng;
+
+    use crate::generators::{
+        generate_actor, generate_dynamic_object, generate_static_area, generate_static_object,
+    };
+
+    use super::*;
+
+    #[test]
+    fn serialized_default_world_size() {
+        assert_eq!(bincode::serialize(&World::default()).unwrap().len(), 250);
+    }
+
+    #[test]
+    fn serialized_actor_size() {
+        assert_eq!(
+            bincode::serialize(&generate_actor(
+                Material::Flesh,
+                1,
+                &Rectf::new(Vec2f::ZERO, Vec2f::new(1.0, 1.0)),
+                &mut SmallRng::seed_from_u64(42),
+            ))
+            .unwrap()
+            .len(),
+            346
+        );
+    }
+
+    #[test]
+    fn serialized_dynamic_object_size() {
+        assert_eq!(
+            bincode::serialize(&generate_dynamic_object(
+                Material::Flesh,
+                1,
+                &Rectf::new(Vec2f::ZERO, Vec2f::new(1.0, 1.0)),
+                &mut SmallRng::seed_from_u64(42),
+            ))
+            .unwrap()
+            .len(),
+            303
+        );
+    }
+
+    #[test]
+    fn serialized_static_object_size() {
+        assert_eq!(
+            bincode::serialize(&generate_static_object(
+                Material::Flesh,
+                1,
+                &Rectf::new(Vec2f::ZERO, Vec2f::new(1.0, 1.0)),
+                &mut SmallRng::seed_from_u64(42),
+            ))
+            .unwrap()
+            .len(),
+            259
+        );
+    }
+
+    #[test]
+    fn serialized_default_beam_size() {
+        assert_eq!(bincode::serialize(&Beam::default()).unwrap().len(), 112);
+    }
+
+    #[test]
+    fn serialized_static_area_size() {
+        assert_eq!(
+            bincode::serialize(&generate_static_area(
+                Material::Flesh,
+                Magick::default(),
+                1,
+                &Rectf::new(Vec2f::ZERO, Vec2f::new(1.0, 1.0)),
+                &mut SmallRng::seed_from_u64(42),
+            ))
+            .unwrap()
+            .len(),
+            124
+        );
     }
 }
