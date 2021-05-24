@@ -16,7 +16,7 @@ impl Rectf {
 
 impl PartialEq for Rectf {
     fn eq(&self, rhs: &Self) -> bool {
-        (self.min, self.min).eq(&(rhs.max, rhs.max))
+        (self.min, self.max).eq(&(rhs.min, rhs.max))
     }
 }
 
