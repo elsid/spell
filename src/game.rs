@@ -58,9 +58,9 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
     let mut show_debug_info = false;
     let sender = server.as_ref().map(|v| &v.sender);
 
-    while let Some(e) = events.next(&mut window) {
-        if let Some(v) = e.press_args() {
-            match v {
+    while let Some(event) = events.next(&mut window) {
+        if let Some(button) = event.press_args() {
+            match button {
                 Button::Mouse(MouseButton::Left) => {
                     if let Some(player_index) = last_player_index {
                         send_or_apply_player_action(
@@ -95,8 +95,8 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
             }
         }
 
-        if let Some(v) = e.release_args() {
-            match v {
+        if let Some(button) = event.release_args() {
+            match button {
                 Button::Mouse(MouseButton::Left) => {
                     if let Some(player_index) = last_player_index {
                         send_or_apply_player_action(
@@ -215,15 +215,15 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
             }
         }
 
-        if let Some(scroll) = e.mouse_scroll_args() {
+        if let Some(scroll) = event.mouse_scroll_args() {
             scale *= 1.0 + scroll[1] * 0.1;
         }
 
-        if let Some(args) = e.mouse_cursor_args() {
+        if let Some(args) = event.mouse_cursor_args() {
             last_mouse_pos = Vec2f::new(args[0], args[1]);
         }
 
-        if e.update_args().is_some() {
+        if event.update_args().is_some() {
             let start = Instant::now();
             while let Ok(update) = receiver.try_recv() {
                 match update {
@@ -282,9 +282,9 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
             update_duration.add(Instant::now() - start);
         }
 
-        if let Some(args) = e.render_args() {
+        if let Some(render_args) = event.render_args() {
             let start = Instant::now();
-            let viewport = args.viewport();
+            let viewport = render_args.viewport();
 
             last_viewport_shift =
                 Vec2f::new(viewport.window_size[0] / 2.0, viewport.window_size[1] / 2.0);
