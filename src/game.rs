@@ -55,6 +55,7 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
     let mut local_world_revision = 0;
     let mut local_world_time = 0.0;
     let mut lshift = false;
+    let mut show_debug_info = false;
     let sender = server.as_ref().map(|v| &v.sender);
 
     while let Some(e) = events.next(&mut window) {
@@ -206,6 +207,9 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                             &mut world,
                         );
                     }
+                }
+                Button::Keyboard(Key::F2) => {
+                    show_debug_info = !show_debug_info;
                 }
                 _ => (),
             }
@@ -648,86 +652,88 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                     }
                 }
 
-                let format_eps = || Some(format!("Events/s: {0:.3}", eps.get()));
-                let format_render =
-                    || Some(format!("Render: {0:.3} ms", render_duration.get() * 1000.0));
-                let format_update =
-                    || Some(format!("Update: {0:.3} ms", update_duration.get() * 1000.0));
-                let format_server = || {
-                    server
-                        .as_ref()
-                        .map(|v| format!("Server: {}:{}", v.address, v.port))
-                };
-                let format_world_revision = || {
-                    Some(if server.is_some() {
-                        format!(
-                            "World revision: {} (+{})",
-                            world.revision,
-                            local_world_revision - world.revision
-                        )
-                    } else {
-                        format!("World revision: {}", world.revision)
-                    })
-                };
-                let format_world_time = || {
-                    Some(if server.is_some() {
-                        format!(
-                            "World time: {:.3} (+{:.3})",
-                            world.time,
-                            local_world_time - world.time
-                        )
-                    } else {
-                        format!("World time: {:.3}", world.time)
-                    })
-                };
-                let format_player =
-                    || Some(format!("Player: {:?} {:?}", player_id, last_player_index));
-                let format_actors = || Some(format!("Actors: {}", world.actors.len()));
-                let format_dynamic_objects =
-                    || Some(format!("Dynamic objects: {}", world.dynamic_objects.len()));
-                let format_static_objects =
-                    || Some(format!("Static objects: {}", world.static_objects.len()));
-                let format_beams = || Some(format!("Beams: {}", world.beams.len()));
-                let format_static_areas =
-                    || Some(format!("Static areas: {}", world.static_areas.len()));
-                let format_temp_areas = || Some(format!("Temp areas: {}", world.temp_areas.len()));
-                let format_bounded_areas =
-                    || Some(format!("Bounded areas: {}", world.bounded_areas.len()));
-                let format_fields = || Some(format!("Fields: {}", world.fields.len()));
-
-                type FormatRef<'a> = &'a dyn Fn() -> Option<String>;
-
-                let formats: &[FormatRef] = &[
-                    &format_eps as FormatRef,
-                    &format_render as FormatRef,
-                    &format_update as FormatRef,
-                    &format_server as FormatRef,
-                    &format_world_revision as FormatRef,
-                    &format_world_time as FormatRef,
-                    &format_player as FormatRef,
-                    &format_actors as FormatRef,
-                    &format_dynamic_objects as FormatRef,
-                    &format_static_objects as FormatRef,
-                    &format_beams as FormatRef,
-                    &format_static_areas as FormatRef,
-                    &format_temp_areas as FormatRef,
-                    &format_bounded_areas as FormatRef,
-                    &format_fields as FormatRef,
-                ];
-
-                let mut text_counter = 0;
-                for f in formats.iter() {
-                    if let Some(text) = f() {
-                        text_counter += 1;
-                        text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
-                            .draw(
-                                &text[..],
-                                &mut glyphs,
-                                &ctx.draw_state,
-                                ctx.transform.trans(10.0, (4 + text_counter * 24) as f64),
-                                g,
+                if show_debug_info {
+                    let format_eps = || Some(format!("Events/s: {0:.3}", eps.get()));
+                    let format_render =
+                        || Some(format!("Render: {0:.3} ms", render_duration.get() * 1000.0));
+                    let format_update =
+                        || Some(format!("Update: {0:.3} ms", update_duration.get() * 1000.0));
+                    let format_server = || {
+                        server
+                            .as_ref()
+                            .map(|v| format!("Server: {}:{}", v.address, v.port))
+                    };
+                    let format_world_revision = || {
+                        Some(if server.is_some() {
+                            format!(
+                                "World revision: {} (+{})",
+                                world.revision,
+                                local_world_revision - world.revision
                             )
-                            .unwrap();
+                        } else {
+                            format!("World revision: {}", world.revision)
+                        })
+                    };
+                    let format_world_time = || {
+                        Some(if server.is_some() {
+                            format!(
+                                "World time: {:.3} (+{:.3})",
+                                world.time,
+                                local_world_time - world.time
+                            )
+                        } else {
+                            format!("World time: {:.3}", world.time)
+                        })
+                    };
+                    let format_player =
+                        || Some(format!("Player: {:?} {:?}", player_id, last_player_index));
+                    let format_actors = || Some(format!("Actors: {}", world.actors.len()));
+                    let format_dynamic_objects =
+                        || Some(format!("Dynamic objects: {}", world.dynamic_objects.len()));
+                    let format_static_objects =
+                        || Some(format!("Static objects: {}", world.static_objects.len()));
+                    let format_beams = || Some(format!("Beams: {}", world.beams.len()));
+                    let format_static_areas =
+                        || Some(format!("Static areas: {}", world.static_areas.len()));
+                    let format_temp_areas = || Some(format!("Temp areas: {}", world.temp_areas.len()));
+                    let format_bounded_areas =
+                        || Some(format!("Bounded areas: {}", world.bounded_areas.len()));
+                    let format_fields = || Some(format!("Fields: {}", world.fields.len()));
+
+                    type FormatRef<'a> = &'a dyn Fn() -> Option<String>;
+
+                    let formats: &[FormatRef] = &[
+                        &format_eps as FormatRef,
+                        &format_render as FormatRef,
+                        &format_update as FormatRef,
+                        &format_server as FormatRef,
+                        &format_world_revision as FormatRef,
+                        &format_world_time as FormatRef,
+                        &format_player as FormatRef,
+                        &format_actors as FormatRef,
+                        &format_dynamic_objects as FormatRef,
+                        &format_static_objects as FormatRef,
+                        &format_beams as FormatRef,
+                        &format_static_areas as FormatRef,
+                        &format_temp_areas as FormatRef,
+                        &format_bounded_areas as FormatRef,
+                        &format_fields as FormatRef,
+                    ];
+
+                    let mut text_counter = 0;
+                    for f in formats.iter() {
+                        if let Some(text) = f() {
+                            text_counter += 1;
+                            text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
+                                .draw(
+                                    &text[..],
+                                    &mut glyphs,
+                                    &ctx.draw_state,
+                                    ctx.transform.trans(10.0, (4 + text_counter * 24) as f64),
+                                    g,
+                                )
+                                .unwrap();
+                        }
                     }
                 }
             });
