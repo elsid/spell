@@ -1,4 +1,6 @@
 #[macro_use]
+extern crate conrod_core;
+#[macro_use]
 extern crate log;
 
 use std::sync::atomic::{AtomicBool, Ordering};

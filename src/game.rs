@@ -1,18 +1,16 @@
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
+use conrod_core::position::Place;
+use conrod_core::{widget, Positionable, Scalar, Widget};
 use glfw_window::GlfwWindow;
-use graphics::{
-    ellipse, line, math, polygon, rectangle, text, types, DrawState, Graphics, Polygon, Transformed,
+use piston_window::texture::UpdateTexture;
+use piston_window::{
+    ellipse, line, math, polygon, rectangle, types, Button, DrawState, EventLoop, EventSettings,
+    G2d, G2dTexture, Graphics, Key, MouseButton, MouseCursorEvent, MouseScrollEvent, OpenGL,
+    PistonWindow, Polygon, PressEvent, ReleaseEvent, TextureSettings, Transformed, UpdateEvent,
+    Window, WindowSettings,
 };
-use opengl_graphics::{Filter, GlGraphics, GlyphCache, OpenGL, TextureSettings};
-use piston::event_loop::{EventSettings, Events};
-use piston::input::{
-    Button, Key, MouseButton, MouseCursorEvent, MouseScrollEvent, PressEvent, ReleaseEvent,
-    RenderEvent, UpdateEvent,
-};
-use piston::window::{Window, WindowSettings};
-use piston::EventLoop;
 
 use crate::control::apply_player_action;
 use crate::engine::Engine;
@@ -29,25 +27,39 @@ pub struct Server {
 
 pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<GameUpdate>) {
     info!("Run game");
-    let opengl = OpenGL::V2_1;
-    let mut window: GlfwWindow = WindowSettings::new("spell", [640, 480])
-        .graphics_api(opengl)
+    let mut window: PistonWindow<GlfwWindow> = WindowSettings::new("spell", [640, 480])
+        .graphics_api(OpenGL::V3_2)
         .exit_on_esc(true)
         .build()
         .unwrap();
-    window.window.maximize();
-    let mut gl = GlGraphics::new(opengl);
+    window.window.window.maximize();
+    window.set_event_settings(EventSettings::new().max_fps(60).ups(60));
+    let mut ui = conrod_core::UiBuilder::new([window.size().width, window.size().height])
+        .theme(make_theme())
+        .build();
+    ui.fonts.insert_from_file("fonts/UbuntuMono-R.ttf").unwrap();
+    let widget_ids = WidgetIds::new(ui.widget_id_generator());
+    let mut texture_context = window.create_texture_context();
+    let mut text_vertex_data = Vec::new();
+    let (mut glyph_cache, mut text_texture_cache) = {
+        let cache = conrod_core::text::GlyphCache::builder().build();
+        let (width, height) = cache.dimensions();
+        let init = vec![128; width as usize * height as usize];
+        let settings = TextureSettings::new();
+        let texture =
+            G2dTexture::from_memory_alpha(&mut texture_context, &init, width, height, &settings)
+                .unwrap();
+        (cache, texture)
+    };
+    let image_map = conrod_core::image::Map::new();
+
     let mut engine = Engine::default();
-    let mut events = Events::new(EventSettings::new().max_fps(60).ups(60));
     let mut scale = window.size().height / 20.0;
     let time_step = 1.0 / 60.0;
     let mut last_mouse_pos = Vec2f::ZERO;
     let mut last_viewport_shift = Vec2f::ZERO;
     let mut last_player_position = Vec2f::ZERO;
     let mut last_player_index = None;
-    let texture_settings = TextureSettings::new().filter(Filter::Linear);
-    let mut glyphs = GlyphCache::new("fonts/UbuntuMono-R.ttf", (), texture_settings)
-        .expect("Could not load font");
     let mut eps = FpsMovingAverage::new(100, Duration::from_secs(1));
     let mut render_duration = DurationMovingAverage::new(100, Duration::from_secs(1));
     let mut update_duration = DurationMovingAverage::new(100, Duration::from_secs(1));
@@ -58,7 +70,17 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
     let mut show_debug_info = false;
     let sender = server.as_ref().map(|v| &v.sender);
 
-    while let Some(event) = events.next(&mut window) {
+    while let Some(event) = window.next() {
+        let size = window.size();
+
+        if let Some(e) = conrod_piston::event::convert(
+            event.clone(),
+            size.width as Scalar,
+            size.height as Scalar,
+        ) {
+            ui.handle_event(e);
+        }
+
         if let Some(button) = event.press_args() {
             match button {
                 Button::Mouse(MouseButton::Left) => {
@@ -279,24 +301,108 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
             if let Some(player_index) = last_player_index {
                 last_player_position = world.actors[player_index].position;
             }
+            let mut ui_cell = ui.set_widgets();
+
+            if show_debug_info {
+                let format_eps = || Some(format!("Events/s: {0:.3}", eps.get()));
+                let format_render =
+                    || Some(format!("Render: {0:.3} ms", render_duration.get() * 1000.0));
+                let format_update =
+                    || Some(format!("Update: {0:.3} ms", update_duration.get() * 1000.0));
+                let format_server = || {
+                    server
+                        .as_ref()
+                        .map(|v| format!("Server: {}:{}", v.address, v.port))
+                };
+                let format_world_revision = || {
+                    Some(if server.is_some() {
+                        format!(
+                            "World revision: {} (+{})",
+                            world.revision,
+                            local_world_revision - world.revision
+                        )
+                    } else {
+                        format!("World revision: {}", world.revision)
+                    })
+                };
+                let format_world_time = || {
+                    Some(if server.is_some() {
+                        format!(
+                            "World time: {:.3} (+{:.3})",
+                            world.time,
+                            local_world_time - world.time
+                        )
+                    } else {
+                        format!("World time: {:.3}", world.time)
+                    })
+                };
+                let format_player =
+                    || Some(format!("Player: {:?} {:?}", player_id, last_player_index));
+                let format_actors = || Some(format!("Actors: {}", world.actors.len()));
+                let format_dynamic_objects =
+                    || Some(format!("Dynamic objects: {}", world.dynamic_objects.len()));
+                let format_static_objects =
+                    || Some(format!("Static objects: {}", world.static_objects.len()));
+                let format_beams = || Some(format!("Beams: {}", world.beams.len()));
+                let format_static_areas =
+                    || Some(format!("Static areas: {}", world.static_areas.len()));
+                let format_temp_areas = || Some(format!("Temp areas: {}", world.temp_areas.len()));
+                let format_bounded_areas =
+                    || Some(format!("Bounded areas: {}", world.bounded_areas.len()));
+                let format_fields = || Some(format!("Fields: {}", world.fields.len()));
+
+                type FormatRef<'a> = &'a dyn Fn() -> Option<String>;
+
+                let formats: &[FormatRef] = &[
+                    &format_eps as FormatRef,
+                    &format_render as FormatRef,
+                    &format_update as FormatRef,
+                    &format_server as FormatRef,
+                    &format_world_revision as FormatRef,
+                    &format_world_time as FormatRef,
+                    &format_player as FormatRef,
+                    &format_actors as FormatRef,
+                    &format_dynamic_objects as FormatRef,
+                    &format_static_objects as FormatRef,
+                    &format_beams as FormatRef,
+                    &format_static_areas as FormatRef,
+                    &format_temp_areas as FormatRef,
+                    &format_bounded_areas as FormatRef,
+                    &format_fields as FormatRef,
+                ];
+
+                let text = formats.iter().fold(String::new(), |r, f| {
+                    if let Some(v) = f() {
+                        format!("{}\n{}", r, v)
+                    } else {
+                        r
+                    }
+                });
+                widget::Canvas::new().set(widget_ids.canvas, &mut ui_cell);
+                widget::Text::new(text.as_str())
+                    .x_place_on(widget_ids.canvas, Place::Start(Some(10.0)))
+                    .y_place_on(widget_ids.canvas, Place::End(Some(4.0)))
+                    .line_spacing(4.0)
+                    .set(widget_ids.debug_info, &mut ui_cell);
+            }
+
             update_duration.add(Instant::now() - start);
         }
 
-        if let Some(render_args) = event.render_args() {
-            let start = Instant::now();
-            let viewport = render_args.viewport();
+        window.draw_2d(&event, |ctx, g, device| {
+            if let Some(viewport) = ctx.viewport.as_ref() {
+                let start = Instant::now();
 
-            last_viewport_shift =
-                Vec2f::new(viewport.window_size[0] / 2.0, viewport.window_size[1] / 2.0);
+                last_viewport_shift =
+                    Vec2f::new(viewport.window_size[0] / 2.0, viewport.window_size[1] / 2.0);
 
-            gl.draw(viewport, |ctx, g| {
                 let base_transform = ctx
                     .transform
                     .trans(last_viewport_shift.x, last_viewport_shift.y)
                     .scale(scale, scale)
                     .trans(-last_player_position.x, -last_player_position.y);
 
-                graphics::clear([0.0, 0.0, 0.0, 1.0], g);
+                piston_window::clear([0.0, 0.0, 0.0, 1.0], g);
 
                 for v in world.static_areas.iter() {
                     with_disk_body_and_magick(
@@ -349,7 +455,7 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                 if let Some(player_index) = last_player_index {
                     let target =
                         last_player_position + (last_mouse_pos - last_viewport_shift) / scale;
-                    graphics::line_from_to(
+                    piston_window::line_from_to(
                         [0.0, 0.0, 0.0, 0.5],
                         1.0 / scale,
                         [last_player_position.x, last_player_position.y],
@@ -361,7 +467,7 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                     let player = &world.actors[player_index];
                     let current_target =
                         player.position + player.current_direction * player.body.shape.radius * 2.0;
-                    graphics::line_from_to(
+                    piston_window::line_from_to(
                         [0.0, 0.0, 0.0, 0.5],
                         1.0 / scale,
                         [last_player_position.x, last_player_position.y],
@@ -652,94 +758,47 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                     }
                 }
 
-                if show_debug_info {
-                    let format_eps = || Some(format!("Events/s: {0:.3}", eps.get()));
-                    let format_render =
-                        || Some(format!("Render: {0:.3} ms", render_duration.get() * 1000.0));
-                    let format_update =
-                        || Some(format!("Update: {0:.3} ms", update_duration.get() * 1000.0));
-                    let format_server = || {
-                        server
-                            .as_ref()
-                            .map(|v| format!("Server: {}:{}", v.address, v.port))
-                    };
-                    let format_world_revision = || {
-                        Some(if server.is_some() {
-                            format!(
-                                "World revision: {} (+{})",
-                                world.revision,
-                                local_world_revision - world.revision
-                            )
-                        } else {
-                            format!("World revision: {}", world.revision)
-                        })
-                    };
-                    let format_world_time = || {
-                        Some(if server.is_some() {
-                            format!(
-                                "World time: {:.3} (+{:.3})",
-                                world.time,
-                                local_world_time - world.time
-                            )
-                        } else {
-                            format!("World time: {:.3}", world.time)
-                        })
-                    };
-                    let format_player =
-                        || Some(format!("Player: {:?} {:?}", player_id, last_player_index));
-                    let format_actors = || Some(format!("Actors: {}", world.actors.len()));
-                    let format_dynamic_objects =
-                        || Some(format!("Dynamic objects: {}", world.dynamic_objects.len()));
-                    let format_static_objects =
-                        || Some(format!("Static objects: {}", world.static_objects.len()));
-                    let format_beams = || Some(format!("Beams: {}", world.beams.len()));
-                    let format_static_areas =
-                        || Some(format!("Static areas: {}", world.static_areas.len()));
-                    let format_temp_areas = || Some(format!("Temp areas: {}", world.temp_areas.len()));
-                    let format_bounded_areas =
-                        || Some(format!("Bounded areas: {}", world.bounded_areas.len()));
-                    let format_fields = || Some(format!("Fields: {}", world.fields.len()));
+                let primitives = ui.draw();
+                let cache_queued_glyphs = |_: &mut G2d,
+                                           cache: &mut G2dTexture,
+                                           rect: conrod_core::text::rt::Rect<u32>,
+                                           data: &[u8]| {
+                    let offset = [rect.min.x, rect.min.y];
+                    let size = [rect.width(), rect.height()];
+                    let format = piston_window::texture::Format::Rgba8;
+                    text_vertex_data.clear();
+                    text_vertex_data.extend(data.iter().flat_map(|&b| vec![255, 255, 255, b]));
+                    UpdateTexture::update(
+                        cache,
+                        &mut texture_context,
+                        format,
+                        &text_vertex_data[..],
+                        offset,
+                        size,
+                    )
+                    .expect("failed to update texture")
+                };
 
-                    type FormatRef<'a> = &'a dyn Fn() -> Option<String>;
-
-                    let formats: &[FormatRef] = &[
-                        &format_eps as FormatRef,
-                        &format_render as FormatRef,
-                        &format_update as FormatRef,
-                        &format_server as FormatRef,
-                        &format_world_revision as FormatRef,
-                        &format_world_time as FormatRef,
-                        &format_player as FormatRef,
-                        &format_actors as FormatRef,
-                        &format_dynamic_objects as FormatRef,
-                        &format_static_objects as FormatRef,
-                        &format_beams as FormatRef,
-                        &format_static_areas as FormatRef,
-                        &format_temp_areas as FormatRef,
-                        &format_bounded_areas as FormatRef,
-                        &format_fields as FormatRef,
-                    ];
-
-                    let mut text_counter = 0;
-                    for f in formats.iter() {
-                        if let Some(text) = f() {
-                            text_counter += 1;
-                            text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
-                                .draw(
-                                    &text[..],
-                                    &mut glyphs,
-                                    &ctx.draw_state,
-                                    ctx.transform.trans(10.0, (4 + text_counter * 24) as f64),
-                                    g,
-                                )
-                                .unwrap();
-                        }
-                    }
+                fn texture_from_image<T>(img: &T) -> &T {
+                    img
                 }
-            });
 
-            render_duration.add(Instant::now() - start);
-        }
+                conrod_piston::draw::primitives(
+                    primitives,
+                    ctx,
+                    g,
+                    &mut text_texture_cache,
+                    &mut glyph_cache,
+                    &image_map,
+                    cache_queued_glyphs,
+                    texture_from_image,
+                );
+
+                texture_context.encoder.flush(device);
+
+                render_duration.add(Instant::now() - start);
+            }
+        });
 
         eps.add(Instant::now());
     }
@@ -883,7 +942,7 @@ fn draw_ring_sector<G>(
     G: Graphics,
 {
     g.tri_list(draw_state, &shape.color, |f| {
-        use graphics::triangulation::{tx, ty};
+        use piston_window::triangulation::{tx, ty};
         for i in 1..vertices.len() - 1 {
             let buffer = &vertices[i - 1..i + 2];
             let mut draw_buffer = [[0.0; 2]; 3];
@@ -906,5 +965,34 @@ fn send_or_apply_player_action(
         s.send(PlayerUpdate::Action(player_action)).unwrap();
     } else {
         apply_player_action(&player_action, actor_index, world);
+    }
+}
+
+widget_ids! {
+    pub struct WidgetIds {
+        canvas,
+        debug_info,
+    }
+}
+
+pub fn make_theme() -> conrod_core::Theme {
+    use conrod_core::position::{Align, Direction, Padding, Position, Relative};
+    conrod_core::Theme {
+        name: "Spell".to_string(),
+        padding: Padding::none(),
+        x_position: Position::Relative(Relative::Align(Align::Start), None),
+        y_position: Position::Relative(Relative::Direction(Direction::Backwards, 20.0), None),
+        background_color: conrod_core::color::TRANSPARENT,
+        shape_color: conrod_core::color::LIGHT_CHARCOAL,
+        border_color: conrod_core::color::BLACK,
+        border_width: 0.0,
+        label_color: conrod_core::color::WHITE,
+        font_id: None,
+        font_size_large: 26,
+        font_size_medium: 22,
+        font_size_small: 18,
+        widget_styling: conrod_core::theme::StyleMap::default(),
+        mouse_drag_threshold: 0.0,
+        double_click_threshold: std::time::Duration::from_millis(500),
     }
 }
