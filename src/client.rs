@@ -5,12 +5,11 @@ use std::sync::Arc;
 use std::thread::{sleep, spawn};
 use std::time::{Duration, Instant};
 
-use lz4_flex::decompress_size_prepended;
 use tokio::net::UdpSocket;
 
 use crate::protocol::{
-    get_server_message_data_type, ClientMessage, ClientMessageData, GameUpdate, PlayerUpdate,
-    ServerMessage, ServerMessageData, HEARTBEAT_PERIOD,
+    deserialize_server_message, get_server_message_data_type, ClientMessage, ClientMessageData,
+    GameUpdate, PlayerUpdate, ServerMessage, ServerMessageData, HEARTBEAT_PERIOD,
 };
 
 #[derive(Debug, Clone)]
@@ -66,17 +65,7 @@ pub async fn run_udp_client(
         if let Ok(Ok(size)) =
             tokio::time::timeout(recv_timeout, socket.recv(&mut recv_buffer)).await
         {
-            let decompressed = match decompress_size_prepended(&recv_buffer[0..size]) {
-                Ok(v) => v,
-                Err(e) => {
-                    warn!(
-                        "[{}] Failed to decompress server message: {}",
-                        settings.id, e
-                    );
-                    continue;
-                }
-            };
-            let server_message: ServerMessage = match bincode::deserialize(&decompressed) {
+            let server_message = match deserialize_server_message(&recv_buffer[0..size]) {
                 Ok(v) => v,
                 Err(e) => {
                     warn!(

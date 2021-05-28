@@ -15,9 +15,9 @@ use crate::control::apply_player_action;
 use crate::engine::{get_next_id, remove_actor, Engine};
 use crate::generators::generate_player_actor;
 use crate::protocol::{
-    get_client_message_data_type, is_valid_player_name, make_world_update, ClientMessage,
-    ClientMessageData, GameUpdate, PlayerAction, PlayerUpdate, ServerMessage, ServerMessageData,
-    WorldUpdate, HEARTBEAT_PERIOD,
+    deserialize_client_message, get_client_message_data_type, is_valid_player_name,
+    make_world_update, ClientMessage, ClientMessageData, GameUpdate, PlayerAction, PlayerUpdate,
+    ServerMessage, ServerMessageData, WorldUpdate, HEARTBEAT_PERIOD,
 };
 use crate::world::World;
 
@@ -247,8 +247,8 @@ impl UdpServer {
                         );
                         continue;
                     };
-                let mut client_message: ClientMessage =
-                    match bincode::deserialize(&self.recv_buffer[0..size]) {
+                let mut client_message =
+                    match deserialize_client_message(&self.recv_buffer[0..size]) {
                         Ok(v) => v,
                         Err(e) => {
                             debug!("Failed to deserialize client message: {}", e);
