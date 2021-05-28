@@ -49,6 +49,7 @@ fn server_should_provide_player_id() {
             id: 1,
             connect_timeout: Duration::from_secs(3),
             retry_period: Duration::from_secs_f64(0.25),
+            player_name: String::from("test"),
         },
         |_action_sender, update_receiver| {
             let game_update = update_receiver
@@ -82,6 +83,7 @@ fn server_should_move_player() {
             id: 1,
             connect_timeout: Duration::from_secs(3),
             retry_period: Duration::from_secs_f64(0.25),
+            player_name: String::from("test"),
         },
         |action_sender, update_receiver| {
             let set_player_id = update_receiver
@@ -142,6 +144,7 @@ fn server_should_limit_number_of_sessions() {
         id: 1,
         connect_timeout: Duration::from_secs(3),
         retry_period: Duration::from_secs_f64(0.25),
+        player_name: String::from("test"),
     };
     let mut udp_client_settings = UdpClientSettings {
         id: 1,
@@ -211,6 +214,7 @@ fn server_should_limit_number_of_players() {
         id: 1,
         connect_timeout: Duration::from_secs(3),
         retry_period: Duration::from_secs_f64(0.25),
+        player_name: String::from("test"),
     };
     let mut udp_client_settings = UdpClientSettings {
         id: 1,
@@ -281,6 +285,7 @@ fn server_should_support_multiple_players() {
         id: 1,
         connect_timeout: Duration::from_secs(3),
         retry_period: Duration::from_secs_f64(0.25),
+        player_name: String::from("test"),
     };
     let udp_client_settings = UdpClientSettings {
         id: 1,
@@ -295,6 +300,8 @@ fn server_should_support_multiple_players() {
                 let mut session_udp_client_settings = udp_client_settings.clone();
                 let session_barrier = barrier.clone();
                 session_game_client_settings.id = i as u64 + 1;
+                session_game_client_settings.player_name =
+                    format!("test{}", (b'a' + i as u8) as char);
                 session_udp_client_settings.id = i as u64 + 1;
                 spawn(move || {
                     with_background_client(
@@ -340,6 +347,7 @@ fn server_should_move_send_world_update_after_ack() {
             id: 1,
             connect_timeout: Duration::from_secs(3),
             retry_period: Duration::from_secs_f64(0.25),
+            player_name: String::from("test"),
         },
         |action_sender, update_receiver| {
             let set_player_id = update_receiver

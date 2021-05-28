@@ -156,6 +156,7 @@ pub struct GameClientSettings {
     pub id: u64,
     pub connect_timeout: Duration,
     pub retry_period: Duration,
+    pub player_name: String,
 }
 
 pub struct GameChannel {
@@ -272,7 +273,7 @@ fn try_join_server(
         if let Err(e) = server.sender.send(ClientMessage {
             number: *client_message_number,
             session_id: 0,
-            data: ClientMessageData::Join,
+            data: ClientMessageData::Join(settings.player_name.clone()),
         }) {
             debug!(
                 "[{}] Game client has failed to send join message: {}",

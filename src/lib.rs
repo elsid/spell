@@ -23,6 +23,8 @@ use crate::game::{run_game, Server};
 #[cfg(feature = "render")]
 use crate::generators::generate_player_actor;
 use crate::generators::generate_world;
+#[cfg(feature = "render")]
+use crate::protocol::{is_valid_player_name, MAX_PLAYER_NAME_LEN, MIN_PLAYER_NAME_LEN};
 use crate::protocol::{ClientMessage, GameUpdate, PlayerUpdate, ServerMessage};
 use crate::rect::Rectf;
 use crate::server::{run_game_server, run_udp_server, GameServerSettings, UdpServerSettings};
@@ -55,6 +57,7 @@ pub struct SinglePlayerParams {
 #[derive(Clap, Debug)]
 pub struct MultiPlayerParams {
     pub server_address: String,
+    pub player_name: String,
     #[clap(long, default_value = "21227")]
     pub server_port: u16,
     #[clap(long, default_value = "3")]
@@ -89,9 +92,12 @@ pub fn run_single_player(params: SinglePlayerParams) {
     let mut rng = make_rng(params.random_seed);
     let mut world = generate_world(Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)), &mut rng);
     let id = get_next_id(&mut world.id_counter);
-    world
-        .actors
-        .push(generate_player_actor(id, &world.bounds, &mut rng));
+    world.actors.push(generate_player_actor(
+        id,
+        &world.bounds,
+        format!("{}", id),
+        &mut rng,
+    ));
     let (sender, receiver) = channel();
     sender.send(GameUpdate::SetPlayerId(id)).unwrap();
     run_game(world, None, receiver);
@@ -101,22 +107,29 @@ pub fn run_single_player(params: SinglePlayerParams) {
 #[cfg(feature = "render")]
 pub fn run_multi_player(params: MultiPlayerParams) {
     info!("Run multiplayer: {:?}", params);
+    if !is_valid_player_name(params.player_name.as_str()) {
+        error!("Player name should contain only alphabetic characters, be at least {} and not longer than {} symbols", MIN_PLAYER_NAME_LEN, MAX_PLAYER_NAME_LEN);
+        return;
+    }
+    let server_address = params.server_address;
+    let server_port = params.server_port;
     with_background_client(
         GameClientSettings {
             id: 1,
             connect_timeout: Duration::from_secs_f64(params.connect_timeout),
             retry_period: Duration::from_secs_f64(params.retry_period),
+            player_name: params.player_name,
         },
         UdpClientSettings {
             id: 1,
-            server_address: format!("{}:{}", params.server_address, params.server_port),
+            server_address: format!("{}:{}", server_address, server_port),
         },
         move |action_sender, update_receiver| {
             run_game(
                 World::default(),
                 Some(Server {
-                    address: params.server_address,
-                    port: params.server_port,
+                    address: server_address,
+                    port: server_port,
                     sender: action_sender,
                 }),
                 update_receiver,

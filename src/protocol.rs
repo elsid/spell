@@ -9,6 +9,8 @@ use crate::world::{
 };
 
 pub const HEARTBEAT_PERIOD: Duration = Duration::from_secs(1);
+pub const MIN_PLAYER_NAME_LEN: usize = 3;
+pub const MAX_PLAYER_NAME_LEN: usize = 16;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ServerMessage {
@@ -37,7 +39,7 @@ pub enum ServerMessageData {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub enum ClientMessageData {
-    Join,
+    Join(String),
     Quit,
     Heartbeat,
     PlayerUpdate(PlayerUpdate),
@@ -151,7 +153,7 @@ pub fn get_server_message_data_type(value: &ServerMessageData) -> &'static str {
 
 pub fn get_client_message_data_type(value: &ClientMessageData) -> &'static str {
     match value {
-        ClientMessageData::Join => "Join",
+        ClientMessageData::Join(..) => "Join",
         ClientMessageData::Quit => "Quit",
         ClientMessageData::Heartbeat => "Heartbeat",
         ClientMessageData::PlayerUpdate(..) => "PlayerUpdate",
@@ -608,6 +610,12 @@ fn clone_if_some<T: Clone>(src: &Option<T>, dst: &mut T) {
     if let Some(value) = src.as_ref() {
         *dst = value.clone();
     }
+}
+
+pub fn is_valid_player_name(value: &str) -> bool {
+    MIN_PLAYER_NAME_LEN <= value.len()
+        && value.len() <= MAX_PLAYER_NAME_LEN
+        && value.chars().all(|v| v.is_alphabetic())
 }
 
 #[cfg(test)]

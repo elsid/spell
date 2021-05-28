@@ -91,7 +91,7 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
     }
 }
 
-pub fn generate_player_actor<R: Rng>(id: u64, bounds: &Rectf, rng: &mut R) -> Actor {
+pub fn generate_player_actor<R: Rng>(id: u64, bounds: &Rectf, name: String, rng: &mut R) -> Actor {
     let material = Material::Flesh;
     let delta = bounds.max - bounds.min;
     let middle = (bounds.max + bounds.min) / 2.0;
@@ -99,6 +99,7 @@ pub fn generate_player_actor<R: Rng>(id: u64, bounds: &Rectf, rng: &mut R) -> Ac
     Actor {
         id,
         active: true,
+        name,
         body: Body {
             shape: Disk { radius },
             material,
@@ -145,6 +146,7 @@ pub fn generate_actor<R: Rng>(material: Material, id: u64, bounds: &Rectf, rng: 
     Actor {
         id,
         active: true,
+        name: format!("bot {}", id),
         body: Body {
             shape: Disk { radius },
             material,

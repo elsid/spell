@@ -2,8 +2,10 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use glfw_window::GlfwWindow;
+use graphics::types::FontSize;
 use graphics::{
-    ellipse, line, math, polygon, rectangle, text, types, DrawState, Graphics, Polygon, Transformed,
+    ellipse, line, math, polygon, rectangle, text, types, CharacterCache, DrawState, Graphics,
+    Polygon, Transformed,
 };
 use opengl_graphics::{Filter, GlGraphics, GlyphCache, OpenGL, TextureSettings};
 use piston::event_loop::{EventSettings, Events};
@@ -19,7 +21,10 @@ use crate::engine::Engine;
 use crate::meters::{DurationMovingAverage, FpsMovingAverage};
 use crate::protocol::{apply_world_update, GameUpdate, PlayerAction, PlayerUpdate};
 use crate::vec2::Vec2f;
-use crate::world::{Aura, Disk, Element, Material, RingSector, StaticShape, World};
+use crate::world::{Actor, Aura, Disk, Element, Material, RingSector, StaticShape, World};
+
+const NAME_FONT_SIZE: FontSize = 32;
+const NAME_SCALE: f64 = 0.02;
 
 pub struct Server {
     pub address: String,
@@ -615,6 +620,13 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                     }
                 }
 
+                for actor in world.actors.iter() {
+                    if Some(actor.id) != player_id {
+                        draw_name(&actor, &ctx.draw_state, &base_transform, &mut glyphs, g)
+                            .unwrap();
+                    }
+                }
+
                 rectangle::Rectangle::new_border([1.0, 0.0, 0.0, 0.5], 1.0).draw(
                     rectangle::rectangle_by_corners(
                         world.bounds.min.x - 1.0,
@@ -895,6 +907,32 @@ fn draw_ring_sector<G>(
             f(&draw_buffer);
         }
     });
+}
+
+fn draw_name<C, G>(
+    actor: &Actor,
+    draw_state: &DrawState,
+    base_transform: &math::Matrix2d,
+    cache: &mut C,
+    g: &mut G,
+) -> Result<(), C::Error>
+where
+    C: CharacterCache,
+    G: Graphics<Texture = <C as CharacterCache>::Texture>,
+{
+    let width = cache.width(NAME_FONT_SIZE, actor.name.as_str())?;
+    text::Text::new_color([1.0, 1.0, 1.0, 0.8], NAME_FONT_SIZE).draw(
+        &actor.name[..],
+        cache,
+        draw_state,
+        base_transform
+            .trans(
+                actor.position.x - NAME_SCALE * width / 2.0,
+                actor.position.y - actor.body.shape.radius - 0.3,
+            )
+            .scale(NAME_SCALE, NAME_SCALE),
+        g,
+    )
 }
 
 fn send_or_apply_player_action(

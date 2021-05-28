@@ -15,8 +15,9 @@ use crate::control::apply_player_action;
 use crate::engine::{get_next_id, remove_actor, Engine};
 use crate::generators::generate_player_actor;
 use crate::protocol::{
-    get_client_message_data_type, make_world_update, ClientMessage, ClientMessageData, GameUpdate,
-    PlayerAction, PlayerUpdate, ServerMessage, ServerMessageData, WorldUpdate, HEARTBEAT_PERIOD,
+    get_client_message_data_type, is_valid_player_name, make_world_update, ClientMessage,
+    ClientMessageData, GameUpdate, PlayerAction, PlayerUpdate, ServerMessage, ServerMessageData,
+    WorldUpdate, HEARTBEAT_PERIOD,
 };
 use crate::world::World;
 
@@ -255,7 +256,7 @@ impl UdpServer {
                         }
                     };
                 if client_message.session_id != session_id
-                    && !(matches!(client_message.data, ClientMessageData::Join)
+                    && !(matches!(client_message.data, ClientMessageData::Join(..))
                         && client_message.session_id == 0)
                 {
                     debug!("Server has received client message {} with invalid session_id: {}, expected: {}",
@@ -502,7 +503,7 @@ fn handle_session_message(
             info!("Game session {} is done", session.session_id);
         }
         ClientMessageData::Heartbeat => (),
-        ClientMessageData::Join => sender
+        ClientMessageData::Join(..) => sender
             .send(InternalServerMessage::Unicast {
                 session_id: session.session_id,
                 data: ServerMessageData::NewPlayer {
@@ -567,29 +568,47 @@ fn create_new_session<R: CryptoRng + Rng>(
     rng: &mut R,
 ) -> Option<GameSession> {
     match message.data {
-        ClientMessageData::Join => {
-            let actor_id = add_player_actor(world, rng);
-            sender
-                .send(InternalServerMessage::Unicast {
+        ClientMessageData::Join(name) => {
+            if !is_valid_player_name(name.as_str()) {
+                sender
+                    .send(InternalServerMessage::Unicast {
+                        session_id: message.session_id,
+                        data: ServerMessageData::Error(String::from("Invalid player name")),
+                    })
+                    .unwrap();
+                return None;
+            }
+            if let Some(actor_id) = try_add_player_actor(name, world, rng) {
+                sender
+                    .send(InternalServerMessage::Unicast {
+                        session_id: message.session_id,
+                        data: ServerMessageData::NewPlayer {
+                            update_period,
+                            actor_id,
+                        },
+                    })
+                    .unwrap();
+                Some(GameSession {
                     session_id: message.session_id,
-                    data: ServerMessageData::NewPlayer {
-                        update_period,
-                        actor_id,
-                    },
+                    active: true,
+                    actor_id,
+                    actor_index: None,
+                    last_message_time: Instant::now(),
+                    last_message_number: message.number,
+                    messages_per_frame: 1,
+                    delayed_messages: VecDeque::with_capacity(MAX_DELAYED_MESSAGES_PER_SESSION),
+                    dropped_messages: 0,
+                    ack_world_revision: 0,
                 })
-                .unwrap();
-            Some(GameSession {
-                session_id: message.session_id,
-                active: true,
-                actor_id,
-                actor_index: None,
-                last_message_time: Instant::now(),
-                last_message_number: message.number,
-                messages_per_frame: 1,
-                delayed_messages: VecDeque::with_capacity(MAX_DELAYED_MESSAGES_PER_SESSION),
-                dropped_messages: 0,
-                ack_world_revision: 0,
-            })
+            } else {
+                sender
+                    .send(InternalServerMessage::Unicast {
+                        session_id: message.session_id,
+                        data: ServerMessageData::Error(String::from("Player name is busy")),
+                    })
+                    .unwrap();
+                None
+            }
         }
         ClientMessageData::Quit => None,
         v => {
@@ -626,12 +645,15 @@ impl FrameRateLimiter {
     }
 }
 
-fn add_player_actor<R: Rng>(world: &mut World, rng: &mut R) -> u64 {
+fn try_add_player_actor<R: Rng>(name: String, world: &mut World, rng: &mut R) -> Option<u64> {
+    if world.actors.iter().any(|v| v.name == name) {
+        return None;
+    }
     let actor_id = get_next_id(&mut world.id_counter);
     world
         .actors
-        .push(generate_player_actor(actor_id, &world.bounds, rng));
-    actor_id
+        .push(generate_player_actor(actor_id, &world.bounds, name, rng));
+    Some(actor_id)
 }
 
 fn sanitize_player_action(player_action: &mut PlayerAction, actor_index: usize, world: &mut World) {

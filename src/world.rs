@@ -71,6 +71,7 @@ impl Default for WorldSettings {
 pub struct Actor {
     pub id: u64,
     pub active: bool,
+    pub name: String,
     pub body: Body<Disk>,
     pub position: Vec2f,
     pub health: f64,
@@ -282,7 +283,7 @@ mod tests {
             ))
             .unwrap()
             .len(),
-            346
+            359
         );
     }
 
