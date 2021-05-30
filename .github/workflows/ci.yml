@@ -16,6 +16,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: check
+          args: --bins
 
   check_all:
     name: Check all
@@ -31,7 +32,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: check
-          args: --all-features
+          args: --all-features --all-targets
 
   test_default:
     name: Tests default
@@ -118,7 +119,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: -- -D warnings
+          args: --bins -- -D warnings
 
   clippy_all:
     name: Clippy all
@@ -135,4 +136,4 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --all-features -- -D warnings
+          args: --all-features --all-targets -- -D warnings
