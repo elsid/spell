@@ -5,16 +5,16 @@ use crate::engine::{
 use crate::protocol::ActorAction;
 use crate::world::World;
 
-pub fn apply_actor_action(actor_action: &ActorAction, actor_index: usize, world: &mut World) {
+pub fn apply_actor_action(actor_action: ActorAction, actor_index: usize, world: &mut World) {
     match actor_action {
         ActorAction::Move(moving) => {
-            world.actors[actor_index].moving = *moving;
+            world.actors[actor_index].moving = moving;
         }
         ActorAction::SetTargetDirection(target_direction) => {
-            world.actors[actor_index].target_direction = *target_direction;
+            world.actors[actor_index].target_direction = target_direction;
         }
         ActorAction::AddSpellElement(element) => {
-            add_actor_spell_element(actor_index, *element, world);
+            add_actor_spell_element(actor_index, element, world);
         }
         ActorAction::StartDirectedMagick => {
             start_directed_magick(actor_index, world);

@@ -817,7 +817,7 @@ fn handle_session_message(
             PlayerUpdate::Action(mut actor_action) => {
                 if let Some(actor_index) = session.actor_index {
                     sanitize_actor_action(&mut actor_action, actor_index, world);
-                    apply_actor_action(&actor_action, actor_index, world);
+                    apply_actor_action(actor_action, actor_index, world);
                 } else {
                     warn!(
                         "Player actor is not found for game session: {}",

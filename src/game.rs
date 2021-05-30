@@ -1,855 +1,1043 @@
-use std::sync::mpsc::{Receiver, Sender};
+use std::net::SocketAddr;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use glfw_window::GlfwWindow;
-use graphics::types::FontSize;
-use graphics::{
-    ellipse, line, math, polygon, rectangle, text, types, CharacterCache, DrawState, Graphics,
-    Polygon, Transformed,
+use clap::Clap;
+use egui::{Color32, CtxRef};
+use macroquad::prelude::{
+    clear_background, draw_line, draw_poly, draw_rectangle, draw_rectangle_lines, draw_text_ex,
+    get_internal_gl, is_key_released, load_ttf_font, measure_text, mouse_position_local,
+    mouse_wheel, next_frame, screen_height, screen_width, set_camera, set_default_camera, vec2,
+    Camera2D, Color, DrawMode, Font, KeyCode, Mat4, Quat, TextParams, Vec3, Vertex, BLACK, WHITE,
 };
-use opengl_graphics::{Filter, GlGraphics, GlyphCache, OpenGL, TextureSettings};
-use piston::event_loop::{EventSettings, Events};
-use piston::input::{
-    Button, Key, MouseButton, MouseCursorEvent, MouseScrollEvent, PressEvent, ReleaseEvent,
-    RenderEvent, UpdateEvent,
-};
-use piston::window::{Window, WindowSettings};
-use piston::EventLoop;
+use rand::prelude::SmallRng;
+use rand::Rng;
 
+use crate::client::{Client, GameClientSettings, UdpClientSettings};
 use crate::control::apply_actor_action;
-use crate::engine::Engine;
-use crate::meters::{DurationMovingAverage, FpsMovingAverage};
-use crate::protocol::{apply_world_update, ActorAction, GameUpdate, PlayerUpdate};
+use crate::engine::{get_next_id, normalize_angle, Engine};
+use crate::generators::{generate_player_actor, generate_world, make_rng};
+use crate::meters::{measure, DurationMovingAverage, FpsMovingAverage};
+use crate::protocol::{
+    apply_world_update, is_valid_player_name, ActorAction, GameUpdate, PlayerUpdate,
+    MAX_PLAYER_NAME_LEN, MIN_PLAYER_NAME_LEN,
+};
+use crate::rect::Rectf;
 use crate::vec2::Vec2f;
-use crate::world::{Actor, Aura, Disk, Element, Material, RingSector, StaticShape, World};
+use crate::world::{Aura, Disk, Element, Material, RingSector, StaticShape, World};
 
-const NAME_FONT_SIZE: FontSize = 32;
-const NAME_SCALE: f64 = 0.02;
+const NAME_FONT_SIZE: u16 = 36;
+const NAME_FONT_SCALE: f32 = 0.03;
+const BORDER_FACTOR: f64 = 0.85;
+const HALF_WIDTH: f64 = 0.66;
+const HALF_HEIGHT: f64 = 0.1;
+const BORDER_WIDTH: f64 = HALF_HEIGHT * (1.0 - BORDER_FACTOR);
+const HUD_ELEMENT_RADIUS: f64 = 40.0;
+const HUD_ELEMENT_WIDTH: f64 = HUD_ELEMENT_RADIUS * 2.2;
 
-pub struct Server {
-    pub address: String,
-    pub port: u16,
-    pub sender: Sender<PlayerUpdate>,
+#[derive(Clap, Debug)]
+pub struct GameSettings {
+    #[clap(long)]
+    pub random_seed: Option<u64>,
+    #[clap(long, default_value = "127.0.0.1")]
+    pub default_server_address: String,
+    #[clap(long, default_value = "21227")]
+    pub default_server_port: u16,
+    #[clap(long, default_value = "Player")]
+    pub default_player_name: String,
+    #[clap(long, default_value = "3")]
+    pub connect_timeout: f64,
+    #[clap(long, default_value = "3")]
+    pub read_timeout: f64,
+    #[clap(long, default_value = "0.25")]
+    pub retry_period: f64,
 }
 
-pub fn run_game(initial_world: World, server: Option<Server>, receiver: Receiver<GameUpdate>) {
-    info!("Run game");
-    let mut world = Box::new(initial_world);
-    let opengl = OpenGL::V2_1;
-    let mut window: GlfwWindow = WindowSettings::new("spell", [640, 480])
-        .graphics_api(opengl)
-        .exit_on_esc(true)
-        .build()
-        .unwrap();
-    window.window.maximize();
-    let mut gl = GlGraphics::new(opengl);
-    let mut engine = Engine::default();
-    let mut events = Events::new(EventSettings::new().max_fps(60).ups(60));
-    let mut scale = window.size().height / 20.0;
-    let time_step = 1.0 / 60.0;
-    let mut last_mouse_pos = Vec2f::ZERO;
-    let mut last_viewport_shift = Vec2f::ZERO;
-    let mut last_actor_position = Vec2f::ZERO;
-    let mut last_actor_index = None;
-    let texture_settings = TextureSettings::new().filter(Filter::Linear);
-    let mut glyphs = GlyphCache::new("fonts/UbuntuMono-R.ttf", (), texture_settings)
-        .expect("Could not load font");
-    let mut eps = FpsMovingAverage::new(100, Duration::from_secs(1));
-    let mut render_duration = DurationMovingAverage::new(100, Duration::from_secs(1));
-    let mut update_duration = DurationMovingAverage::new(100, Duration::from_secs(1));
-    let mut actor_id = None;
-    let mut local_world_frame = 0;
-    let mut local_world_time = 0.0;
-    let mut lshift = false;
-    let mut show_debug_info = false;
-    let sender = server.as_ref().map(|v| &v.sender);
+struct GameState {
+    rng: SmallRng,
+    fps: FpsMovingAverage,
+    input_duration: DurationMovingAverage,
+    update_duration: DurationMovingAverage,
+    ui_update_duration: DurationMovingAverage,
+    ui_draw_duration: DurationMovingAverage,
+    draw_duration: DurationMovingAverage,
+    debug_hud_duration: DurationMovingAverage,
+    draw_ui: bool,
+    show_debug_hud: bool,
+    menu: Menu,
+    next_client_id: u64,
+    server_address: String,
+    server_port: u16,
+    player_name: String,
+    connect_timeout: Duration,
+    read_timeout: Duration,
+    retry_period: Duration,
+    client_dropper: Dropper<Client>,
+    debug_hud_font: Font,
+    name_font: Font,
+}
 
-    while let Some(event) = events.next(&mut window) {
-        if let Some(button) = event.press_args() {
-            match button {
-                Button::Mouse(MouseButton::Left) => {
-                    if let Some(actor_index) = last_actor_index {
-                        send_or_apply_actor_action(
-                            sender,
-                            ActorAction::Move(true),
-                            actor_index,
-                            &mut world,
-                        );
-                    }
-                }
-                Button::Mouse(MouseButton::Right) => {
-                    if let Some(actor_index) = last_actor_index {
-                        if lshift {
-                            send_or_apply_actor_action(
-                                sender,
-                                ActorAction::StartAreaOfEffectMagick,
-                                actor_index,
-                                &mut world,
-                            );
-                        } else {
-                            send_or_apply_actor_action(
-                                sender,
-                                ActorAction::StartDirectedMagick,
-                                actor_index,
-                                &mut world,
-                            );
-                        }
-                    }
-                }
-                Button::Keyboard(Key::LShift) => lshift = true,
-                _ => (),
+enum Menu {
+    None,
+    Main,
+    Multiplayer,
+    Joining,
+    Error(String),
+}
+
+enum FrameType {
+    Initial,
+    SinglePlayer(Box<Scene>),
+    Multiplayer(Box<Multiplayer>),
+    None,
+}
+
+struct Scene {
+    time_step: f64,
+    world: Box<World>,
+    actor_id: Option<u64>,
+    engine: Engine,
+    last_actor_index: Option<usize>,
+    camera_zoom: f64,
+    camera_target: Vec2f,
+    pointer: Vec2f,
+}
+
+struct Multiplayer {
+    client: AsyncDrop<Client>,
+    scene: Scene,
+    local_world_frame: u64,
+    local_world_time: f64,
+}
+
+pub async fn run_game(settings: GameSettings) {
+    let ubuntu_mono = load_ttf_font("fonts/UbuntuMono-R.ttf").await;
+    let mut game_state = GameState {
+        rng: make_rng(settings.random_seed),
+        fps: FpsMovingAverage::new(100, Duration::from_secs(1)),
+        input_duration: DurationMovingAverage::new(100, Duration::from_secs(1)),
+        update_duration: DurationMovingAverage::new(100, Duration::from_secs(1)),
+        ui_update_duration: DurationMovingAverage::new(100, Duration::from_secs(1)),
+        ui_draw_duration: DurationMovingAverage::new(100, Duration::from_secs(1)),
+        draw_duration: DurationMovingAverage::new(100, Duration::from_secs(1)),
+        debug_hud_duration: DurationMovingAverage::new(100, Duration::from_secs(1)),
+        draw_ui: false,
+        show_debug_hud: false,
+        menu: Menu::Main,
+        next_client_id: 1,
+        server_address: settings.default_server_address,
+        server_port: settings.default_server_port,
+        player_name: settings.default_player_name,
+        connect_timeout: Duration::from_secs_f64(settings.connect_timeout),
+        read_timeout: Duration::from_secs_f64(settings.read_timeout),
+        retry_period: Duration::from_secs_f64(settings.retry_period),
+        client_dropper: {
+            let (sender, receiver) = channel();
+            Dropper {
+                sender,
+                handle: std::thread::spawn(move || run_dropper(receiver)),
             }
-        }
-
-        if let Some(button) = event.release_args() {
-            match button {
-                Button::Mouse(MouseButton::Left) => {
-                    if let Some(actor_index) = last_actor_index {
-                        send_or_apply_actor_action(
-                            sender,
-                            ActorAction::Move(false),
-                            actor_index,
-                            &mut world,
-                        );
-                    }
-                }
-                Button::Mouse(MouseButton::Right) => {
-                    if let Some(actor_index) = last_actor_index {
-                        send_or_apply_actor_action(
-                            sender,
-                            ActorAction::CompleteDirectedMagick,
-                            actor_index,
-                            &mut world,
-                        );
-                    }
-                }
-                Button::Mouse(MouseButton::Middle) => {
-                    if let Some(actor_index) = last_actor_index {
-                        send_or_apply_actor_action(
-                            sender,
-                            ActorAction::SelfMagick,
-                            actor_index,
-                            &mut world,
-                        );
-                    }
-                }
-                Button::Keyboard(Key::LShift) => lshift = false,
-                Button::Keyboard(Key::Q) => {
-                    if let Some(actor_index) = last_actor_index {
-                        send_or_apply_actor_action(
-                            sender,
-                            ActorAction::AddSpellElement(Element::Water),
-                            actor_index,
-                            &mut world,
-                        );
-                    }
-                }
-                Button::Keyboard(Key::A) => {
-                    if let Some(actor_index) = last_actor_index {
-                        send_or_apply_actor_action(
-                            sender,
-                            ActorAction::AddSpellElement(Element::Lightning),
-                            actor_index,
-                            &mut world,
-                        );
-                    }
-                }
-                Button::Keyboard(Key::W) => {
-                    if let Some(actor_index) = last_actor_index {
-                        send_or_apply_actor_action(
-                            sender,
-                            ActorAction::AddSpellElement(Element::Life),
-                            actor_index,
-                            &mut world,
-                        );
-                    }
-                }
-                Button::Keyboard(Key::S) => {
-                    if let Some(actor_index) = last_actor_index {
-                        send_or_apply_actor_action(
-                            sender,
-                            ActorAction::AddSpellElement(Element::Arcane),
-                            actor_index,
-                            &mut world,
-                        );
-                    }
-                }
-                Button::Keyboard(Key::E) => {
-                    if let Some(actor_index) = last_actor_index {
-                        send_or_apply_actor_action(
-                            sender,
-                            ActorAction::AddSpellElement(Element::Shield),
-                            actor_index,
-                            &mut world,
-                        );
-                    }
-                }
-                Button::Keyboard(Key::D) => {
-                    if let Some(actor_index) = last_actor_index {
-                        send_or_apply_actor_action(
-                            sender,
-                            ActorAction::AddSpellElement(Element::Earth),
-                            actor_index,
-                            &mut world,
-                        );
-                    }
-                }
-                Button::Keyboard(Key::R) => {
-                    if let Some(actor_index) = last_actor_index {
-                        send_or_apply_actor_action(
-                            sender,
-                            ActorAction::AddSpellElement(Element::Cold),
-                            actor_index,
-                            &mut world,
-                        );
-                    }
-                }
-                Button::Keyboard(Key::F) => {
-                    if let Some(actor_index) = last_actor_index {
-                        send_or_apply_actor_action(
-                            sender,
-                            ActorAction::AddSpellElement(Element::Fire),
-                            actor_index,
-                            &mut world,
-                        );
-                    }
-                }
-                Button::Keyboard(Key::F2) => {
-                    show_debug_info = !show_debug_info;
-                }
-                _ => (),
-            }
-        }
-
-        if let Some(scroll) = event.mouse_scroll_args() {
-            scale *= 1.0 + scroll[1] * 0.1;
-        }
-
-        if let Some(args) = event.mouse_cursor_args() {
-            last_mouse_pos = Vec2f::new(args[0], args[1]);
-        }
-
-        if event.update_args().is_some() {
-            let start = Instant::now();
-            while let Ok(update) = receiver.try_recv() {
-                match update {
-                    GameUpdate::GameOver(..) => actor_id = None,
-                    GameUpdate::SetActorId(v) => actor_id = Some(v),
-                    GameUpdate::WorldSnapshot(v) => {
-                        world = v;
-                        if let Some(player_id) = actor_id {
-                            last_actor_index = world.actors.iter().position(|v| v.id == player_id);
-                        }
-                    }
-                    GameUpdate::WorldUpdate(world_update) => {
-                        apply_world_update(*world_update, &mut world);
-                        if let Some(player_id) = actor_id {
-                            last_actor_index = world.actors.iter().position(|v| v.id == player_id);
-                        }
-                    }
-                }
-            }
-            if let Some(sender) = sender.as_ref() {
-                if let Err(..) = sender.send(PlayerUpdate::AckWorldFrame(world.frame)) {
-                    break;
-                }
-            }
-            if let Some(actor_index) = last_actor_index {
-                let target_direction = (last_mouse_pos - last_viewport_shift) / scale;
-                let norm = target_direction.norm();
-                if norm > f64::EPSILON {
-                    let direction = target_direction / norm;
-                    if direction != world.actors[actor_index].target_direction {
-                        send_or_apply_actor_action(
-                            sender,
-                            ActorAction::SetTargetDirection(direction),
-                            actor_index,
-                            &mut world,
-                        );
-                    }
-                }
-            }
-            if sender.is_some() {
-                local_world_frame = (local_world_frame + 1).max(world.frame);
-                local_world_time += time_step;
-                if local_world_time < world.time {
-                    local_world_time = world.time;
-                }
-                engine.update_visual(&mut world);
-            } else {
-                engine.update(time_step, &mut world);
-            }
-            if let Some(player_id) = actor_id {
-                last_actor_index = world.actors.iter().position(|v| v.id == player_id);
-            }
-            if let Some(actor_index) = last_actor_index {
-                last_actor_position = world.actors[actor_index].position;
-            }
-            update_duration.add(Instant::now() - start);
-        }
-
-        if let Some(render_args) = event.render_args() {
-            let start = Instant::now();
-            let viewport = render_args.viewport();
-
-            last_viewport_shift =
-                Vec2f::new(viewport.window_size[0] / 2.0, viewport.window_size[1] / 2.0);
-
-            gl.draw(viewport, |ctx, g| {
-                let base_transform = ctx
-                    .transform
-                    .trans(last_viewport_shift.x, last_viewport_shift.y)
-                    .scale(scale, scale)
-                    .trans(-last_actor_position.x, -last_actor_position.y);
-
-                graphics::clear([0.0, 0.0, 0.0, 1.0], g);
-
-                for v in world.static_areas.iter() {
-                    with_disk_body_and_magick(
-                        v.body.material,
-                        &v.body.shape,
-                        &v.magick.power,
-                        world.settings.border_width,
-                        |shape, rect| {
-                            shape.draw(
-                                rect,
-                                &ctx.draw_state,
-                                base_transform.trans(v.position.x, v.position.y),
-                                g,
-                            );
-                        },
-                    );
-                }
-
-                for v in world.temp_areas.iter() {
-                    with_disk_body_and_magick(
-                        v.body.material,
-                        &v.body.shape,
-                        &v.effect.power,
-                        world.settings.border_width,
-                        |shape, rect| {
-                            shape.draw(
-                                rect,
-                                &ctx.draw_state,
-                                base_transform.trans(v.position.x, v.position.y),
-                                g,
-                            );
-                        },
-                    );
-                }
-
-                for area in world.bounded_areas.iter() {
-                    let owner = world.actors.iter().find(|v| v.id == area.actor_id).unwrap();
-                    with_ring_sector_body_and_magick(
-                        &area.body,
-                        &area.effect.power,
-                        |shape, vertices| {
-                            let transform = base_transform
-                                .trans(owner.position.x, owner.position.y)
-                                .orient(owner.current_direction.x, owner.current_direction.y);
-                            draw_ring_sector(shape, vertices, &ctx.draw_state, transform, g);
-                        },
-                    );
-                }
-
-                if let Some(actor_index) = last_actor_index {
-                    let target =
-                        last_actor_position + (last_mouse_pos - last_viewport_shift) / scale;
-                    graphics::line_from_to(
-                        [0.0, 0.0, 0.0, 0.5],
-                        1.0 / scale,
-                        [last_actor_position.x, last_actor_position.y],
-                        [target.x, target.y],
-                        base_transform,
-                        g,
-                    );
-
-                    let player = &world.actors[actor_index];
-                    let current_target =
-                        player.position + player.current_direction * player.body.shape.radius * 2.0;
-                    graphics::line_from_to(
-                        [0.0, 0.0, 0.0, 0.5],
-                        1.0 / scale,
-                        [last_actor_position.x, last_actor_position.y],
-                        [current_target.x, current_target.y],
-                        base_transform,
-                        g,
-                    );
-                }
-
-                for beam in engine
-                    .initial_emitted_beams()
-                    .iter()
-                    .chain(engine.reflected_emitted_beams().iter())
-                {
-                    let end = beam.origin + beam.direction * beam.length;
-                    let line = [beam.origin.x, beam.origin.y, end.x, end.y];
-                    let color = get_magick_power_color(&beam.magick.power);
-                    let sum_power = beam.magick.power.iter().sum::<f64>() / 20.0;
-                    line::Line::new_round(color, sum_power).draw(
-                        line,
-                        &Default::default(),
-                        base_transform,
-                        g,
-                    );
-                }
-
-                for v in world.actors.iter() {
-                    with_disk_body_and_magick(
-                        v.body.material,
-                        &v.body.shape,
-                        &v.effect.power,
-                        world.settings.border_width,
-                        |shape, rect| {
-                            shape.draw(
-                                rect,
-                                &ctx.draw_state,
-                                base_transform.trans(v.position.x, v.position.y),
-                                g,
-                            );
-                        },
-                    );
-                }
-
-                for v in world.dynamic_objects.iter() {
-                    with_disk_body_and_magick(
-                        v.body.material,
-                        &v.body.shape,
-                        &v.effect.power,
-                        world.settings.border_width,
-                        |shape, rect| {
-                            shape.draw(
-                                rect,
-                                &ctx.draw_state,
-                                base_transform.trans(v.position.x, v.position.y),
-                                g,
-                            );
-                        },
-                    );
-                }
-
-                for v in world.static_objects.iter() {
-                    match &v.body.shape {
-                        StaticShape::CircleArc(arc) => {
-                            let ring_sector = RingSector {
-                                min_radius: arc.radius - world.settings.border_width,
-                                max_radius: arc.radius + world.settings.border_width,
-                                angle: arc.length,
-                            };
-                            with_ring_sector_body_and_magick(
-                                &ring_sector,
-                                &v.effect.power,
-                                |shape, vertices| {
-                                    let transform = base_transform
-                                        .trans(v.position.x, v.position.y)
-                                        .rot_rad(arc.rotation);
-                                    draw_ring_sector(
-                                        shape,
-                                        vertices,
-                                        &ctx.draw_state,
-                                        transform,
-                                        g,
-                                    );
-                                },
-                            );
-                            with_ring_sector_body_and_magick(
-                                &ring_sector,
-                                &v.aura.elements,
-                                |shape, vertices| {
-                                    let transform = base_transform
-                                        .trans(v.position.x, v.position.y)
-                                        .rot_rad(arc.rotation);
-                                    draw_ring_sector(
-                                        shape,
-                                        vertices,
-                                        &ctx.draw_state,
-                                        transform,
-                                        g,
-                                    );
-                                },
-                            );
-                        }
-                        StaticShape::Disk(shape) => {
-                            with_disk_body_and_magick(
-                                v.body.material,
-                                shape,
-                                &v.effect.power,
-                                world.settings.border_width,
-                                |shape, rect| {
-                                    shape.draw(
-                                        rect,
-                                        &ctx.draw_state,
-                                        base_transform.trans(v.position.x, v.position.y),
-                                        g,
-                                    );
-                                },
-                            );
-                        }
-                    }
-                }
-
-                for v in world.actors.iter() {
-                    with_aura(&v.aura, |shape, rect| {
-                        shape.draw(
-                            rect,
-                            &ctx.draw_state,
-                            base_transform.trans(v.position.x, v.position.y),
-                            g,
-                        );
-                    });
-                }
-
-                for v in world.dynamic_objects.iter() {
-                    with_aura(&v.aura, |shape, rect| {
-                        shape.draw(
-                            rect,
-                            &ctx.draw_state,
-                            base_transform.trans(v.position.x, v.position.y),
-                            g,
-                        );
-                    });
-                }
-
-                for v in world.static_objects.iter() {
-                    with_aura(&v.aura, |shape, rect| {
-                        shape.draw(
-                            rect,
-                            &ctx.draw_state,
-                            base_transform.trans(v.position.x, v.position.y),
-                            g,
-                        );
-                    });
-                }
-
-                for v in world.actors.iter() {
-                    with_health(v.body.shape.radius, v.health, |shape, rect| {
-                        shape.draw(
-                            rect,
-                            &ctx.draw_state,
-                            base_transform.trans(v.position.x, v.position.y),
-                            g,
-                        );
-                    });
-                    with_power(
-                        v.body.shape.radius,
-                        v.aura.power / world.settings.max_magic_power,
-                        |shape, rect| {
-                            shape.draw(
-                                rect,
-                                &ctx.draw_state,
-                                base_transform.trans(v.position.x, v.position.y),
-                                g,
-                            );
-                        },
-                    );
-                }
-
-                for v in world.dynamic_objects.iter() {
-                    with_health(v.body.shape.radius, v.health, |shape, rect| {
-                        shape.draw(
-                            rect,
-                            &ctx.draw_state,
-                            base_transform.trans(v.position.x, v.position.y),
-                            g,
-                        );
-                    });
-                    with_power(
-                        v.body.shape.radius,
-                        v.aura.power / world.settings.max_magic_power,
-                        |shape, rect| {
-                            shape.draw(
-                                rect,
-                                &ctx.draw_state,
-                                base_transform.trans(v.position.x, v.position.y),
-                                g,
-                            );
-                        },
-                    );
-                }
-
-                for v in world.static_objects.iter() {
-                    let radius = match &v.body.shape {
-                        StaticShape::CircleArc(v) => v.radius,
-                        StaticShape::Disk(v) => v.radius,
-                    };
-                    with_health(radius, v.health, |shape, rect| {
-                        shape.draw(
-                            rect,
-                            &ctx.draw_state,
-                            base_transform.trans(v.position.x, v.position.y),
-                            g,
-                        );
-                    });
-                    with_power(
-                        radius,
-                        v.aura.power / world.settings.max_magic_power,
-                        |shape, rect| {
-                            shape.draw(
-                                rect,
-                                &ctx.draw_state,
-                                base_transform.trans(v.position.x, v.position.y),
-                                g,
-                            );
-                        },
-                    );
-                }
-
-                for actor in world.actors.iter() {
-                    let half_width = actor.body.shape.radius * 0.66;
-                    let spell_position =
-                        actor.position + Vec2f::new(-half_width, actor.body.shape.radius + 0.3);
-                    let spell_transform = base_transform.trans(spell_position.x, spell_position.y);
-                    let square =
-                        rectangle::centered_square(0.0, 0.0, actor.body.shape.radius * 0.1);
-                    let element_width = (2.0 * half_width) / 5.0;
-                    for (i, element) in actor.spell_elements.iter().enumerate() {
-                        let element_position = Vec2f::new(
-                            (i as f64 + 0.5) * element_width,
-                            -actor.body.shape.radius * 0.1,
-                        );
-                        ellipse::Ellipse::new(get_element_color(*element))
-                            .border(ellipse::Border {
-                                color: [0.0, 0.0, 0.0, 1.0],
-                                radius: actor.body.shape.radius * 0.01,
-                            })
-                            .draw(
-                                square,
-                                &ctx.draw_state,
-                                spell_transform.trans(element_position.x, element_position.y),
-                                g,
-                            );
-                    }
-                }
-
-                for actor in world.actors.iter() {
-                    if Some(actor.id) != actor_id {
-                        draw_name(&actor, &ctx.draw_state, &base_transform, &mut glyphs, g)
-                            .unwrap();
-                    }
-                }
-
-                rectangle::Rectangle::new_border([1.0, 0.0, 0.0, 0.5], 1.0).draw(
-                    rectangle::rectangle_by_corners(
-                        world.bounds.min.x - 1.0,
-                        world.bounds.min.y - 1.0,
-                        world.bounds.max.x + 1.0,
-                        world.bounds.max.y + 1.0,
-                    ),
-                    &ctx.draw_state,
-                    base_transform,
-                    g,
-                );
-
-                if let Some(actor_index) = last_actor_index {
-                    let radius = 20.0;
-                    let square = rectangle::centered_square(0.0, 0.0, radius);
-                    for (i, element) in world.actors[actor_index].spell_elements.iter().enumerate()
-                    {
-                        let position = last_viewport_shift
-                            + Vec2f::new(
-                                -5.0 * 2.0 * (radius + 10.0) * 0.5
-                                    + (i as f64 + 0.5) * 2.0 * (radius + 10.0),
-                                last_viewport_shift.y - 100.0,
-                            );
-                        ellipse::Ellipse::new(get_element_color(*element))
-                            .border(ellipse::Border {
-                                color: [0.0, 0.0, 0.0, 1.0],
-                                radius: radius * 0.1,
-                            })
-                            .draw(
-                                square,
-                                &ctx.draw_state,
-                                ctx.transform.trans(position.x, position.y),
-                                g,
-                            );
-                    }
-                }
-
-                if show_debug_info {
-                    let format_eps = || Some(format!("Events/s: {0:.3}", eps.get()));
-                    let format_render =
-                        || Some(format!("Render: {0:.3} ms", render_duration.get() * 1000.0));
-                    let format_update =
-                        || Some(format!("Update: {0:.3} ms", update_duration.get() * 1000.0));
-                    let format_server = || {
-                        server
-                            .as_ref()
-                            .map(|v| format!("Server: {}:{}", v.address, v.port))
-                    };
-                    let format_world_frame = || {
-                        Some(if server.is_some() {
-                            format!(
-                                "World frame: {} (+{})",
-                                world.frame,
-                                local_world_frame - world.frame
-                            )
-                        } else {
-                            format!("World frame: {}", world.frame)
-                        })
-                    };
-                    let format_world_time = || {
-                        Some(if server.is_some() {
-                            format!(
-                                "World time: {:.3} (+{:.3})",
-                                world.time,
-                                local_world_time - world.time
-                            )
-                        } else {
-                            format!("World time: {:.3}", world.time)
-                        })
-                    };
-                    let format_player =
-                        || Some(format!("Player: {:?} {:?}", actor_id, last_actor_index));
-                    let format_actors = || Some(format!("Actors: {}", world.actors.len()));
-                    let format_dynamic_objects =
-                        || Some(format!("Dynamic objects: {}", world.dynamic_objects.len()));
-                    let format_static_objects =
-                        || Some(format!("Static objects: {}", world.static_objects.len()));
-                    let format_beams = || Some(format!("Beams: {}", world.beams.len()));
-                    let format_static_areas =
-                        || Some(format!("Static areas: {}", world.static_areas.len()));
-                    let format_temp_areas =
-                        || Some(format!("Temp areas: {}", world.temp_areas.len()));
-                    let format_bounded_areas =
-                        || Some(format!("Bounded areas: {}", world.bounded_areas.len()));
-                    let format_fields = || Some(format!("Fields: {}", world.fields.len()));
-
-                    type FormatRef<'a> = &'a dyn Fn() -> Option<String>;
-
-                    let formats: &[FormatRef] = &[
-                        &format_eps as FormatRef,
-                        &format_render as FormatRef,
-                        &format_update as FormatRef,
-                        &format_server as FormatRef,
-                        &format_world_frame as FormatRef,
-                        &format_world_time as FormatRef,
-                        &format_player as FormatRef,
-                        &format_actors as FormatRef,
-                        &format_dynamic_objects as FormatRef,
-                        &format_static_objects as FormatRef,
-                        &format_beams as FormatRef,
-                        &format_static_areas as FormatRef,
-                        &format_temp_areas as FormatRef,
-                        &format_bounded_areas as FormatRef,
-                        &format_fields as FormatRef,
-                    ];
-
-                    let mut text_counter = 0;
-                    for f in formats.iter() {
-                        if let Some(text) = f() {
-                            text_counter += 1;
-                            text::Text::new_color([1.0, 1.0, 1.0, 1.0], 20)
-                                .draw(
-                                    &text[..],
-                                    &mut glyphs,
-                                    &ctx.draw_state,
-                                    ctx.transform.trans(10.0, (4 + text_counter * 24) as f64),
-                                    g,
-                                )
-                                .unwrap();
-                        }
-                    }
-                }
-            });
-
-            render_duration.add(Instant::now() - start);
-        }
-
-        eps.add(Instant::now());
+        },
+        debug_hud_font: ubuntu_mono,
+        name_font: ubuntu_mono,
+    };
+    let mut frame_type = FrameType::Initial;
+    while !matches!(frame_type, FrameType::None) {
+        clear_background(BLACK);
+        prepare_frame(&mut game_state, &mut frame_type);
+        next_frame().await;
+        game_state.fps.add(Instant::now());
     }
-    info!("Game has stopped");
+    game_state
+        .client_dropper
+        .sender
+        .send(DropperMessage::Stop)
+        .ok();
+    game_state.client_dropper.handle.join().ok();
 }
 
-fn with_disk_body_and_magick<F>(
-    material: Material,
+fn run_dropper<T>(receiver: Receiver<DropperMessage<T>>) {
+    while let Ok(message) = receiver.recv() {
+        match message {
+            DropperMessage::Stop => break,
+            DropperMessage::Drop(v) => {
+                drop(v);
+            }
+        }
+    }
+}
+
+fn prepare_frame(game_state: &mut GameState, frame_type: &mut FrameType) {
+    game_state.draw_ui = false;
+    let input_duration = measure(|| handle_input(game_state, frame_type));
+    game_state.input_duration.add(input_duration);
+    let update_duration = measure(|| update(game_state, frame_type));
+    game_state.update_duration.add(update_duration);
+    let ui_update_duration = measure(|| update_ui(game_state, frame_type));
+    game_state.ui_update_duration.add(ui_update_duration);
+    let draw_duration = measure(|| draw(game_state, frame_type));
+    game_state.draw_duration.add(draw_duration);
+    if game_state.draw_ui {
+        game_state
+            .ui_draw_duration
+            .add(measure(egui_macroquad::draw));
+    }
+    if game_state.show_debug_hud {
+        let debug_hud_duration = measure(|| draw_debug_hud(game_state, &frame_type));
+        game_state.debug_hud_duration.add(debug_hud_duration);
+    }
+}
+
+fn handle_input(game_state: &mut GameState, frame_type: &mut FrameType) {
+    match frame_type {
+        FrameType::SinglePlayer(v) => handle_scene_input(game_state, v, apply_actor_action),
+        FrameType::Multiplayer(v) => {
+            let client = &mut v.client;
+            let send_actor_action = |actor_action: ActorAction, _: usize, _: &mut World| {
+                client
+                    .sender()
+                    .send(PlayerUpdate::Action(actor_action))
+                    .ok();
+            };
+            handle_scene_input(game_state, &mut v.scene, send_actor_action)
+        }
+        _ => (),
+    }
+    if is_key_released(KeyCode::F2) {
+        game_state.show_debug_hud = !game_state.show_debug_hud;
+    }
+}
+
+fn handle_scene_input<F>(game_state: &mut GameState, scene: &mut Scene, apply: F)
+where
+    F: FnMut(ActorAction, usize, &mut World),
+{
+    if matches!(game_state.menu, Menu::None) {
+        scene.pointer = Vec2f::from(mouse_position_local())
+            / Vec2f::new(
+                scene.camera_zoom,
+                scene.camera_zoom * (screen_width() / screen_height()) as f64,
+            );
+        handle_actor_input(scene, apply);
+    }
+    if is_key_released(KeyCode::Escape) {
+        game_state.menu = if matches!(game_state.menu, Menu::None) {
+            Menu::Main
+        } else {
+            Menu::None
+        };
+    }
+}
+
+fn handle_actor_input<F>(scene: &mut Scene, mut apply: F)
+where
+    F: FnMut(ActorAction, usize, &mut World),
+{
+    if let Some(actor_index) = scene.last_actor_index {
+        scene.camera_zoom *= 1.0 + mouse_wheel().1 as f64 * 0.1;
+
+        for_each_actor_action(|actor_action| apply(actor_action, actor_index, &mut scene.world));
+
+        if let Some(target_direction) = scene.pointer.safe_normalized() {
+            if target_direction != scene.world.actors[actor_index].target_direction {
+                apply(
+                    ActorAction::SetTargetDirection(target_direction),
+                    actor_index,
+                    &mut scene.world,
+                );
+            }
+        }
+    }
+}
+
+fn update_ui(game_state: &mut GameState, frame_type: &mut FrameType) {
+    if matches!(game_state.menu, Menu::None) {
+        return;
+    }
+    egui_macroquad::ui(|ctx| {
+        let mut visuals = egui::Visuals::default();
+        let bg_fill = visuals.widgets.noninteractive.bg_fill;
+        visuals.widgets.noninteractive.bg_fill =
+            Color32::from_rgba_premultiplied(bg_fill.r(), bg_fill.g(), bg_fill.b(), 127);
+        ctx.set_visuals(visuals);
+        match &game_state.menu {
+            Menu::None => (),
+            Menu::Main => main_menu(ctx, game_state, frame_type),
+            Menu::Multiplayer => multiplayer_menu(ctx, game_state, frame_type),
+            Menu::Joining => joining_menu(ctx, game_state, frame_type),
+            Menu::Error(message) => error_menu(ctx, message.clone(), game_state),
+        }
+    });
+    game_state.draw_ui = true;
+}
+
+fn main_menu(ctx: &CtxRef, game_state: &mut GameState, frame_type: &mut FrameType) {
+    egui::CentralPanel::default().show(ctx, |ui| {
+        ui.vertical_centered(|ui| {
+            ui.heading("Main menu");
+            ui.separator();
+            let playing = matches!(
+                frame_type,
+                FrameType::SinglePlayer(..) | FrameType::Multiplayer(..)
+            );
+            if playing && ui.button("Resume").clicked() {
+                game_state.menu = Menu::None;
+            }
+            if playing && ui.button("Logout").clicked() {
+                game_state.menu = if matches!(frame_type, FrameType::Multiplayer(..)) {
+                    Menu::Multiplayer
+                } else {
+                    Menu::Main
+                };
+                *frame_type = FrameType::Initial;
+            }
+            if ui.button("Single player").clicked() {
+                *frame_type = FrameType::SinglePlayer(Box::new(make_single_player_scene(
+                    &mut game_state.rng,
+                )));
+                game_state.menu = Menu::None;
+            }
+            if ui.button("Multiplayer").clicked() {
+                game_state.menu = Menu::Multiplayer;
+            }
+            if ui.button("Quit").clicked() {
+                *frame_type = FrameType::None;
+            }
+        });
+    });
+}
+
+fn multiplayer_menu(ctx: &CtxRef, game_state: &mut GameState, frame_type: &mut FrameType) {
+    egui::CentralPanel::default().show(ctx, |ui| {
+        ui.vertical_centered(|ui| {
+            let valid_player_name = is_valid_player_name(game_state.player_name.as_str());
+            let server_address = make_server_address(game_state.server_address.as_str(), game_state.server_port);
+            ui.heading("Multiplayer");
+            ui.separator();
+            ui.label("Player name:");
+            ui.text_edit_singleline(&mut game_state.player_name);
+            if !valid_player_name {
+                ui.label(format!("Player name should contain only alphabetic characters, be at least {} and not longer than {} symbols", MIN_PLAYER_NAME_LEN, MAX_PLAYER_NAME_LEN));
+            }
+            ui.label("Server address:");
+            ui.text_edit_singleline(&mut game_state.server_address);
+            if server_address.is_none() {
+                ui.label("Server address should be IPv4 or IPv6 address with or without a port");
+            }
+            if ui.button("Join").clicked() {
+                if let (true, Some(server_address)) = (valid_player_name, server_address) {
+                    *frame_type = FrameType::Multiplayer(Box::new(Multiplayer {
+                        client: AsyncDrop::new(
+                            game_state.client_dropper.sender.clone(),
+                            Client::new(
+                                GameClientSettings {
+                                    id: game_state.next_client_id,
+                                    connect_timeout: game_state.connect_timeout,
+                                    retry_period: game_state.retry_period,
+                                    player_name: game_state.player_name.clone(),
+                                },
+                                UdpClientSettings {
+                                    id: game_state.next_client_id,
+                                    server_address,
+                                    read_timeout: game_state.read_timeout,
+                                },
+                            )),
+                        scene: make_empty_scene(),
+                        local_world_frame: 0,
+                        local_world_time: 0.0,
+                    }));
+                    game_state.next_client_id += 1;
+                    game_state.menu = Menu::Joining;
+                }
+            }
+            if ui.button("Back").clicked() {
+                game_state.menu = Menu::Main;
+            }
+        });
+    });
+}
+
+fn joining_menu(ctx: &CtxRef, game_state: &mut GameState, frame_type: &mut FrameType) {
+    egui::CentralPanel::default().show(ctx, |ui| {
+        ui.vertical_centered(|ui| {
+            ui.heading("Joining the server...");
+            if ui.button("Cancel").clicked() {
+                game_state.menu = Menu::Multiplayer;
+                *frame_type = FrameType::Initial;
+            }
+        });
+    });
+}
+
+fn error_menu(ctx: &CtxRef, message: String, game_state: &mut GameState) {
+    egui::CentralPanel::default().show(ctx, |ui| {
+        ui.vertical_centered(|ui| {
+            ui.heading(message);
+            if ui.button("Back").clicked() {
+                game_state.menu = Menu::Multiplayer;
+            }
+        });
+    });
+}
+
+fn update(game_state: &mut GameState, frame_type: &mut FrameType) {
+    let new_frame_type = match frame_type {
+        FrameType::SinglePlayer(v) => {
+            update_single_player(v);
+            None
+        }
+        FrameType::Multiplayer(v) => update_multiplayer(game_state, v),
+        _ => None,
+    };
+    if let Some(v) = new_frame_type {
+        *frame_type = v;
+    }
+}
+
+fn draw(game_state: &GameState, frame_type: &mut FrameType) {
+    match frame_type {
+        FrameType::SinglePlayer(scene) => draw_scene(game_state, scene),
+        FrameType::Multiplayer(v) => draw_scene(game_state, &mut v.scene),
+        _ => (),
+    }
+}
+
+fn make_single_player_scene<R: Rng>(rng: &mut R) -> Scene {
+    let mut world = generate_world(Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)), rng);
+    let actor_id = get_next_id(&mut world.id_counter);
+    world.actors.push(generate_player_actor(
+        actor_id,
+        &world.bounds,
+        String::from("Player"),
+        rng,
+    ));
+    Scene {
+        time_step: 1.0 / 60.0,
+        actor_id: Some(actor_id),
+        engine: Engine::default(),
+        camera_zoom: 0.05,
+        last_actor_index: Some(world.actors.len() - 1),
+        camera_target: Vec2f::ZERO,
+        pointer: Vec2f::ZERO,
+        world: Box::new(world),
+    }
+}
+
+fn make_empty_scene() -> Scene {
+    Scene {
+        time_step: 1.0 / 60.0,
+        actor_id: None,
+        engine: Engine::default(),
+        camera_zoom: 0.05,
+        last_actor_index: None,
+        camera_target: Vec2f::ZERO,
+        pointer: Vec2f::ZERO,
+        world: Box::new(World::default()),
+    }
+}
+
+fn update_single_player(scene: &mut Scene) {
+    scene.engine.update(scene.time_step, &mut scene.world);
+    if let Some(actor_id) = scene.actor_id {
+        scene.last_actor_index = scene.world.actors.iter().position(|v| v.id == actor_id);
+    }
+}
+
+fn update_multiplayer(game_state: &mut GameState, data: &mut Multiplayer) -> Option<FrameType> {
+    let mut ack_world_frame = None;
+    while let Some(update) = data.client.receiver().try_recv().ok() {
+        match update {
+            GameUpdate::GameOver(message) => {
+                data.scene.actor_id = None;
+                game_state.menu = Menu::Error(format!("Disconnected from server: {}", message));
+                return Some(FrameType::Initial);
+            }
+            GameUpdate::SetActorId(v) => data.scene.actor_id = Some(v),
+            GameUpdate::WorldSnapshot(v) => {
+                if matches!(game_state.menu, Menu::Joining) {
+                    game_state.menu = Menu::None;
+                }
+                data.scene.world = v;
+                ack_world_frame = Some(data.scene.world.frame);
+                if let Some(actor_id) = data.scene.actor_id {
+                    data.scene.last_actor_index = data
+                        .scene
+                        .world
+                        .actors
+                        .iter()
+                        .position(|v| v.id == actor_id);
+                }
+            }
+            GameUpdate::WorldUpdate(world_update) => {
+                apply_world_update(*world_update, &mut data.scene.world);
+                ack_world_frame = Some(data.scene.world.frame);
+                if let Some(actor_id) = data.scene.actor_id {
+                    data.scene.last_actor_index = data
+                        .scene
+                        .world
+                        .actors
+                        .iter()
+                        .position(|v| v.id == actor_id);
+                }
+            }
+        }
+    }
+    if !data.client.is_done() && !data.client.is_running() {
+        data.client.stop();
+    }
+    if data.client.is_done() && matches!(game_state.menu, Menu::None | Menu::Joining) {
+        if let Err(e) = data.client.join() {
+            game_state.menu = Menu::Error(e);
+        } else {
+            game_state.menu = Menu::Multiplayer;
+        }
+        return Some(FrameType::Initial);
+    }
+    if let Some(frame) = ack_world_frame {
+        data.client
+            .sender()
+            .send(PlayerUpdate::AckWorldFrame(frame))
+            .ok();
+    }
+    data.local_world_frame = (data.local_world_frame + 1).max(data.scene.world.frame);
+    data.local_world_time += data.scene.time_step;
+    if data.local_world_time < data.scene.world.time {
+        data.local_world_time = data.scene.world.time;
+    }
+    data.scene.engine.update_visual(&mut data.scene.world);
+    None
+}
+
+fn draw_scene(game_state: &GameState, scene: &mut Scene) {
+    if let Some(actor_index) = scene.last_actor_index {
+        scene.camera_target = scene.world.actors[actor_index].position;
+    }
+
+    set_camera(&Camera2D {
+        zoom: vec2(
+            scene.camera_zoom as f32,
+            -scene.camera_zoom as f32 * screen_width() / screen_height(),
+        ),
+        target: vec2(scene.camera_target.x as f32, scene.camera_target.y as f32),
+        ..Default::default()
+    });
+
+    for v in scene.world.static_areas.iter() {
+        draw_disk_body_and_magick(
+            &v.body.shape,
+            v.body.material,
+            &v.magick.power,
+            scene.world.settings.border_width,
+            v.position,
+        );
+    }
+
+    for v in scene.world.temp_areas.iter() {
+        draw_disk_body_and_magick(
+            &v.body.shape,
+            v.body.material,
+            &v.effect.power,
+            scene.world.settings.border_width,
+            v.position,
+        );
+    }
+
+    for area in scene.world.bounded_areas.iter() {
+        let owner = scene
+            .world
+            .actors
+            .iter()
+            .find(|v| v.id == area.actor_id)
+            .unwrap();
+        draw_ring_sector_body_and_magick(
+            &area.body,
+            &area.effect.power,
+            owner.position,
+            normalize_angle(owner.current_direction.angle()),
+        );
+    }
+
+    if let Some(actor_index) = scene.last_actor_index {
+        let actor = &scene.world.actors[actor_index];
+        draw_line(
+            actor.position.x as f32,
+            actor.position.y as f32,
+            (actor.position.x + scene.pointer.x) as f32,
+            (actor.position.y + scene.pointer.y) as f32,
+            0.1,
+            Color::new(0.0, 0.0, 0.0, 0.5),
+        );
+        let current_target =
+            actor.position + actor.current_direction * actor.body.shape.radius * 2.0;
+        draw_line(
+            actor.position.x as f32,
+            actor.position.y as f32,
+            current_target.x as f32,
+            current_target.y as f32,
+            0.1,
+            Color::new(0.0, 0.0, 0.0, 0.5),
+        );
+    }
+
+    for beam in scene
+        .engine
+        .initial_emitted_beams()
+        .iter()
+        .chain(scene.engine.reflected_emitted_beams().iter())
+    {
+        let end = beam.origin + beam.direction * beam.length;
+        let color = get_magick_power_color(&beam.magick.power);
+        let sum_power = beam.magick.power.iter().sum::<f64>() / 20.0;
+        draw_line(
+            beam.origin.x as f32,
+            beam.origin.y as f32,
+            end.x as f32,
+            end.y as f32,
+            sum_power as f32,
+            color,
+        );
+    }
+
+    for v in scene.world.actors.iter() {
+        draw_disk_body_and_magick(
+            &v.body.shape,
+            v.body.material,
+            &v.effect.power,
+            scene.world.settings.border_width,
+            v.position,
+        );
+    }
+
+    for v in scene.world.dynamic_objects.iter() {
+        draw_disk_body_and_magick(
+            &v.body.shape,
+            v.body.material,
+            &v.effect.power,
+            scene.world.settings.border_width,
+            v.position,
+        );
+    }
+
+    for v in scene.world.static_objects.iter() {
+        match &v.body.shape {
+            StaticShape::CircleArc(arc) => {
+                let ring_sector = RingSector {
+                    min_radius: arc.radius - scene.world.settings.border_width,
+                    max_radius: arc.radius + scene.world.settings.border_width,
+                    angle: arc.length,
+                };
+                draw_ring_sector_body_and_magick(
+                    &ring_sector,
+                    &v.effect.power,
+                    v.position,
+                    arc.rotation,
+                );
+                draw_ring_sector_body_and_magick(
+                    &ring_sector,
+                    &v.aura.elements,
+                    v.position,
+                    arc.rotation,
+                );
+            }
+            StaticShape::Disk(shape) => {
+                draw_disk_body_and_magick(
+                    shape,
+                    v.body.material,
+                    &v.effect.power,
+                    scene.world.settings.border_width,
+                    v.position,
+                );
+            }
+        }
+    }
+
+    for v in scene.world.actors.iter() {
+        draw_aura(&v.aura, v.position);
+    }
+
+    for v in scene.world.dynamic_objects.iter() {
+        draw_aura(&v.aura, v.position);
+    }
+
+    for v in scene.world.static_objects.iter() {
+        draw_aura(&v.aura, v.position);
+    }
+
+    for v in scene.world.actors.iter() {
+        draw_health(v.health, v.body.shape.radius, v.position);
+        draw_power(
+            v.aura.power / scene.world.settings.max_magic_power,
+            v.body.shape.radius,
+            v.position,
+        );
+    }
+
+    for v in scene.world.dynamic_objects.iter() {
+        draw_health(v.health, v.body.shape.radius, v.position);
+        draw_power(
+            v.aura.power / scene.world.settings.max_magic_power,
+            v.body.shape.radius,
+            v.position,
+        );
+    }
+
+    for v in scene.world.static_objects.iter() {
+        let radius = match &v.body.shape {
+            StaticShape::CircleArc(v) => v.radius,
+            StaticShape::Disk(v) => v.radius,
+        };
+        draw_health(v.health, radius, v.position);
+        draw_power(
+            v.aura.power / scene.world.settings.max_magic_power,
+            radius,
+            v.position,
+        );
+    }
+
+    for v in scene.world.actors.iter() {
+        draw_spell_elements(
+            &v.spell_elements,
+            v.position + Vec2f::new(-HALF_WIDTH, v.body.shape.radius + 0.2),
+            HALF_HEIGHT,
+            (2.0 * HALF_WIDTH) / 5.0,
+        );
+    }
+
+    for v in scene.world.actors.iter() {
+        if Some(v.id) != scene.actor_id {
+            draw_name(
+                v.name.as_str(),
+                v.position,
+                v.body.shape.radius,
+                game_state.name_font,
+            );
+        }
+    }
+
+    draw_rectangle_lines(
+        scene.world.bounds.min.x as f32,
+        scene.world.bounds.min.y as f32,
+        scene.world.bounds.width() as f32,
+        scene.world.bounds.height() as f32,
+        1.0,
+        Color::new(1.0, 0.0, 0.0, 0.5),
+    );
+
+    if let Some(actor_index) = scene.last_actor_index {
+        set_default_camera();
+        draw_spell_elements(
+            &scene.world.actors[actor_index].spell_elements,
+            Vec2f::new(
+                (screen_width() as f64 - 5.0 * HUD_ELEMENT_WIDTH) / 2.0,
+                screen_height() as f64 - 150.0,
+            ),
+            HUD_ELEMENT_RADIUS,
+            HUD_ELEMENT_WIDTH,
+        );
+    }
+}
+
+fn draw_debug_hud(game_state: &GameState, frame_type: &FrameType) {
+    set_default_camera();
+
+    let mut text_counter = 0;
+    draw_debug_game_state_text(&mut text_counter, game_state);
+
+    draw_debug_text(
+        &mut text_counter,
+        game_state.debug_hud_font,
+        format!(
+            "Frame type: {}",
+            match frame_type {
+                FrameType::Initial => "Initial",
+                FrameType::SinglePlayer(..) => "SinglePlayer",
+                FrameType::Multiplayer { .. } => "Multiplayer",
+                FrameType::None => "None",
+            }
+        )
+        .as_str(),
+    );
+
+    match frame_type {
+        FrameType::SinglePlayer(scene) => {
+            draw_debug_scene_text(&mut text_counter, scene, game_state.debug_hud_font)
+        }
+        FrameType::Multiplayer(v) => {
+            draw_debug_multiplayer_text(&mut text_counter, game_state, v);
+            draw_debug_scene_text(&mut text_counter, &v.scene, game_state.debug_hud_font);
+        }
+        _ => (),
+    }
+}
+
+fn draw_debug_game_state_text(counter: &mut usize, game_state: &GameState) {
+    draw_debug_texts(
+        counter,
+        game_state.debug_hud_font,
+        &[
+            {
+                let minmax = game_state.fps.minmax();
+                format!(
+                    "FPS: {:.3} [{:.3}, {:.3}]",
+                    game_state.fps.get(),
+                    minmax.0,
+                    minmax.1
+                )
+            },
+            format_duration_metric("Input", &game_state.input_duration),
+            format_duration_metric("Update UI", &game_state.ui_update_duration),
+            format_duration_metric("Update", &game_state.update_duration),
+            format_duration_metric("Draw", &game_state.draw_duration),
+            format_duration_metric("Draw UI", &game_state.ui_draw_duration),
+            format_duration_metric("Draw debug HUD", &game_state.debug_hud_duration),
+            format!("Screen width: {}", screen_width()),
+            format!("Screen height: {}", screen_height()),
+        ],
+    );
+}
+
+fn format_duration_metric(title: &str, duration: &DurationMovingAverage) -> String {
+    let minmax = duration.minmax();
+    format!(
+        "{}: {:.3} [{:.3}, {:.3}] ms",
+        title,
+        duration.get() * 1000.0,
+        minmax.0 * 1000.0,
+        minmax.1 * 1000.0
+    )
+}
+
+fn draw_debug_multiplayer_text(counter: &mut usize, game_state: &GameState, data: &Multiplayer) {
+    draw_debug_texts(
+        counter,
+        game_state.debug_hud_font,
+        &[
+            String::from("Multiplayer:"),
+            format!("Server: {}", game_state.server_address),
+            format!(
+                "World frame delay: {}",
+                data.local_world_frame - data.scene.world.frame
+            ),
+            format!(
+                "World time delay: {:.3}",
+                data.local_world_time - data.scene.world.time
+            ),
+        ],
+    );
+}
+
+fn draw_debug_scene_text(counter: &mut usize, scene: &Scene, font: Font) {
+    draw_debug_texts(
+        counter,
+        font,
+        &[
+            String::from("Scene:"),
+            format!("World frame: {}", scene.world.frame),
+            format!("World time: {:.3}", scene.world.time),
+            format!(
+                "Actor: id={:?} index={:?}",
+                scene.actor_id, scene.last_actor_index
+            ),
+            format!("Camera zoom: {}", scene.camera_zoom),
+            format!(
+                "Camera target: {:.3} {:.3}",
+                scene.camera_target.x, scene.camera_target.y
+            ),
+            format!("Pointer: {:.3} {:.3}", scene.pointer.x, scene.pointer.y),
+            format!("Actors: {}", scene.world.actors.len()),
+            format!("Dynamic objects: {}", scene.world.dynamic_objects.len()),
+            format!("Static objects: {}", scene.world.static_objects.len()),
+            format!("Beams: {}", scene.world.beams.len()),
+            format!("Static areas: {}", scene.world.static_areas.len()),
+            format!("Temp areas: {}", scene.world.temp_areas.len()),
+            format!("Bounded areas: {}", scene.world.bounded_areas.len()),
+            format!("Fields: {}", scene.world.fields.len()),
+        ],
+    );
+}
+
+fn draw_debug_texts(counter: &mut usize, font: Font, texts: &[String]) {
+    for text in texts.iter() {
+        draw_debug_text(counter, font, text.as_str());
+    }
+}
+
+fn draw_debug_text(counter: &mut usize, font: Font, text: &str) {
+    *counter += 1;
+    draw_text_ex(
+        text,
+        10.0,
+        (4 + *counter * 24) as f32,
+        TextParams {
+            font,
+            font_size: 24,
+            font_scale: 1.0,
+            color: WHITE,
+        },
+    );
+}
+
+fn for_each_actor_action<F>(mut f: F)
+where
+    F: FnMut(ActorAction),
+{
+    use macroquad::input::*;
+    if is_mouse_button_pressed(MouseButton::Left) {
+        f(ActorAction::Move(true));
+    }
+    if is_mouse_button_released(MouseButton::Left) {
+        f(ActorAction::Move(false));
+    }
+    if is_mouse_button_pressed(MouseButton::Right) {
+        if is_key_down(KeyCode::LeftShift) {
+            f(ActorAction::StartAreaOfEffectMagick);
+        } else {
+            f(ActorAction::StartDirectedMagick);
+        }
+    }
+    if is_mouse_button_released(MouseButton::Right) {
+        f(ActorAction::CompleteDirectedMagick);
+    }
+    if is_mouse_button_released(MouseButton::Middle) {
+        f(ActorAction::SelfMagick);
+    }
+    if is_key_released(KeyCode::Q) {
+        f(ActorAction::AddSpellElement(Element::Water));
+    }
+    if is_key_released(KeyCode::A) {
+        f(ActorAction::AddSpellElement(Element::Lightning));
+    }
+    if is_key_released(KeyCode::W) {
+        f(ActorAction::AddSpellElement(Element::Life));
+    }
+    if is_key_released(KeyCode::S) {
+        f(ActorAction::AddSpellElement(Element::Arcane));
+    }
+    if is_key_released(KeyCode::E) {
+        f(ActorAction::AddSpellElement(Element::Shield));
+    }
+    if is_key_released(KeyCode::D) {
+        f(ActorAction::AddSpellElement(Element::Earth));
+    }
+    if is_key_released(KeyCode::R) {
+        f(ActorAction::AddSpellElement(Element::Cold));
+    }
+    if is_key_released(KeyCode::F) {
+        f(ActorAction::AddSpellElement(Element::Fire));
+    }
+}
+
+fn draw_disk_body_and_magick(
     shape: &Disk,
+    material: Material,
     power: &[f64; 11],
     border_width: f64,
-    mut f: F,
-) where
-    F: FnMut(&ellipse::Ellipse, types::Rectangle),
-{
-    let mut drawable = ellipse::Ellipse::new(get_material_color(material, 1.0));
-    if power.iter().sum::<f64>() > 0.0 {
-        drawable = drawable.border(ellipse::Border {
-            color: get_magick_power_color(power),
-            radius: border_width,
-        });
+    position: Vec2f,
+) {
+    let has_power = power.iter().sum::<f64>() > 0.0;
+    if has_power {
+        draw_poly(
+            position.x as f32,
+            position.y as f32,
+            75,
+            shape.radius as f32,
+            0.0,
+            get_magick_power_color(power),
+        );
     }
-    let rect = rectangle::centered_square(0.0, 0.0, shape.radius);
-    f(&drawable, rect);
+    draw_poly(
+        position.x as f32,
+        position.y as f32,
+        75,
+        (shape.radius - border_width * has_power as i32 as f64) as f32,
+        0.0,
+        get_material_color(material, 1.0),
+    );
 }
 
-fn with_ring_sector_body_and_magick<T, F>(body: &RingSector, power: &[T; 11], mut f: F)
-where
-    F: FnMut(polygon::Polygon, types::Polygon),
+fn draw_ring_sector_body_and_magick<T>(
+    body: &RingSector,
+    power: &[T; 11],
+    position: Vec2f,
+    rotation: f64,
+) where
     T: Default + PartialEq,
 {
     const BASE_RESOLUTION: f64 = 12.0;
-    let shape = polygon::Polygon::new(get_magick_power_color(power));
+    let color = get_magick_power_color(power);
     let resolution = (body.angle * BASE_RESOLUTION).round() as usize;
     let min_angle_step = body.angle / (resolution - 1) as f64;
     let max_angle_step = body.angle / resolution as f64;
-    let mut vertices = [[0.0, 0.0]; 2 * (std::f64::consts::TAU * BASE_RESOLUTION) as usize + 3];
+    let mut vertices = Vec::with_capacity(2 * resolution + 1);
+    let mut indices = Vec::with_capacity(3 * (2 * resolution - 1));
     for i in 0..resolution {
-        let from =
+        let max =
             Vec2f::only_x(body.max_radius).rotated(i as f64 * max_angle_step - body.angle / 2.0);
-        let to =
+        let min =
             Vec2f::only_x(body.min_radius).rotated(i as f64 * min_angle_step - body.angle / 2.0);
-        vertices[2 * i] = [from.x, from.y];
-        vertices[2 * i + 1] = [to.x, to.y];
+        vertices.push(Vertex::new(
+            max.x as f32,
+            max.y as f32,
+            0.0,
+            0.0,
+            0.0,
+            color,
+        ));
+        vertices.push(Vertex::new(
+            min.x as f32,
+            min.y as f32,
+            0.0,
+            0.0,
+            0.0,
+            color,
+        ));
     }
     let last = Vec2f::only_x(body.max_radius).rotated(body.angle / 2.0);
-    vertices[2 * resolution] = [last.x, last.y];
-    f(shape, &vertices[0..2 * resolution + 1]);
-}
-
-fn with_aura<F: FnMut(ellipse::Ellipse, [f64; 4])>(aura: &Aura, mut f: F) {
-    let shape = ellipse::Ellipse::new(get_magick_power_color(&aura.elements));
-    let rect = rectangle::centered_square(0.0, 0.0, aura.radius);
-    f(shape, rect);
-}
-
-fn with_health<F: FnMut(rectangle::Rectangle, [f64; 4])>(radius: f64, health: f64, f: F) {
-    with_meter(radius, health, 0.5, [1.0, 0.0, 0.0, 1.0], f);
-}
-
-fn with_power<F: FnMut(rectangle::Rectangle, [f64; 4])>(radius: f64, power: f64, f: F) {
-    with_meter(radius, power, 0.8, [0.0, 0.0, 1.0, 1.0], f);
-}
-
-fn with_meter<F>(radius: f64, value: f64, y: f64, color: [f32; 4], mut f: F)
-where
-    F: FnMut(rectangle::Rectangle, [f64; 4]),
-{
-    let half_width = 0.66;
-    let background = rectangle::Rectangle::new([0.0, 0.0, 0.0, 0.8]);
-    let background_rect = rectangle::rectangle_by_corners(
-        -half_width,
-        radius + y - 0.1,
-        half_width,
-        radius + y + 0.1,
+    vertices.push(Vertex::new(
+        last.x as f32,
+        last.y as f32,
+        0.0,
+        0.0,
+        0.0,
+        color,
+    ));
+    for i in 0..2 * resolution as u16 - 1 {
+        indices.push(i);
+        indices.push(i + 1);
+        indices.push(i + 2);
+    }
+    draw_triangles(
+        Mat4::from_rotation_translation(
+            Quat::from_axis_angle(Vec3::new(0.0, 0.0, 1.0), rotation as f32),
+            Vec3::new(position.x as f32, position.y as f32, 0.0),
+        ),
+        &vertices,
+        &indices,
     );
-    f(background, background_rect);
-    let bar_right = -half_width + 2.0 * half_width * value;
-    let health_bar = rectangle::Rectangle::new(color);
-    let health_bar_rect =
-        rectangle::rectangle_by_corners(-half_width, radius + y - 0.1, bar_right, radius + y + 0.1);
-    f(health_bar, health_bar_rect);
 }
 
-fn get_material_color(material: Material, alpha: f32) -> [f32; 4] {
+fn draw_triangles(matrix: Mat4, vertices: &[Vertex], indices: &[u16]) {
+    let context = unsafe { get_internal_gl() };
+    context.quad_gl.push_model_matrix(matrix);
+    context.quad_gl.texture(None);
+    context.quad_gl.draw_mode(DrawMode::Triangles);
+    context.quad_gl.geometry(vertices, indices);
+    context.quad_gl.pop_model_matrix();
+}
+
+fn get_material_color(material: Material, alpha: f32) -> Color {
     match material {
-        Material::None => [0.0, 0.0, 0.0, alpha],
-        Material::Flesh => [0.93, 0.89, 0.69, alpha],
-        Material::Stone => [0.76, 0.76, 0.76, alpha],
-        Material::Dirt => [0.5, 0.38, 0.26, alpha],
-        Material::Grass => [0.44, 0.69, 0.15, alpha],
-        Material::Water => [0.1, 0.1, 0.9, alpha],
+        Material::None => Color::new(0.0, 0.0, 0.0, alpha),
+        Material::Flesh => Color::new(0.93, 0.89, 0.69, alpha),
+        Material::Stone => Color::new(0.76, 0.76, 0.76, alpha),
+        Material::Dirt => Color::new(0.5, 0.38, 0.26, alpha),
+        Material::Grass => Color::new(0.44, 0.69, 0.15, alpha),
+        Material::Water => Color::new(0.1, 0.1, 0.9, alpha),
     }
 }
 
-fn get_magick_power_color<T: Default + PartialEq>(power: &[T; 11]) -> [f32; 4] {
+fn get_magick_power_color<T: Default + PartialEq>(power: &[T; 11]) -> Color {
     let mut result: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
     let mut colors = 0;
     power
@@ -865,10 +1053,10 @@ fn get_magick_power_color<T: Default + PartialEq>(power: &[T; 11]) -> [f32; 4] {
             colors += 1;
         });
     if colors == 0 {
-        return [0.0, 0.0, 0.0, 0.0];
+        return Color::new(0.0, 0.0, 0.0, 0.0);
     }
     result.iter_mut().for_each(|v| *v /= colors as f32);
-    result
+    Color::from(result)
 }
 
 fn get_element_color(element: Element) -> [f32; 4] {
@@ -887,64 +1075,146 @@ fn get_element_color(element: Element) -> [f32; 4] {
     }
 }
 
-fn draw_ring_sector<G>(
-    shape: Polygon,
-    vertices: types::Polygon,
-    draw_state: &DrawState,
-    transform: math::Matrix2d,
-    g: &mut G,
-) where
-    G: Graphics,
-{
-    g.tri_list(draw_state, &shape.color, |f| {
-        use graphics::triangulation::{tx, ty};
-        for i in 1..vertices.len() - 1 {
-            let buffer = &vertices[i - 1..i + 2];
-            let mut draw_buffer = [[0.0; 2]; 3];
-            for i in 0..buffer.len() {
-                let v = &buffer[i];
-                draw_buffer[i] = [tx(transform, v[0], v[1]), ty(transform, v[0], v[1])];
-            }
-            f(&draw_buffer);
-        }
-    });
+fn draw_aura(aura: &Aura, position: Vec2f) {
+    draw_poly(
+        position.x as f32,
+        position.y as f32,
+        75,
+        aura.radius as f32,
+        0.0,
+        get_magick_power_color(&aura.elements),
+    );
 }
 
-fn draw_name<C, G>(
-    actor: &Actor,
-    draw_state: &DrawState,
-    base_transform: &math::Matrix2d,
-    cache: &mut C,
-    g: &mut G,
-) -> Result<(), C::Error>
-where
-    C: CharacterCache,
-    G: Graphics<Texture = <C as CharacterCache>::Texture>,
-{
-    let width = cache.width(NAME_FONT_SIZE, actor.name.as_str())?;
-    text::Text::new_color([1.0, 1.0, 1.0, 0.8], NAME_FONT_SIZE).draw(
-        &actor.name[..],
-        cache,
-        draw_state,
-        base_transform
-            .trans(
-                actor.position.x - NAME_SCALE * width / 2.0,
-                actor.position.y - actor.body.shape.radius - 0.3,
-            )
-            .scale(NAME_SCALE, NAME_SCALE),
-        g,
-    )
+fn draw_health(value: f64, radius: f64, position: Vec2f) {
+    draw_meter(value, radius, position, 0.5, Color::new(1.0, 0.0, 0.0, 1.0));
 }
 
-fn send_or_apply_actor_action(
-    sender: Option<&Sender<PlayerUpdate>>,
-    actor_action: ActorAction,
-    actor_index: usize,
-    world: &mut World,
+fn draw_power(value: f64, radius: f64, position: Vec2f) {
+    draw_meter(value, radius, position, 0.8, Color::new(0.0, 0.0, 1.0, 1.0));
+}
+
+fn draw_meter(value: f64, radius: f64, position: Vec2f, y: f64, color: Color) {
+    draw_rectangle(
+        (position.x - HALF_WIDTH) as f32,
+        (position.y + radius + y - HALF_HEIGHT) as f32,
+        (2.0 * HALF_WIDTH) as f32,
+        (2.0 * HALF_HEIGHT) as f32,
+        Color::new(0.0, 0.0, 0.0, 0.8),
+    );
+    draw_rectangle(
+        (position.x - HALF_WIDTH + BORDER_WIDTH) as f32,
+        (position.y + radius + y - HALF_HEIGHT + BORDER_WIDTH) as f32,
+        (2.0 * (HALF_WIDTH - BORDER_WIDTH) * value) as f32,
+        (2.0 * (HALF_HEIGHT - BORDER_WIDTH)) as f32,
+        color,
+    );
+}
+
+fn draw_spell_elements(
+    spell_elements: &[Element],
+    position: Vec2f,
+    element_radius: f64,
+    element_width: f64,
 ) {
-    if let Some(s) = sender {
-        s.send(PlayerUpdate::Action(actor_action)).unwrap();
-    } else {
-        apply_actor_action(&actor_action, actor_index, world);
+    for (i, element) in spell_elements.iter().enumerate() {
+        draw_element(
+            *element,
+            position + Vec2f::only_x((i as f64 + 0.5) * element_width),
+            element_radius,
+        );
+    }
+}
+
+fn draw_element(element: Element, position: Vec2f, radius: f64) {
+    draw_poly(
+        position.x as f32,
+        position.y as f32,
+        20,
+        radius as f32,
+        0.0,
+        BLACK,
+    );
+    draw_poly(
+        position.x as f32,
+        position.y as f32,
+        20,
+        (radius * BORDER_FACTOR) as f32,
+        0.0,
+        Color::from(get_element_color(element)),
+    );
+}
+
+fn draw_name(text: &str, position: Vec2f, radius: f64, font: Font) {
+    let text_dimensions = measure_text(text, None, 36, 0.03);
+    draw_text_ex(
+        text,
+        position.x as f32 - text_dimensions.width / 2.0,
+        (position.y - radius - 0.3) as f32,
+        TextParams {
+            font,
+            font_size: NAME_FONT_SIZE,
+            font_scale: NAME_FONT_SCALE,
+            color: Color::new(1.0, 1.0, 1.0, 0.8),
+        },
+    );
+}
+
+fn make_server_address(address: &str, port: u16) -> Option<SocketAddr> {
+    if let Ok(v) = address.parse::<SocketAddr>() {
+        return Some(v);
+    }
+    if let Ok(v) = format!("{}:{}", address, port).parse::<SocketAddr>() {
+        return Some(v);
+    }
+    if let Ok(v) = format!("[{}]:{}", address, port).parse::<SocketAddr>() {
+        return Some(v);
+    }
+    None
+}
+
+struct Dropper<T> {
+    sender: Sender<DropperMessage<T>>,
+    handle: JoinHandle<()>,
+}
+
+enum DropperMessage<T> {
+    Stop,
+    Drop(T),
+}
+
+struct AsyncDrop<T> {
+    sender: Sender<DropperMessage<T>>,
+    value: Option<T>,
+}
+
+impl<T> AsyncDrop<T> {
+    pub fn new(sender: Sender<DropperMessage<T>>, value: T) -> Self {
+        Self {
+            sender,
+            value: Some(value),
+        }
+    }
+}
+
+impl<T> Drop for AsyncDrop<T> {
+    fn drop(&mut self) {
+        if let Some(value) = self.value.take() {
+            self.sender.send(DropperMessage::Drop(value)).ok();
+        }
+    }
+}
+
+impl<T> std::ops::Deref for AsyncDrop<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.value.as_ref().unwrap()
+    }
+}
+
+impl<T> std::ops::DerefMut for AsyncDrop<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.value.as_mut().unwrap()
     }
 }

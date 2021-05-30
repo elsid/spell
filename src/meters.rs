@@ -1,7 +1,6 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-#[cfg(feature = "server")]
 use itertools::{Itertools, MinMaxResult};
 
 pub struct FpsMovingAverage {
@@ -46,7 +45,6 @@ impl FpsMovingAverage {
         }
     }
 
-    #[cfg(feature = "server")]
     pub fn minmax(&self) -> (f64, f64) {
         if self.times.len() < 2 {
             return (0.0, 0.0);
@@ -106,7 +104,6 @@ impl DurationMovingAverage {
         }
     }
 
-    #[cfg(feature = "server")]
     pub fn minmax(&self) -> (f64, f64) {
         match self.durations.iter().minmax() {
             MinMaxResult::NoElements => (0.0, 0.0),
@@ -119,7 +116,6 @@ impl DurationMovingAverage {
     }
 }
 
-#[cfg(feature = "server")]
 pub fn measure<F: FnMut()>(mut f: F) -> Duration {
     let start = Instant::now();
     f();

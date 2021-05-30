@@ -1,3 +1,5 @@
+#[cfg(feature = "client")]
+use macroquad::math::Vec2;
 use serde::{Deserialize, Serialize};
 
 pub trait Square: std::ops::Mul + Copy {
@@ -43,6 +45,15 @@ impl Vec2f {
         let mut result = *self;
         result.normalize();
         result
+    }
+
+    pub fn safe_normalized(&self) -> Option<Self> {
+        let norm = self.norm();
+        if norm < f64::EPSILON {
+            None
+        } else {
+            Some(*self / norm)
+        }
     }
 
     pub fn rotated(&self, angle: f64) -> Self {
@@ -157,6 +168,17 @@ impl std::ops::DivAssign<f64> for Vec2f {
     }
 }
 
+impl std::ops::Div for Vec2f {
+    type Output = Vec2f;
+
+    fn div(self, rhs: Vec2f) -> Self::Output {
+        Self {
+            x: self.x / rhs.x,
+            y: self.y / rhs.y,
+        }
+    }
+}
+
 impl PartialEq for Vec2f {
     fn eq(&self, rhs: &Self) -> bool {
         (self.x, self.y).eq(&(rhs.x, rhs.y))
@@ -168,5 +190,15 @@ impl Eq for Vec2f {}
 impl From<Vec2f> for [f64; 2] {
     fn from(value: Vec2f) -> Self {
         [value.x, value.y]
+    }
+}
+
+#[cfg(feature = "client")]
+impl From<Vec2> for Vec2f {
+    fn from(value: Vec2) -> Self {
+        Self {
+            x: value.x as f64,
+            y: value.y as f64,
+        }
     }
 }

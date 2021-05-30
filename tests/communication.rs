@@ -10,10 +10,9 @@ use std::time::{Duration, Instant};
 use portpicker::pick_unused_port;
 use reqwest::blocking::{RequestBuilder, Response};
 
-use spell::client::{GameClientSettings, UdpClientSettings};
+use spell::client::{Client, GameClientSettings, UdpClientSettings};
 use spell::protocol::{ActorAction, GameUpdate, HttpMessage, PlayerUpdate, ServerStatus};
 use spell::server::{run_server, ServerParams};
-use spell::with_background_client;
 
 #[test]
 fn server_should_terminate() {
@@ -179,7 +178,7 @@ fn server_should_limit_number_of_sessions() {
                 with_background_client(
                     session_game_client_settings,
                     session_udp_client_settings,
-                    |player_update_sender, game_update_receiver| {
+                    |_, game_update_receiver| {
                         let game_update = game_update_receiver
                             .recv_timeout(Duration::from_secs(3))
                             .unwrap();
@@ -190,7 +189,6 @@ fn server_should_limit_number_of_sessions() {
                         );
                         session_barrier1.wait();
                         session_barrier2.wait();
-                        drop(player_update_sender);
                     },
                 );
             })
@@ -201,13 +199,12 @@ fn server_should_limit_number_of_sessions() {
         with_background_client(
             game_client_settings,
             udp_client_settings,
-            |player_update_sender, game_update_receiver| {
+            |_, game_update_receiver| {
                 assert_eq!(
                     game_update_receiver.recv_timeout(Duration::from_secs(3)),
                     Err(RecvTimeoutError::Timeout)
                 );
                 barrier2.wait();
-                drop(player_update_sender);
             },
         );
         first_session.join().unwrap();
@@ -255,7 +252,7 @@ fn server_should_limit_number_of_players() {
                 with_background_client(
                     session_game_client_settings,
                     session_udp_client_settings,
-                    |player_update_sender, game_update_receiver| {
+                    |_, game_update_receiver| {
                         let game_update = game_update_receiver
                             .recv_timeout(Duration::from_secs(3))
                             .unwrap();
@@ -266,7 +263,6 @@ fn server_should_limit_number_of_players() {
                         );
                         session_barrier1.wait();
                         session_barrier2.wait();
-                        drop(player_update_sender);
                     },
                 );
             })
@@ -277,13 +273,12 @@ fn server_should_limit_number_of_players() {
         with_background_client(
             game_client_settings,
             udp_client_settings,
-            |player_update_sender, game_update_receiver| {
+            |_, game_update_receiver| {
                 assert_eq!(
                     game_update_receiver.recv_timeout(Duration::from_secs(3)),
                     Err(RecvTimeoutError::Disconnected)
                 );
                 barrier2.wait();
-                drop(player_update_sender);
             },
         );
         first_session.join().unwrap();
@@ -336,7 +331,7 @@ fn server_should_support_multiple_players() {
                     with_background_client(
                         session_game_client_settings,
                         session_udp_client_settings,
-                        |player_update_sender, game_update_receiver| {
+                        |_, game_update_receiver| {
                             let game_update = game_update_receiver
                                 .recv_timeout(Duration::from_secs(3))
                                 .unwrap();
@@ -346,7 +341,6 @@ fn server_should_support_multiple_players() {
                                 game_update
                             );
                             session_barrier.wait();
-                            drop(player_update_sender);
                         },
                     );
                 })
@@ -576,7 +570,7 @@ fn with_background_server_and_client<F>(
     game_client_settings: GameClientSettings,
     f: F,
 ) where
-    F: FnOnce(Sender<PlayerUpdate>, Receiver<GameUpdate>),
+    F: FnOnce(&Sender<PlayerUpdate>, &Receiver<GameUpdate>),
 {
     let upd_client_settings = UdpClientSettings {
         id: game_client_settings.id,
@@ -589,6 +583,17 @@ fn with_background_server_and_client<F>(
         with_background_client(game_client_settings, upd_client_settings, f);
     };
     with_background_server(server_params, w);
+}
+
+fn with_background_client<F>(
+    game_client_settings: GameClientSettings,
+    udp_client_settings: UdpClientSettings,
+    f: F,
+) where
+    F: FnOnce(&Sender<PlayerUpdate>, &Receiver<GameUpdate>),
+{
+    let client = Client::new(game_client_settings, udp_client_settings);
+    f(client.sender(), client.receiver());
 }
 
 fn with_background_server<F: FnOnce(HttpClient)>(params: ServerParams, f: F) {

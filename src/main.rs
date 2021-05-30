@@ -1,23 +1,18 @@
 use clap::Clap;
 
-use spell::{run_multi_player, run_single_player, MultiPlayerParams, SinglePlayerParams};
+use spell::game::{run_game, GameSettings};
 
-#[derive(Clap)]
-struct Args {
-    #[clap(subcommand)]
-    command: Command,
-}
-
-#[derive(Clap)]
-enum Command {
-    SinglePlayer(SinglePlayerParams),
-    MultiPlayer(MultiPlayerParams),
-}
-
-fn main() {
+#[macroquad::main(window_conf)]
+async fn main() {
     env_logger::init();
-    match Args::parse().command {
-        Command::SinglePlayer(params) => run_single_player(params),
-        Command::MultiPlayer(params) => run_multi_player(params),
+    run_game(GameSettings::parse()).await;
+}
+
+fn window_conf() -> macroquad::prelude::Conf {
+    macroquad::prelude::Conf {
+        window_title: String::from("Spell"),
+        high_dpi: true,
+        sample_count: 2,
+        ..Default::default()
     }
 }

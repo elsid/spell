@@ -12,6 +12,14 @@ impl Rectf {
     pub fn new(min: Vec2f, max: Vec2f) -> Self {
         Self { min, max }
     }
+
+    pub fn width(&self) -> f64 {
+        self.max.x - self.min.x
+    }
+
+    pub fn height(&self) -> f64 {
+        self.max.y - self.min.y
+    }
 }
 
 impl PartialEq for Rectf {

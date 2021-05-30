@@ -27,10 +27,9 @@ required-features = ["client", "server"]
 env_logger = { version = "0.8.3", optional = true }
 log = { version = "0.4.14", optional = true }
 rand = { version = "0.8.3", features = ["small_rng", "getrandom"], optional = true, default-features = false }
-piston = { version = "0.53.0", optional = true }
-piston2d-graphics = { version = "0.40.0", optional = true }
-pistoncore-glfw_window = { version = "0.71.0", optional = true }
-piston2d-opengl_graphics = { version = "0.78.0", optional = true }
+macroquad = { version = "0.3.3", optional = true }
+egui-macroquad = { version = "0.4.0", optional = true }
+egui = { version = "0.12.0", optional = true }
 parry2d-f64 = { version = "0.4.1", optional = true }
 serde = { version = "1.0.125", features = ["derive"], optional = true }
 bincode = { version = "1.3.3", optional = true }
@@ -53,10 +52,9 @@ client = [
     "env_logger",
     "log",
     "rand",
-    "piston",
-    "piston2d-graphics",
-    "pistoncore-glfw_window",
-    "piston2d-opengl_graphics",
+    "macroquad",
+    "egui-macroquad",
+    "egui",
     "parry2d-f64",
     "serde",
     "bincode",
@@ -64,6 +62,7 @@ client = [
     "clap",
     "lz4_flex",
     "nalgebra",
+    "itertools",
 ]
 server = [
     "env_logger",

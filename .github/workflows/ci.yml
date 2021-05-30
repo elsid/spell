@@ -28,7 +28,7 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
-      - run: sudo apt install -y libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+      - run: sudo apt install -y libxrandr-dev libxi-dev libasound2-dev libgl1-mesa-dev
       - uses: actions-rs/cargo@v1
         with:
           command: build
@@ -44,7 +44,7 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
-      - run: sudo apt install -y libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+      - run: sudo apt install -y libxrandr-dev libxi-dev libasound2-dev libgl1-mesa-dev
       - uses: actions-rs/cargo@v1
         with:
           command: build
@@ -63,7 +63,7 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
-      - run: sudo apt install -y libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+      - run: sudo apt install -y libxrandr-dev libxi-dev libasound2-dev libgl1-mesa-dev
       - uses: actions-rs/cargo@v1
         with:
           command: test
@@ -82,7 +82,7 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
-      - run: sudo apt install -y libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+      - run: sudo apt install -y libxrandr-dev libxi-dev libasound2-dev libgl1-mesa-dev
       - uses: actions-rs/cargo@v1
         with:
           command: test
@@ -131,7 +131,7 @@ jobs:
           toolchain: stable
           override: true
       - run: rustup component add clippy
-      - run: sudo apt install -y libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+      - run: sudo apt install -y libxrandr-dev libasound2-dev
       - uses: actions-rs/cargo@v1
         with:
           command: clippy
@@ -148,7 +148,7 @@ jobs:
           toolchain: stable
           override: true
       - run: rustup component add clippy
-      - run: sudo apt install -y libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+      - run: sudo apt install -y libxrandr-dev libasound2-dev
       - uses: actions-rs/cargo@v1
         with:
           command: clippy

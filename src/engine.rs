@@ -1209,7 +1209,7 @@ fn get_current_direction(
     current_direction.rotated(diff.signum() * diff.abs().min(max_rotation_speed * duration))
 }
 
-fn normalize_angle(angle: f64) -> f64 {
+pub fn normalize_angle(angle: f64) -> f64 {
     let turns = angle / std::f64::consts::TAU + 0.5;
     (turns - turns.floor() - 0.5) * std::f64::consts::TAU
 }

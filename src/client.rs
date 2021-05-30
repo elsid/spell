@@ -1,17 +1,272 @@
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
-use std::thread::{sleep, spawn};
+use std::thread::{sleep, spawn, JoinHandle};
 use std::time::{Duration, Instant};
 
 use tokio::net::UdpSocket;
+use tokio::runtime::Builder;
 
 use crate::protocol::{
     deserialize_server_message, deserialize_server_message_data, get_server_message_data_type,
     ClientMessage, ClientMessageData, GameUpdate, PlayerUpdate, ServerMessageData,
     HEARTBEAT_PERIOD,
 };
+
+pub struct Client {
+    game_client: Option<GameClient>,
+    udp_client: Option<UdpClient>,
+}
+
+impl Client {
+    pub fn new(
+        game_client_settings: GameClientSettings,
+        udp_client_settings: UdpClientSettings,
+    ) -> Self {
+        let mut udp_client = UdpClient::new(udp_client_settings);
+        Self {
+            game_client: Some(GameClient::new(
+                game_client_settings,
+                udp_client.client_sender.take().unwrap(),
+                udp_client.server_receiver.take().unwrap(),
+            )),
+            udp_client: Some(udp_client),
+        }
+    }
+
+    pub fn is_running(&self) -> bool {
+        !self.game_client.as_ref().unwrap().is_done()
+            && !self.udp_client.as_ref().unwrap().is_done()
+    }
+
+    pub fn stop(&self) {
+        if !self.game_client.as_ref().unwrap().is_stopping() {
+            self.game_client.as_ref().unwrap().stop();
+        }
+        if !self.game_client.as_ref().unwrap().is_stopping() {
+            self.udp_client.as_ref().unwrap().stop();
+        }
+    }
+
+    pub fn is_done(&self) -> bool {
+        self.game_client.as_ref().unwrap().is_done() && self.udp_client.as_ref().unwrap().is_done()
+    }
+
+    pub fn join(&mut self) -> Result<(), String> {
+        let mut error = String::new();
+        if let Err(e) = self.game_client.as_mut().unwrap().join() {
+            error = e;
+        }
+        if let Err(e) = self.udp_client.as_mut().unwrap().join() {
+            if error.is_empty() {
+                error = format!("{}", e);
+            } else {
+                error = format!("{}, {}", error, e);
+            }
+        }
+        if error.is_empty() {
+            return Ok(());
+        }
+        Err(error)
+    }
+
+    pub fn sender(&self) -> &Sender<PlayerUpdate> {
+        self.game_client.as_ref().unwrap().sender()
+    }
+
+    pub fn receiver(&self) -> &Receiver<GameUpdate> {
+        self.game_client.as_ref().unwrap().receiver()
+    }
+}
+
+pub struct GameClient {
+    id: u64,
+    player_update_sender: Option<Sender<PlayerUpdate>>,
+    game_update_receiver: Option<Receiver<GameUpdate>>,
+    handle: Option<JoinHandle<Result<(), String>>>,
+    stop: Arc<AtomicBool>,
+    done: Arc<AtomicBool>,
+}
+
+impl GameClient {
+    pub fn new(
+        settings: GameClientSettings,
+        client_sender: Sender<ClientMessageData>,
+        server_receiver: Receiver<ServerMessageData>,
+    ) -> Self {
+        let (game_update_sender, game_update_receiver) = channel();
+        let (player_update_sender, player_update_receiver) = channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        let done = Arc::new(AtomicBool::new(false));
+        Self {
+            id: settings.id,
+            player_update_sender: Some(player_update_sender),
+            game_update_receiver: Some(game_update_receiver),
+            handle: Some(run_background_game_client(
+                settings,
+                game_update_sender,
+                player_update_receiver,
+                client_sender,
+                server_receiver,
+                stop.clone(),
+                done.clone(),
+            )),
+            stop,
+            done,
+        }
+    }
+
+    pub fn is_stopping(&self) -> bool {
+        self.stop.load(Ordering::Acquire)
+    }
+
+    pub fn is_done(&self) -> bool {
+        self.done.load(Ordering::Acquire)
+    }
+
+    pub fn stop(&self) {
+        info!("[{}] Stopping game client...", self.id);
+        self.stop.store(true, Ordering::Release);
+    }
+
+    pub fn join(&mut self) -> Result<(), String> {
+        if let Some(handle) = self.handle.take() {
+            handle.join().unwrap()
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn sender(&self) -> &Sender<PlayerUpdate> {
+        self.player_update_sender.as_ref().unwrap()
+    }
+
+    pub fn receiver(&self) -> &Receiver<GameUpdate> {
+        self.game_update_receiver.as_ref().unwrap()
+    }
+}
+
+impl Drop for GameClient {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            info!("[{}] Stopping game client...", self.id);
+            self.stop.store(true, Ordering::Release);
+            handle.join().ok();
+        }
+    }
+}
+
+pub struct UdpClient {
+    id: u64,
+    client_sender: Option<Sender<ClientMessageData>>,
+    server_receiver: Option<Receiver<ServerMessageData>>,
+    handle: Option<JoinHandle<Result<(), std::io::Error>>>,
+    stop: Arc<AtomicBool>,
+    done: Arc<AtomicBool>,
+}
+
+impl UdpClient {
+    pub fn new(settings: UdpClientSettings) -> Self {
+        let (server_sender, server_receiver) = channel();
+        let (client_sender, client_receiver) = channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        let done = Arc::new(AtomicBool::new(false));
+        Self {
+            id: settings.id,
+            client_sender: Some(client_sender),
+            server_receiver: Some(server_receiver),
+            handle: Some(run_background_udp_client(
+                settings,
+                server_sender,
+                client_receiver,
+                stop.clone(),
+                done.clone(),
+            )),
+            stop,
+            done,
+        }
+    }
+
+    pub fn is_stopping(&self) -> bool {
+        self.stop.load(Ordering::Acquire)
+    }
+
+    pub fn is_done(&self) -> bool {
+        self.done.load(Ordering::Acquire)
+    }
+
+    pub fn stop(&self) {
+        info!("[{}] Stopping UDP client...", self.id);
+        self.stop.store(true, Ordering::Release);
+    }
+
+    pub fn join(&mut self) -> Result<(), std::io::Error> {
+        if let Some(handle) = self.handle.take() {
+            handle.join().unwrap()
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl Drop for UdpClient {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            info!("[{}] Stopping UDP client...", self.id);
+            self.stop.store(true, Ordering::Release);
+            handle.join().ok();
+        }
+    }
+}
+
+pub fn run_background_game_client(
+    settings: GameClientSettings,
+    update_sender: Sender<GameUpdate>,
+    action_receiver: Receiver<PlayerUpdate>,
+    client_sender: Sender<ClientMessageData>,
+    server_receiver: Receiver<ServerMessageData>,
+    stop: Arc<AtomicBool>,
+    done: Arc<AtomicBool>,
+) -> JoinHandle<Result<(), String>> {
+    let game_channel = GameChannel {
+        sender: update_sender,
+        receiver: action_receiver,
+    };
+    let server_channel = ServerChannel {
+        sender: client_sender,
+        receiver: server_receiver,
+    };
+    spawn(move || {
+        let id = settings.id;
+        let result = run_game_client(settings, server_channel, game_channel, stop);
+        done.store(true, Ordering::Release);
+        info!("[{}] Game client has stopped with result: {:?}", id, result);
+        result
+    })
+}
+
+pub fn run_background_udp_client(
+    settings: UdpClientSettings,
+    server_sender: Sender<ServerMessageData>,
+    client_receiver: Receiver<ClientMessageData>,
+    stop: Arc<AtomicBool>,
+    done: Arc<AtomicBool>,
+) -> JoinHandle<Result<(), std::io::Error>> {
+    spawn(move || {
+        let runtime = Builder::new_current_thread().enable_all().build().unwrap();
+        let id = settings.id;
+        let result = runtime.block_on(run_udp_client(
+            settings,
+            server_sender,
+            client_receiver,
+            stop,
+        ));
+        done.store(true, Ordering::Release);
+        info!("[{}] UDP client has stopped with result: {:?}", id, result);
+        result
+    })
+}
 
 #[derive(Debug, Clone)]
 pub struct UdpClientSettings {
@@ -141,7 +396,6 @@ pub async fn run_udp_client(
         }
         last_update = Instant::now();
     }
-    info!("[{}] UDP client has stopped", settings.id);
     Ok(())
 }
 
@@ -168,9 +422,6 @@ async fn send_client_messages(
                     settings.id, e
                 );
                 return Err(e);
-            }
-            if matches!(client_message.data, ClientMessageData::Quit) {
-                return Ok(false);
             }
         } else {
             break;
@@ -221,11 +472,11 @@ pub fn run_game_client(
     server: ServerChannel,
     game: GameChannel,
     stop: Arc<AtomicBool>,
-) {
+) -> Result<(), String> {
     info!("[{}] Run game client", settings.id);
     let actor_id = match try_join_server(&settings, &server, &stop) {
-        Some(v) => v,
-        None => return,
+        Ok(v) => v,
+        Err(e) => return Err(format!("Failed to join the server: {}", e)),
     };
     info!("[{}] Joined to server as actor {}", settings.id, actor_id);
     let ServerChannel {
@@ -237,21 +488,36 @@ pub fn run_game_client(
         receiver: game_receiver,
     } = game;
     if let Err(..) = game_sender.send(GameUpdate::SetActorId(actor_id)) {
-        info!("[{}] Game client has stopped", settings.id);
-        return;
+        return Err(String::from("Failed to request actor id."));
     }
     let client_id = settings.id;
-    let sender = spawn(move || run_server_sender(client_id, server_sender, game_receiver));
-    run_server_receiver(client_id, game_sender, server_receiver, stop);
-    sender.join().unwrap();
-    info!("[{}] Game client has stopped", settings.id);
+    let stop_receiver = Arc::new(AtomicBool::new(false));
+    let receiver = run_background_server_receiver(
+        client_id,
+        game_sender,
+        server_receiver,
+        stop_receiver.clone(),
+    );
+    run_server_sender(client_id, server_sender, game_receiver, stop);
+    stop_receiver.store(true, Ordering::Release);
+    receiver.join().ok();
+    Ok(())
+}
+
+fn run_background_server_receiver(
+    client_id: u64,
+    sender: Sender<GameUpdate>,
+    receiver: Receiver<ServerMessageData>,
+    stop: Arc<AtomicBool>,
+) -> JoinHandle<()> {
+    spawn(move || run_server_receiver(client_id, sender, receiver, stop))
 }
 
 fn try_join_server(
     settings: &GameClientSettings,
     server: &ServerChannel,
     stop: &Arc<AtomicBool>,
-) -> Option<u64> {
+) -> Result<u64, String> {
     let now = Instant::now();
     let connect_deadline = now + settings.connect_timeout;
     let mut last_send = now - settings.retry_period;
@@ -261,17 +527,17 @@ fn try_join_server(
                 "[{}] Game client has timed out to connect to server.",
                 settings.id
             );
-            return None;
+            return Err(String::from("Timeout"));
         }
         if stop.load(Ordering::Acquire) {
-            return None;
+            return Err(String::from("Aborted"));
         }
         let since_last_send = Instant::now() - last_send;
         if since_last_send < settings.retry_period {
             sleep(settings.retry_period - since_last_send);
         }
         if stop.load(Ordering::Acquire) {
-            return None;
+            return Err(String::from("Aborted"));
         }
         debug!("[{}] Game client is trying to join server...", settings.id);
         if let Err(e) = server
@@ -303,12 +569,9 @@ fn try_join_server(
                 }
                 match data {
                     ServerMessageData::NewPlayer { actor_id, .. } => {
-                        break Some(actor_id);
+                        break Ok(actor_id);
                     }
-                    ServerMessageData::Error(err) => {
-                        error!("[{}] Join to server error: {}", settings.id, err);
-                        return None;
-                    }
+                    ServerMessageData::Error(err) => return Err(err),
                     v => warn!(
                         "[{}] Game client has received invalid server response type: {}",
                         settings.id,
@@ -328,9 +591,10 @@ fn run_server_sender(
     client_id: u64,
     sender: Sender<ClientMessageData>,
     receiver: Receiver<PlayerUpdate>,
+    stop: Arc<AtomicBool>,
 ) {
     info!("[{}] Run server sender", client_id);
-    loop {
+    while !stop.load(Ordering::Acquire) {
         match receiver.recv_timeout(HEARTBEAT_PERIOD) {
             Ok(player_update) => {
                 if let Err(e) = sender.send(ClientMessageData::PlayerUpdate(player_update)) {
