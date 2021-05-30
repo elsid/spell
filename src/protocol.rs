@@ -63,26 +63,14 @@ pub struct WorldUpdate {
     pub before_revision: u64,
     pub after_revision: u64,
     pub time: f64,
-    pub added_actors: Option<Vec<Actor>>,
-    pub updated_actors: Option<Vec<ActorUpdate>>,
-    pub removed_actors: Option<Vec<u64>>,
-    pub added_dynamic_objects: Option<Vec<DynamicObject>>,
-    pub updated_dynamic_objects: Option<Vec<DynamicObjectUpdate>>,
-    pub removed_dynamic_objects: Option<Vec<u64>>,
-    pub added_static_objects: Option<Vec<StaticObject>>,
-    pub updated_static_objects: Option<Vec<StaticObjectUpdate>>,
-    pub removed_static_objects: Option<Vec<u64>>,
-    pub added_beams: Option<Vec<Beam>>,
-    pub removed_beams: Option<Vec<u64>>,
-    pub added_static_areas: Option<Vec<StaticArea>>,
-    pub removed_static_areas: Option<Vec<u64>>,
-    pub added_temp_areas: Option<Vec<TempArea>>,
-    pub updated_temp_areas: Option<Vec<TempAreaUpdate>>,
-    pub removed_temp_areas: Option<Vec<u64>>,
-    pub added_bounded_areas: Option<Vec<BoundedArea>>,
-    pub removed_bounded_areas: Option<Vec<u64>>,
-    pub added_fields: Option<Vec<Field>>,
-    pub removed_fields: Option<Vec<u64>>,
+    pub actors: Option<Difference<Actor, ActorUpdate>>,
+    pub dynamic_objects: Option<Difference<DynamicObject, DynamicObjectUpdate>>,
+    pub static_objects: Option<Difference<StaticObject, StaticObjectUpdate>>,
+    pub beams: Option<ExistenceDifference<Beam>>,
+    pub static_areas: Option<ExistenceDifference<StaticArea>>,
+    pub temp_areas: Option<Difference<TempArea, TempAreaUpdate>>,
+    pub bounded_areas: Option<ExistenceDifference<BoundedArea>>,
+    pub fields: Option<ExistenceDifference<Field>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
@@ -165,87 +153,74 @@ pub fn get_client_message_data_type(value: &ClientMessageData) -> &'static str {
 }
 
 pub fn make_world_update(before: &World, after: &World) -> WorldUpdate {
-    let actors = get_actors_difference(&before.actors, &after.actors);
-    let dynamic_objects =
-        get_dynamic_objects_difference(&before.dynamic_objects, &after.dynamic_objects);
-    let static_objects =
-        get_static_objects_difference(&before.static_objects, &after.static_objects);
-    let beams = get_beams_difference(&before.beams, &after.beams);
-    let static_areas = get_static_areas_difference(&before.static_areas, &after.static_areas);
-    let temp_areas = get_temp_areas_difference(&before.temp_areas, &after.temp_areas);
-    let bounded_areas = get_bounded_areas_difference(&before.bounded_areas, &after.bounded_areas);
-    let fields = get_fields_difference(&before.fields, &after.fields);
     WorldUpdate {
         before_revision: before.revision,
         after_revision: after.revision,
         time: after.time,
-        added_actors: actors.added,
-        updated_actors: actors.updated,
-        removed_actors: actors.removed,
-        added_dynamic_objects: dynamic_objects.added,
-        updated_dynamic_objects: dynamic_objects.updated,
-        removed_dynamic_objects: dynamic_objects.removed,
-        added_static_objects: static_objects.added,
-        updated_static_objects: static_objects.updated,
-        removed_static_objects: static_objects.removed,
-        added_beams: beams.added,
-        removed_beams: beams.removed,
-        added_static_areas: static_areas.added,
-        removed_static_areas: static_areas.removed,
-        added_temp_areas: temp_areas.added,
-        updated_temp_areas: temp_areas.updated,
-        removed_temp_areas: temp_areas.removed,
-        added_bounded_areas: bounded_areas.added,
-        removed_bounded_areas: bounded_areas.removed,
-        added_fields: fields.added,
-        removed_fields: fields.removed,
+        actors: get_actors_difference(&before.actors, &after.actors),
+        dynamic_objects: get_dynamic_objects_difference(
+            &before.dynamic_objects,
+            &after.dynamic_objects,
+        ),
+        static_objects: get_static_objects_difference(
+            &before.static_objects,
+            &after.static_objects,
+        ),
+        beams: get_beams_difference(&before.beams, &after.beams),
+        static_areas: get_static_areas_difference(&before.static_areas, &after.static_areas),
+        temp_areas: get_temp_areas_difference(&before.temp_areas, &after.temp_areas),
+        bounded_areas: get_bounded_areas_difference(&before.bounded_areas, &after.bounded_areas),
+        fields: get_fields_difference(&before.fields, &after.fields),
     }
 }
 
-fn get_actors_difference(before: &[Actor], after: &[Actor]) -> Difference<Actor, ActorUpdate> {
+fn get_actors_difference(
+    before: &[Actor],
+    after: &[Actor],
+) -> Option<Difference<Actor, ActorUpdate>> {
     get_difference(before, after, |v| v.id, make_actor_update)
 }
 
 fn get_dynamic_objects_difference(
     before: &[DynamicObject],
     after: &[DynamicObject],
-) -> Difference<DynamicObject, DynamicObjectUpdate> {
+) -> Option<Difference<DynamicObject, DynamicObjectUpdate>> {
     get_difference(before, after, |v| v.id, make_dynamic_object_update)
 }
 
 fn get_static_objects_difference(
     before: &[StaticObject],
     after: &[StaticObject],
-) -> Difference<StaticObject, StaticObjectUpdate> {
+) -> Option<Difference<StaticObject, StaticObjectUpdate>> {
     get_difference(before, after, |v| v.id, make_static_object_update)
 }
 
-fn get_beams_difference(before: &[Beam], after: &[Beam]) -> ExistenceDifference<Beam> {
+fn get_beams_difference(before: &[Beam], after: &[Beam]) -> Option<ExistenceDifference<Beam>> {
     get_existence_difference(before, after, |v| v.id)
 }
 
 fn get_static_areas_difference(
     before: &[StaticArea],
     after: &[StaticArea],
-) -> ExistenceDifference<StaticArea> {
+) -> Option<ExistenceDifference<StaticArea>> {
     get_existence_difference(before, after, |v| v.id)
 }
 
 fn get_temp_areas_difference(
     before: &[TempArea],
     after: &[TempArea],
-) -> Difference<TempArea, TempAreaUpdate> {
+) -> Option<Difference<TempArea, TempAreaUpdate>> {
     get_difference(before, after, |v| v.id, make_temp_area_update)
 }
 
 fn get_bounded_areas_difference(
     before: &[BoundedArea],
     after: &[BoundedArea],
-) -> ExistenceDifference<BoundedArea> {
+) -> Option<ExistenceDifference<BoundedArea>> {
     get_existence_difference(before, after, |v| v.id)
 }
 
-fn get_fields_difference(before: &[Field], after: &[Field]) -> ExistenceDifference<Field> {
+fn get_fields_difference(before: &[Field], after: &[Field]) -> Option<ExistenceDifference<Field>> {
     get_existence_difference(before, after, |v| v.id)
 }
 
@@ -338,11 +313,11 @@ where
     }
 }
 
-#[derive(Default, Debug, PartialEq)]
-struct Difference<T: std::fmt::Debug + PartialEq, U: std::fmt::Debug + PartialEq> {
-    added: Option<Vec<T>>,
-    updated: Option<Vec<U>>,
-    removed: Option<Vec<u64>>,
+#[derive(Default, Debug, PartialEq, Clone, Deserialize, Serialize)]
+pub struct Difference<T: std::fmt::Debug + PartialEq, U: std::fmt::Debug + PartialEq> {
+    pub added: Option<Vec<T>>,
+    pub updated: Option<Vec<U>>,
+    pub removed: Option<Vec<u64>>,
 }
 
 fn get_difference<T, U, GetId, MakeUpdate>(
@@ -350,7 +325,7 @@ fn get_difference<T, U, GetId, MakeUpdate>(
     after: &[T],
     get_id: GetId,
     make_update: MakeUpdate,
-) -> Difference<T, U>
+) -> Option<Difference<T, U>>
 where
     T: Clone + PartialEq + std::fmt::Debug,
     U: PartialEq + std::fmt::Debug,
@@ -388,7 +363,10 @@ where
         }
     }
     added.extend_from_slice(&after[after_index..after.len()]);
-    Difference {
+    if added.is_empty() && updated.is_empty() && removed.is_empty() {
+        return None;
+    }
+    Some(Difference {
         added: if added.is_empty() { None } else { Some(added) },
         updated: if updated.is_empty() {
             None
@@ -400,20 +378,20 @@ where
         } else {
             Some(removed)
         },
-    }
+    })
 }
 
-#[derive(Debug, PartialEq)]
-struct ExistenceDifference<T: std::fmt::Debug + PartialEq> {
-    added: Option<Vec<T>>,
-    removed: Option<Vec<u64>>,
+#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
+pub struct ExistenceDifference<T: std::fmt::Debug + PartialEq> {
+    pub added: Option<Vec<T>>,
+    pub removed: Option<Vec<u64>>,
 }
 
 fn get_existence_difference<T, GetId>(
     before: &[T],
     after: &[T],
     get_id: GetId,
-) -> ExistenceDifference<T>
+) -> Option<ExistenceDifference<T>>
 where
     T: Clone + PartialEq + std::fmt::Debug,
     GetId: Fn(&T) -> u64,
@@ -445,14 +423,17 @@ where
         }
     }
     added.extend_from_slice(&after[after_index..after.len()]);
-    ExistenceDifference {
+    if added.is_empty() && removed.is_empty() {
+        return None;
+    }
+    Some(ExistenceDifference {
         added: if added.is_empty() { None } else { Some(added) },
         removed: if removed.is_empty() {
             None
         } else {
             Some(removed)
         },
-    }
+    })
 }
 
 pub fn apply_world_update(update: WorldUpdate, world: &mut World) {
@@ -461,77 +442,75 @@ pub fn apply_world_update(update: WorldUpdate, world: &mut World) {
     }
     world.revision = update.after_revision;
     world.time = update.time;
-    remove_from(update.removed_actors, |v| v.id, &mut world.actors);
-    remove_from(
-        update.removed_dynamic_objects,
-        |v| v.id,
-        &mut world.dynamic_objects,
-    );
-    remove_from(
-        update.removed_static_objects,
-        |v| v.id,
-        &mut world.static_objects,
-    );
-    remove_from(update.removed_beams, |v| v.id, &mut world.beams);
-    remove_from(
-        update.removed_static_areas,
-        |v| v.id,
-        &mut world.static_areas,
-    );
-    remove_from(update.removed_temp_areas, |v| v.id, &mut world.temp_areas);
-    remove_from(
-        update.removed_bounded_areas,
-        |v| v.id,
-        &mut world.bounded_areas,
-    );
-    remove_from(update.removed_fields, |v| v.id, &mut world.fields);
-    update_from(
-        update.updated_actors,
-        |a, b| a.id == b.id,
+    apply_difference(
+        update.actors,
+        &|v| v.id,
+        &|a, b| a.id == b.id,
         apply_actor_update,
         &mut world.actors,
     );
-    update_from(
-        update.updated_dynamic_objects,
-        |a, b| a.id == b.id,
+    apply_difference(
+        update.dynamic_objects,
+        &|v| v.id,
+        &|a, b| a.id == b.id,
         apply_dynamic_object_update,
         &mut world.dynamic_objects,
     );
-    update_from(
-        update.updated_static_objects,
-        |a, b| a.id == b.id,
+    apply_difference(
+        update.static_objects,
+        &|v| v.id,
+        &|a, b| a.id == b.id,
         apply_static_object_update,
         &mut world.static_objects,
     );
-    update_from(
-        update.updated_temp_areas,
-        |a, b| a.id == b.id,
+    apply_existence_difference(update.beams, &|v| v.id, &mut world.beams);
+    apply_existence_difference(update.static_areas, &|v| v.id, &mut world.static_areas);
+    apply_difference(
+        update.temp_areas,
+        &|v| v.id,
+        &|a, b| a.id == b.id,
         apply_temp_area_update,
         &mut world.temp_areas,
     );
-    add_or_update_from(update.added_actors, |v| v.id, &mut world.actors);
-    add_or_update_from(
-        update.added_dynamic_objects,
-        |v| v.id,
-        &mut world.dynamic_objects,
-    );
-    add_or_update_from(
-        update.added_static_objects,
-        |v| v.id,
-        &mut world.static_objects,
-    );
-    add_or_update_from(update.added_beams, |v| v.id, &mut world.beams);
-    add_or_update_from(update.added_static_areas, |v| v.id, &mut world.static_areas);
-    add_or_update_from(update.added_temp_areas, |v| v.id, &mut world.temp_areas);
-    add_or_update_from(
-        update.added_bounded_areas,
-        |v| v.id,
-        &mut world.bounded_areas,
-    );
-    add_or_update_from(update.added_fields, |v| v.id, &mut world.fields);
+    apply_existence_difference(update.bounded_areas, &|v| v.id, &mut world.bounded_areas);
+    apply_existence_difference(update.fields, &|v| v.id, &mut world.fields);
 }
 
-fn add_or_update_from<GetId, T>(src: Option<Vec<T>>, get_id: GetId, dst: &mut Vec<T>)
+fn apply_difference<T, U, GetId, EqualById, ApplyUpdate>(
+    difference: Option<Difference<T, U>>,
+    get_id: &GetId,
+    equal_by_id: &EqualById,
+    apply_update: ApplyUpdate,
+    dst: &mut Vec<T>,
+) where
+    T: std::fmt::Debug + PartialEq,
+    U: std::fmt::Debug + PartialEq,
+    GetId: Fn(&T) -> u64,
+    EqualById: Fn(&U, &T) -> bool,
+    ApplyUpdate: Fn(&U, &mut T),
+{
+    if let Some(value) = difference {
+        remove_from(value.removed, get_id, dst);
+        update_from(value.updated, equal_by_id, apply_update, dst);
+        add_or_update_from(value.added, get_id, dst);
+    }
+}
+
+fn apply_existence_difference<T, GetId>(
+    difference: Option<ExistenceDifference<T>>,
+    get_id: &GetId,
+    dst: &mut Vec<T>,
+) where
+    T: std::fmt::Debug + PartialEq,
+    GetId: Fn(&T) -> u64,
+{
+    if let Some(value) = difference {
+        remove_from(value.removed, get_id, dst);
+        add_or_update_from(value.added, get_id, dst);
+    }
+}
+
+fn add_or_update_from<GetId, T>(src: Option<Vec<T>>, get_id: &GetId, dst: &mut Vec<T>)
 where
     GetId: Fn(&T) -> u64,
 {
@@ -548,7 +527,7 @@ where
 
 fn update_from<U, EqualById, ApplyUpdate, T>(
     src: Option<Vec<U>>,
-    equal_by_id: EqualById,
+    equal_by_id: &EqualById,
     apply_update: ApplyUpdate,
     dst: &mut Vec<T>,
 ) where
@@ -564,12 +543,12 @@ fn update_from<U, EqualById, ApplyUpdate, T>(
     }
 }
 
-fn remove_from<GetId, T>(src: Option<Vec<u64>>, get_id: GetId, dst: &mut Vec<T>)
+fn remove_from<GetId, T>(ids: Option<Vec<u64>>, get_id: &GetId, values: &mut Vec<T>)
 where
     GetId: Fn(&T) -> u64,
 {
-    if let Some(removed) = src {
-        dst.retain(|v| !removed.contains(&get_id(v)));
+    if let Some(removed) = ids {
+        values.retain(|v| !removed.contains(&get_id(v)));
     }
 }
 
@@ -716,7 +695,7 @@ mod tests {
     fn serialized_default_world_update_size() {
         assert_eq!(
             bincode::serialize(&WorldUpdate::default()).unwrap().len(),
-            44
+            32
         );
     }
 
@@ -787,7 +766,7 @@ mod tests {
         let values = vec![TestObject { id: 1, value: 3.15 }];
         assert_eq!(
             get_difference(&values, &values, |v| v.id, make_test_object_update),
-            Difference::default()
+            None
         );
     }
 
@@ -800,11 +779,11 @@ mod tests {
         ];
         assert_eq!(
             get_difference(&before, &after, |v| v.id, make_test_object_update),
-            Difference {
+            Some(Difference {
                 added: Some(vec![TestObject { id: 2, value: 2.7 }]),
                 updated: None,
                 removed: None,
-            }
+            })
         );
     }
 
@@ -814,14 +793,14 @@ mod tests {
         let after = vec![TestObject { id: 1, value: 2.7 }];
         assert_eq!(
             get_difference(&before, &after, |v| v.id, make_test_object_update),
-            Difference {
+            Some(Difference {
                 added: None,
                 updated: Some(vec![TestObjectUpdate {
                     id: 1,
                     value: Some(2.7),
                 }]),
                 removed: None,
-            }
+            })
         );
     }
 
@@ -834,11 +813,11 @@ mod tests {
         let after = vec![TestObject { id: 2, value: 2.7 }];
         assert_eq!(
             get_difference(&before, &after, |v| v.id, make_test_object_update),
-            Difference {
+            Some(Difference {
                 added: None,
                 updated: None,
                 removed: Some(vec![1]),
-            }
+            })
         );
     }
 
