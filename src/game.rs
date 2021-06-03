@@ -724,16 +724,25 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
 
     for v in scene.world.actors.iter() {
         draw_health(v.health, v.body.shape.radius, v.position);
-        draw_power(
+        draw_aura_power(
             v.aura.power / scene.world.settings.max_magic_power,
             v.body.shape.radius,
             v.position,
         );
+        if let Some(delayed_magick) = v.delayed_magick.as_ref() {
+            draw_delayed_magic_power(
+                (scene.world.time - delayed_magick.started)
+                    .min(scene.world.settings.max_magic_power)
+                    / scene.world.settings.max_magic_power,
+                v.body.shape.radius,
+                v.position,
+            );
+        }
     }
 
     for v in scene.world.dynamic_objects.iter() {
         draw_health(v.health, v.body.shape.radius, v.position);
-        draw_power(
+        draw_aura_power(
             v.aura.power / scene.world.settings.max_magic_power,
             v.body.shape.radius,
             v.position,
@@ -746,7 +755,7 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
             StaticShape::Disk(v) => v.radius,
         };
         draw_health(v.health, radius, v.position);
-        draw_power(
+        draw_aura_power(
             v.aura.power / scene.world.settings.max_magic_power,
             radius,
             v.position,
@@ -1161,8 +1170,12 @@ fn draw_health(value: f64, radius: f64, position: Vec2f) {
     draw_meter(value, radius, position, 0.5, Color::new(1.0, 0.0, 0.0, 1.0));
 }
 
-fn draw_power(value: f64, radius: f64, position: Vec2f) {
+fn draw_aura_power(value: f64, radius: f64, position: Vec2f) {
     draw_meter(value, radius, position, 0.8, Color::new(0.0, 0.0, 1.0, 1.0));
+}
+
+fn draw_delayed_magic_power(value: f64, radius: f64, position: Vec2f) {
+    draw_meter(value, radius, position, 1.1, Color::new(0.0, 1.0, 0.0, 1.0));
 }
 
 fn draw_meter(value: f64, radius: f64, position: Vec2f, y: f64, color: Color) {
