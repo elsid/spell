@@ -16,10 +16,10 @@ use piston::input::{
 use piston::window::{Window, WindowSettings};
 use piston::EventLoop;
 
-use crate::control::apply_player_action;
+use crate::control::apply_actor_action;
 use crate::engine::Engine;
 use crate::meters::{DurationMovingAverage, FpsMovingAverage};
-use crate::protocol::{apply_world_update, GameUpdate, PlayerAction, PlayerUpdate};
+use crate::protocol::{apply_world_update, GameUpdate, ActorAction, PlayerUpdate};
 use crate::vec2::Vec2f;
 use crate::world::{Actor, Aura, Disk, Element, Material, RingSector, StaticShape, World};
 
@@ -68,9 +68,9 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
             match button {
                 Button::Mouse(MouseButton::Left) => {
                     if let Some(player_index) = last_player_index {
-                        send_or_apply_player_action(
+                        send_or_apply_actor_action(
                             sender,
-                            PlayerAction::Move(true),
+                            ActorAction::Move(true),
                             player_index,
                             &mut world,
                         );
@@ -79,16 +79,16 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                 Button::Mouse(MouseButton::Right) => {
                     if let Some(player_index) = last_player_index {
                         if lshift {
-                            send_or_apply_player_action(
+                            send_or_apply_actor_action(
                                 sender,
-                                PlayerAction::StartAreaOfEffectMagick,
+                                ActorAction::StartAreaOfEffectMagick,
                                 player_index,
                                 &mut world,
                             );
                         } else {
-                            send_or_apply_player_action(
+                            send_or_apply_actor_action(
                                 sender,
-                                PlayerAction::StartDirectedMagick,
+                                ActorAction::StartDirectedMagick,
                                 player_index,
                                 &mut world,
                             );
@@ -104,9 +104,9 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
             match button {
                 Button::Mouse(MouseButton::Left) => {
                     if let Some(player_index) = last_player_index {
-                        send_or_apply_player_action(
+                        send_or_apply_actor_action(
                             sender,
-                            PlayerAction::Move(false),
+                            ActorAction::Move(false),
                             player_index,
                             &mut world,
                         );
@@ -114,9 +114,9 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                 }
                 Button::Mouse(MouseButton::Right) => {
                     if let Some(player_index) = last_player_index {
-                        send_or_apply_player_action(
+                        send_or_apply_actor_action(
                             sender,
-                            PlayerAction::CompleteDirectedMagick,
+                            ActorAction::CompleteDirectedMagick,
                             player_index,
                             &mut world,
                         );
@@ -124,9 +124,9 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                 }
                 Button::Mouse(MouseButton::Middle) => {
                     if let Some(player_index) = last_player_index {
-                        send_or_apply_player_action(
+                        send_or_apply_actor_action(
                             sender,
-                            PlayerAction::SelfMagick,
+                            ActorAction::SelfMagick,
                             player_index,
                             &mut world,
                         );
@@ -135,9 +135,9 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                 Button::Keyboard(Key::LShift) => lshift = false,
                 Button::Keyboard(Key::Q) => {
                     if let Some(player_index) = last_player_index {
-                        send_or_apply_player_action(
+                        send_or_apply_actor_action(
                             sender,
-                            PlayerAction::AddSpellElement(Element::Water),
+                            ActorAction::AddSpellElement(Element::Water),
                             player_index,
                             &mut world,
                         );
@@ -145,9 +145,9 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                 }
                 Button::Keyboard(Key::A) => {
                     if let Some(player_index) = last_player_index {
-                        send_or_apply_player_action(
+                        send_or_apply_actor_action(
                             sender,
-                            PlayerAction::AddSpellElement(Element::Lightning),
+                            ActorAction::AddSpellElement(Element::Lightning),
                             player_index,
                             &mut world,
                         );
@@ -155,9 +155,9 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                 }
                 Button::Keyboard(Key::W) => {
                     if let Some(player_index) = last_player_index {
-                        send_or_apply_player_action(
+                        send_or_apply_actor_action(
                             sender,
-                            PlayerAction::AddSpellElement(Element::Life),
+                            ActorAction::AddSpellElement(Element::Life),
                             player_index,
                             &mut world,
                         );
@@ -165,9 +165,9 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                 }
                 Button::Keyboard(Key::S) => {
                     if let Some(player_index) = last_player_index {
-                        send_or_apply_player_action(
+                        send_or_apply_actor_action(
                             sender,
-                            PlayerAction::AddSpellElement(Element::Arcane),
+                            ActorAction::AddSpellElement(Element::Arcane),
                             player_index,
                             &mut world,
                         );
@@ -175,9 +175,9 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                 }
                 Button::Keyboard(Key::E) => {
                     if let Some(player_index) = last_player_index {
-                        send_or_apply_player_action(
+                        send_or_apply_actor_action(
                             sender,
-                            PlayerAction::AddSpellElement(Element::Shield),
+                            ActorAction::AddSpellElement(Element::Shield),
                             player_index,
                             &mut world,
                         );
@@ -185,9 +185,9 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                 }
                 Button::Keyboard(Key::D) => {
                     if let Some(player_index) = last_player_index {
-                        send_or_apply_player_action(
+                        send_or_apply_actor_action(
                             sender,
-                            PlayerAction::AddSpellElement(Element::Earth),
+                            ActorAction::AddSpellElement(Element::Earth),
                             player_index,
                             &mut world,
                         );
@@ -195,9 +195,9 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                 }
                 Button::Keyboard(Key::R) => {
                     if let Some(player_index) = last_player_index {
-                        send_or_apply_player_action(
+                        send_or_apply_actor_action(
                             sender,
-                            PlayerAction::AddSpellElement(Element::Cold),
+                            ActorAction::AddSpellElement(Element::Cold),
                             player_index,
                             &mut world,
                         );
@@ -205,9 +205,9 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                 }
                 Button::Keyboard(Key::F) => {
                     if let Some(player_index) = last_player_index {
-                        send_or_apply_player_action(
+                        send_or_apply_actor_action(
                             sender,
-                            PlayerAction::AddSpellElement(Element::Fire),
+                            ActorAction::AddSpellElement(Element::Fire),
                             player_index,
                             &mut world,
                         );
@@ -259,9 +259,9 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                 if norm > f64::EPSILON {
                     let direction = target_direction / norm;
                     if direction != world.actors[player_index].target_direction {
-                        send_or_apply_player_action(
+                        send_or_apply_actor_action(
                             sender,
-                            PlayerAction::SetTargetDirection(direction),
+                            ActorAction::SetTargetDirection(direction),
                             player_index,
                             &mut world,
                         );
@@ -935,15 +935,15 @@ where
     )
 }
 
-fn send_or_apply_player_action(
+fn send_or_apply_actor_action(
     sender: Option<&Sender<PlayerUpdate>>,
-    player_action: PlayerAction,
+    actor_action: ActorAction,
     actor_index: usize,
     world: &mut World,
 ) {
     if let Some(s) = sender {
-        s.send(PlayerUpdate::Action(player_action)).unwrap();
+        s.send(PlayerUpdate::Action(actor_action)).unwrap();
     } else {
-        apply_player_action(&player_action, actor_index, world);
+        apply_actor_action(&actor_action, actor_index, world);
     }
 }

@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use portpicker::pick_unused_port;
 
 use spell::client::{GameClientSettings, UdpClientSettings};
-use spell::protocol::{GameUpdate, PlayerAction, PlayerUpdate};
+use spell::protocol::{GameUpdate, ActorAction, PlayerUpdate};
 use spell::{run_server, with_background_client, ServerParams};
 
 #[test]
@@ -101,7 +101,7 @@ fn server_should_move_player() {
             };
             let start = Instant::now();
             player_update_sender
-                .send(PlayerUpdate::Action(PlayerAction::Move(true)))
+                .send(PlayerUpdate::Action(ActorAction::Move(true)))
                 .unwrap();
             let mut moving = false;
             while !moving && Instant::now() - start < Duration::from_secs(3) {
@@ -360,7 +360,7 @@ fn server_should_move_send_world_update_after_ack() {
             );
             let start = Instant::now();
             player_update_sender
-                .send(PlayerUpdate::Action(PlayerAction::Move(true)))
+                .send(PlayerUpdate::Action(ActorAction::Move(true)))
                 .unwrap();
             while Instant::now() - start < Duration::from_secs(3) {
                 let server_message = game_update_receiver

@@ -11,12 +11,12 @@ use rand::rngs::StdRng;
 use rand::{CryptoRng, Rng, SeedableRng};
 use tokio::net::UdpSocket;
 
-use crate::control::apply_player_action;
+use crate::control::apply_actor_action;
 use crate::engine::{get_next_id, remove_actor, Engine};
 use crate::generators::generate_player_actor;
 use crate::protocol::{
     deserialize_client_message, get_client_message_data_type, is_valid_player_name,
-    make_world_update, ClientMessage, ClientMessageData, GameUpdate, PlayerAction, PlayerUpdate,
+    make_world_update, ClientMessage, ClientMessageData, GameUpdate, ActorAction, PlayerUpdate,
     ServerMessage, ServerMessageData, WorldUpdate, HEARTBEAT_PERIOD,
 };
 use crate::world::World;
@@ -513,10 +513,10 @@ fn handle_session_message(
             })
             .unwrap(),
         ClientMessageData::PlayerUpdate(player_update) => match player_update {
-            PlayerUpdate::Action(mut player_action) => {
+            PlayerUpdate::Action(mut actor_action) => {
                 if let Some(actor_index) = session.actor_index {
-                    sanitize_player_action(&mut player_action, actor_index, world);
-                    apply_player_action(&player_action, actor_index, world);
+                    sanitize_actor_action(&mut actor_action, actor_index, world);
+                    apply_actor_action(&actor_action, actor_index, world);
                 } else {
                     warn!(
                         "Player actor is not found for game session: {}",
@@ -656,10 +656,10 @@ fn try_add_player_actor<R: Rng>(name: String, world: &mut World, rng: &mut R) ->
     Some(actor_id)
 }
 
-fn sanitize_player_action(player_action: &mut PlayerAction, actor_index: usize, world: &mut World) {
+fn sanitize_actor_action(actor_action: &mut ActorAction, actor_index: usize, world: &mut World) {
     #[allow(clippy::single_match)]
-    match player_action {
-        PlayerAction::SetTargetDirection(target_direction) => {
+    match actor_action {
+        ActorAction::SetTargetDirection(target_direction) => {
             let norm = target_direction.norm();
             if norm > f64::EPSILON {
                 *target_direction /= norm;

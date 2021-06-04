@@ -120,12 +120,12 @@ pub struct TempAreaUpdate {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub enum PlayerUpdate {
-    Action(PlayerAction),
+    Action(ActorAction),
     AckWorldRevision(u64),
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub enum PlayerAction {
+pub enum ActorAction {
     Move(bool),
     SetTargetDirection(Vec2f),
     AddSpellElement(Element),

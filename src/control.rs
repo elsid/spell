@@ -2,30 +2,30 @@ use crate::engine::{
     add_actor_spell_element, complete_directed_magick, self_magick, start_area_of_effect_magick,
     start_directed_magick,
 };
-use crate::protocol::PlayerAction;
+use crate::protocol::ActorAction;
 use crate::world::World;
 
-pub fn apply_player_action(player_action: &PlayerAction, actor_index: usize, world: &mut World) {
-    match player_action {
-        PlayerAction::Move(moving) => {
+pub fn apply_actor_action(actor_action: &ActorAction, actor_index: usize, world: &mut World) {
+    match actor_action {
+        ActorAction::Move(moving) => {
             world.actors[actor_index].moving = *moving;
         }
-        PlayerAction::SetTargetDirection(target_direction) => {
+        ActorAction::SetTargetDirection(target_direction) => {
             world.actors[actor_index].target_direction = *target_direction;
         }
-        PlayerAction::AddSpellElement(element) => {
+        ActorAction::AddSpellElement(element) => {
             add_actor_spell_element(actor_index, *element, world);
         }
-        PlayerAction::StartDirectedMagick => {
+        ActorAction::StartDirectedMagick => {
             start_directed_magick(actor_index, world);
         }
-        PlayerAction::CompleteDirectedMagick => {
+        ActorAction::CompleteDirectedMagick => {
             complete_directed_magick(actor_index, world);
         }
-        PlayerAction::SelfMagick => {
+        ActorAction::SelfMagick => {
             self_magick(actor_index, world);
         }
-        PlayerAction::StartAreaOfEffectMagick => {
+        ActorAction::StartAreaOfEffectMagick => {
             start_area_of_effect_magick(actor_index, world);
         }
     }
