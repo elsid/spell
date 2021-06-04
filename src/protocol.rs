@@ -60,8 +60,8 @@ pub enum GameUpdate {
 
 #[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct WorldUpdate {
-    pub before_revision: u64,
-    pub after_revision: u64,
+    pub before_frame: u64,
+    pub after_frame: u64,
     pub time: f64,
     pub actors: Option<Difference<Actor, ActorUpdate>>,
     pub dynamic_objects: Option<Difference<DynamicObject, DynamicObjectUpdate>>,
@@ -121,7 +121,7 @@ pub struct TempAreaUpdate {
 #[derive(Debug, Deserialize, Serialize)]
 pub enum PlayerUpdate {
     Action(ActorAction),
-    AckWorldRevision(u64),
+    AckWorldFrame(u64),
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -154,8 +154,8 @@ pub fn get_client_message_data_type(value: &ClientMessageData) -> &'static str {
 
 pub fn make_world_update(before: &World, after: &World) -> WorldUpdate {
     WorldUpdate {
-        before_revision: before.revision,
-        after_revision: after.revision,
+        before_frame: before.frame,
+        after_frame: after.frame,
         time: after.time,
         actors: get_actors_difference(&before.actors, &after.actors),
         dynamic_objects: get_dynamic_objects_difference(
@@ -437,10 +437,10 @@ where
 }
 
 pub fn apply_world_update(update: WorldUpdate, world: &mut World) {
-    if update.after_revision < world.revision {
+    if update.after_frame < world.frame {
         return;
     }
-    world.revision = update.after_revision;
+    world.frame = update.after_frame;
     world.time = update.time;
     apply_difference(
         update.actors,
@@ -826,8 +826,8 @@ mod tests {
         let mut empty_world_update = WorldUpdate::default();
         let mut rng = SmallRng::seed_from_u64(42);
         let world = generate_world(Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)), &mut rng);
-        empty_world_update.before_revision = world.revision;
-        empty_world_update.after_revision = world.revision;
+        empty_world_update.before_frame = world.frame;
+        empty_world_update.after_frame = world.frame;
         empty_world_update.time = world.time;
         assert_eq!(make_world_update(&world, &world), empty_world_update);
     }
@@ -838,7 +838,7 @@ mod tests {
         let mut world_before =
             generate_world(Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)), &mut rng);
         let mut world_after = world_before.clone();
-        world_after.revision += 1;
+        world_after.frame += 1;
         world_after.time += 0.1;
         world_after.actors.remove(5);
         world_after.actors.remove(0);

@@ -19,7 +19,7 @@ use piston::EventLoop;
 use crate::control::apply_actor_action;
 use crate::engine::Engine;
 use crate::meters::{DurationMovingAverage, FpsMovingAverage};
-use crate::protocol::{apply_world_update, GameUpdate, ActorAction, PlayerUpdate};
+use crate::protocol::{apply_world_update, ActorAction, GameUpdate, PlayerUpdate};
 use crate::vec2::Vec2f;
 use crate::world::{Actor, Aura, Disk, Element, Material, RingSector, StaticShape, World};
 
@@ -57,7 +57,7 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
     let mut render_duration = DurationMovingAverage::new(100, Duration::from_secs(1));
     let mut update_duration = DurationMovingAverage::new(100, Duration::from_secs(1));
     let mut player_id = None;
-    let mut local_world_revision = 0;
+    let mut local_world_frame = 0;
     let mut local_world_time = 0.0;
     let mut lshift = false;
     let mut show_debug_info = false;
@@ -249,7 +249,7 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                 }
             }
             if let Some(sender) = sender.as_ref() {
-                if let Err(..) = sender.send(PlayerUpdate::AckWorldRevision(world.revision)) {
+                if let Err(..) = sender.send(PlayerUpdate::AckWorldFrame(world.frame)) {
                     break;
                 }
             }
@@ -269,7 +269,7 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                 }
             }
             if sender.is_some() {
-                local_world_revision = (local_world_revision + 1).max(world.revision);
+                local_world_frame = (local_world_frame + 1).max(world.frame);
                 local_world_time += time_step;
                 if local_world_time < world.time {
                     local_world_time = world.time;
@@ -675,15 +675,15 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                             .as_ref()
                             .map(|v| format!("Server: {}:{}", v.address, v.port))
                     };
-                    let format_world_revision = || {
+                    let format_world_frame = || {
                         Some(if server.is_some() {
                             format!(
-                                "World revision: {} (+{})",
-                                world.revision,
-                                local_world_revision - world.revision
+                                "World frame: {} (+{})",
+                                world.frame,
+                                local_world_frame - world.frame
                             )
                         } else {
-                            format!("World revision: {}", world.revision)
+                            format!("World frame: {}", world.frame)
                         })
                     };
                     let format_world_time = || {
@@ -720,7 +720,7 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                         &format_render as FormatRef,
                         &format_update as FormatRef,
                         &format_server as FormatRef,
-                        &format_world_revision as FormatRef,
+                        &format_world_frame as FormatRef,
                         &format_world_time as FormatRef,
                         &format_player as FormatRef,
                         &format_actors as FormatRef,

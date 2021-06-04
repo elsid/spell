@@ -5,7 +5,7 @@ use crate::vec2::Vec2f;
 
 #[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct World {
-    pub revision: u64,
+    pub frame: u64,
     pub settings: WorldSettings,
     pub bounds: Rectf,
     pub time: f64,

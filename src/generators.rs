@@ -75,7 +75,7 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
         rng,
     );
     World {
-        revision: 0,
+        frame: 0,
         settings,
         bounds,
         time: 0.0,

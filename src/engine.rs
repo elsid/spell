@@ -173,7 +173,7 @@ impl Engine {
     }
 
     pub fn update(&mut self, duration: f64, world: &mut World) {
-        world.revision += 1;
+        world.frame += 1;
         world.time += duration;
         world
             .temp_areas

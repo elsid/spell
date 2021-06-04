@@ -16,7 +16,7 @@ use crate::engine::{get_next_id, remove_actor, Engine};
 use crate::generators::generate_player_actor;
 use crate::protocol::{
     deserialize_client_message, get_client_message_data_type, is_valid_player_name,
-    make_world_update, ClientMessage, ClientMessageData, GameUpdate, ActorAction, PlayerUpdate,
+    make_world_update, ActorAction, ClientMessage, ClientMessageData, GameUpdate, PlayerUpdate,
     ServerMessage, ServerMessageData, WorldUpdate, HEARTBEAT_PERIOD,
 };
 use crate::world::World;
@@ -353,7 +353,7 @@ struct GameSession {
     messages_per_frame: u8,
     dropped_messages: usize,
     delayed_messages: VecDeque<ClientMessage>,
-    ack_world_revision: u64,
+    ack_world_frame: u64,
 }
 
 fn handle_delayed_messages(
@@ -524,8 +524,8 @@ fn handle_session_message(
                     );
                 }
             }
-            PlayerUpdate::AckWorldRevision(revision) => {
-                session.ack_world_revision = revision.min(world.revision);
+            PlayerUpdate::AckWorldFrame(frame) => {
+                session.ack_world_frame = frame.min(world.frame);
             }
         },
     }
@@ -598,7 +598,7 @@ fn create_new_session<R: CryptoRng + Rng>(
                     messages_per_frame: 1,
                     delayed_messages: VecDeque::with_capacity(MAX_DELAYED_MESSAGES_PER_SESSION),
                     dropped_messages: 0,
-                    ack_world_revision: 0,
+                    ack_world_frame: 0,
                 })
             } else {
                 sender
@@ -680,11 +680,11 @@ fn send_world_messages(
     let mut world_snapshot_session_ids = Vec::new();
     let mut world_updates: Vec<(usize, Vec<u64>, WorldUpdate)> = Vec::new();
     for session in sessions.iter() {
-        if session.ack_world_revision == 0 {
+        if session.ack_world_frame == 0 {
             world_snapshot_session_ids.push(session.session_id);
             continue;
         }
-        let offset = (world.revision - session.ack_world_revision) as usize;
+        let offset = (world.frame - session.ack_world_frame) as usize;
         if offset > world_history.len() {
             world_snapshot_session_ids.push(session.session_id);
             continue;

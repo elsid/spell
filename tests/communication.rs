@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use portpicker::pick_unused_port;
 
 use spell::client::{GameClientSettings, UdpClientSettings};
-use spell::protocol::{GameUpdate, ActorAction, PlayerUpdate};
+use spell::protocol::{ActorAction, GameUpdate, PlayerUpdate};
 use spell::{run_server, with_background_client, ServerParams};
 
 #[test]
@@ -370,7 +370,7 @@ fn server_should_move_send_world_update_after_ack() {
                     GameUpdate::WorldUpdate(..) => break,
                     GameUpdate::WorldSnapshot(world) => {
                         player_update_sender
-                            .send(PlayerUpdate::AckWorldRevision(world.revision))
+                            .send(PlayerUpdate::AckWorldFrame(world.frame))
                             .unwrap();
                     }
                     _ => (),
