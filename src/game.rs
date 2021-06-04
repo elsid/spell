@@ -48,15 +48,15 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
     let time_step = 1.0 / 60.0;
     let mut last_mouse_pos = Vec2f::ZERO;
     let mut last_viewport_shift = Vec2f::ZERO;
-    let mut last_player_position = Vec2f::ZERO;
-    let mut last_player_index = None;
+    let mut last_actor_position = Vec2f::ZERO;
+    let mut last_actor_index = None;
     let texture_settings = TextureSettings::new().filter(Filter::Linear);
     let mut glyphs = GlyphCache::new("fonts/UbuntuMono-R.ttf", (), texture_settings)
         .expect("Could not load font");
     let mut eps = FpsMovingAverage::new(100, Duration::from_secs(1));
     let mut render_duration = DurationMovingAverage::new(100, Duration::from_secs(1));
     let mut update_duration = DurationMovingAverage::new(100, Duration::from_secs(1));
-    let mut player_id = None;
+    let mut actor_id = None;
     let mut local_world_frame = 0;
     let mut local_world_time = 0.0;
     let mut lshift = false;
@@ -67,29 +67,29 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
         if let Some(button) = event.press_args() {
             match button {
                 Button::Mouse(MouseButton::Left) => {
-                    if let Some(player_index) = last_player_index {
+                    if let Some(actor_index) = last_actor_index {
                         send_or_apply_actor_action(
                             sender,
                             ActorAction::Move(true),
-                            player_index,
+                            actor_index,
                             &mut world,
                         );
                     }
                 }
                 Button::Mouse(MouseButton::Right) => {
-                    if let Some(player_index) = last_player_index {
+                    if let Some(actor_index) = last_actor_index {
                         if lshift {
                             send_or_apply_actor_action(
                                 sender,
                                 ActorAction::StartAreaOfEffectMagick,
-                                player_index,
+                                actor_index,
                                 &mut world,
                             );
                         } else {
                             send_or_apply_actor_action(
                                 sender,
                                 ActorAction::StartDirectedMagick,
-                                player_index,
+                                actor_index,
                                 &mut world,
                             );
                         }
@@ -103,112 +103,112 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
         if let Some(button) = event.release_args() {
             match button {
                 Button::Mouse(MouseButton::Left) => {
-                    if let Some(player_index) = last_player_index {
+                    if let Some(actor_index) = last_actor_index {
                         send_or_apply_actor_action(
                             sender,
                             ActorAction::Move(false),
-                            player_index,
+                            actor_index,
                             &mut world,
                         );
                     }
                 }
                 Button::Mouse(MouseButton::Right) => {
-                    if let Some(player_index) = last_player_index {
+                    if let Some(actor_index) = last_actor_index {
                         send_or_apply_actor_action(
                             sender,
                             ActorAction::CompleteDirectedMagick,
-                            player_index,
+                            actor_index,
                             &mut world,
                         );
                     }
                 }
                 Button::Mouse(MouseButton::Middle) => {
-                    if let Some(player_index) = last_player_index {
+                    if let Some(actor_index) = last_actor_index {
                         send_or_apply_actor_action(
                             sender,
                             ActorAction::SelfMagick,
-                            player_index,
+                            actor_index,
                             &mut world,
                         );
                     }
                 }
                 Button::Keyboard(Key::LShift) => lshift = false,
                 Button::Keyboard(Key::Q) => {
-                    if let Some(player_index) = last_player_index {
+                    if let Some(actor_index) = last_actor_index {
                         send_or_apply_actor_action(
                             sender,
                             ActorAction::AddSpellElement(Element::Water),
-                            player_index,
+                            actor_index,
                             &mut world,
                         );
                     }
                 }
                 Button::Keyboard(Key::A) => {
-                    if let Some(player_index) = last_player_index {
+                    if let Some(actor_index) = last_actor_index {
                         send_or_apply_actor_action(
                             sender,
                             ActorAction::AddSpellElement(Element::Lightning),
-                            player_index,
+                            actor_index,
                             &mut world,
                         );
                     }
                 }
                 Button::Keyboard(Key::W) => {
-                    if let Some(player_index) = last_player_index {
+                    if let Some(actor_index) = last_actor_index {
                         send_or_apply_actor_action(
                             sender,
                             ActorAction::AddSpellElement(Element::Life),
-                            player_index,
+                            actor_index,
                             &mut world,
                         );
                     }
                 }
                 Button::Keyboard(Key::S) => {
-                    if let Some(player_index) = last_player_index {
+                    if let Some(actor_index) = last_actor_index {
                         send_or_apply_actor_action(
                             sender,
                             ActorAction::AddSpellElement(Element::Arcane),
-                            player_index,
+                            actor_index,
                             &mut world,
                         );
                     }
                 }
                 Button::Keyboard(Key::E) => {
-                    if let Some(player_index) = last_player_index {
+                    if let Some(actor_index) = last_actor_index {
                         send_or_apply_actor_action(
                             sender,
                             ActorAction::AddSpellElement(Element::Shield),
-                            player_index,
+                            actor_index,
                             &mut world,
                         );
                     }
                 }
                 Button::Keyboard(Key::D) => {
-                    if let Some(player_index) = last_player_index {
+                    if let Some(actor_index) = last_actor_index {
                         send_or_apply_actor_action(
                             sender,
                             ActorAction::AddSpellElement(Element::Earth),
-                            player_index,
+                            actor_index,
                             &mut world,
                         );
                     }
                 }
                 Button::Keyboard(Key::R) => {
-                    if let Some(player_index) = last_player_index {
+                    if let Some(actor_index) = last_actor_index {
                         send_or_apply_actor_action(
                             sender,
                             ActorAction::AddSpellElement(Element::Cold),
-                            player_index,
+                            actor_index,
                             &mut world,
                         );
                     }
                 }
                 Button::Keyboard(Key::F) => {
-                    if let Some(player_index) = last_player_index {
+                    if let Some(actor_index) = last_actor_index {
                         send_or_apply_actor_action(
                             sender,
                             ActorAction::AddSpellElement(Element::Fire),
-                            player_index,
+                            actor_index,
                             &mut world,
                         );
                     }
@@ -232,18 +232,18 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
             let start = Instant::now();
             while let Ok(update) = receiver.try_recv() {
                 match update {
-                    GameUpdate::GameOver => player_id = None,
-                    GameUpdate::SetPlayerId(v) => player_id = Some(v),
+                    GameUpdate::GameOver => actor_id = None,
+                    GameUpdate::SetActorId(v) => actor_id = Some(v),
                     GameUpdate::WorldSnapshot(v) => {
                         world = v;
-                        if let Some(player_id) = player_id {
-                            last_player_index = world.actors.iter().position(|v| v.id == player_id);
+                        if let Some(player_id) = actor_id {
+                            last_actor_index = world.actors.iter().position(|v| v.id == player_id);
                         }
                     }
                     GameUpdate::WorldUpdate(world_update) => {
                         apply_world_update(world_update, &mut world);
-                        if let Some(player_id) = player_id {
-                            last_player_index = world.actors.iter().position(|v| v.id == player_id);
+                        if let Some(player_id) = actor_id {
+                            last_actor_index = world.actors.iter().position(|v| v.id == player_id);
                         }
                     }
                 }
@@ -253,16 +253,16 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                     break;
                 }
             }
-            if let Some(player_index) = last_player_index {
+            if let Some(actor_index) = last_actor_index {
                 let target_direction = (last_mouse_pos - last_viewport_shift) / scale;
                 let norm = target_direction.norm();
                 if norm > f64::EPSILON {
                     let direction = target_direction / norm;
-                    if direction != world.actors[player_index].target_direction {
+                    if direction != world.actors[actor_index].target_direction {
                         send_or_apply_actor_action(
                             sender,
                             ActorAction::SetTargetDirection(direction),
-                            player_index,
+                            actor_index,
                             &mut world,
                         );
                     }
@@ -278,11 +278,11 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
             } else {
                 engine.update(time_step, &mut world);
             }
-            if let Some(player_id) = player_id {
-                last_player_index = world.actors.iter().position(|v| v.id == player_id);
+            if let Some(player_id) = actor_id {
+                last_actor_index = world.actors.iter().position(|v| v.id == player_id);
             }
-            if let Some(player_index) = last_player_index {
-                last_player_position = world.actors[player_index].position;
+            if let Some(actor_index) = last_actor_index {
+                last_actor_position = world.actors[actor_index].position;
             }
             update_duration.add(Instant::now() - start);
         }
@@ -299,7 +299,7 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                     .transform
                     .trans(last_viewport_shift.x, last_viewport_shift.y)
                     .scale(scale, scale)
-                    .trans(-last_player_position.x, -last_player_position.y);
+                    .trans(-last_actor_position.x, -last_actor_position.y);
 
                 graphics::clear([0.0, 0.0, 0.0, 1.0], g);
 
@@ -351,25 +351,25 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                     );
                 }
 
-                if let Some(player_index) = last_player_index {
+                if let Some(actor_index) = last_actor_index {
                     let target =
-                        last_player_position + (last_mouse_pos - last_viewport_shift) / scale;
+                        last_actor_position + (last_mouse_pos - last_viewport_shift) / scale;
                     graphics::line_from_to(
                         [0.0, 0.0, 0.0, 0.5],
                         1.0 / scale,
-                        [last_player_position.x, last_player_position.y],
+                        [last_actor_position.x, last_actor_position.y],
                         [target.x, target.y],
                         base_transform,
                         g,
                     );
 
-                    let player = &world.actors[player_index];
+                    let player = &world.actors[actor_index];
                     let current_target =
                         player.position + player.current_direction * player.body.shape.radius * 2.0;
                     graphics::line_from_to(
                         [0.0, 0.0, 0.0, 0.5],
                         1.0 / scale,
-                        [last_player_position.x, last_player_position.y],
+                        [last_actor_position.x, last_actor_position.y],
                         [current_target.x, current_target.y],
                         base_transform,
                         g,
@@ -621,7 +621,7 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                 }
 
                 for actor in world.actors.iter() {
-                    if Some(actor.id) != player_id {
+                    if Some(actor.id) != actor_id {
                         draw_name(&actor, &ctx.draw_state, &base_transform, &mut glyphs, g)
                             .unwrap();
                     }
@@ -639,10 +639,10 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                     g,
                 );
 
-                if let Some(player_index) = last_player_index {
+                if let Some(actor_index) = last_actor_index {
                     let radius = 20.0;
                     let square = rectangle::centered_square(0.0, 0.0, radius);
-                    for (i, element) in world.actors[player_index].spell_elements.iter().enumerate()
+                    for (i, element) in world.actors[actor_index].spell_elements.iter().enumerate()
                     {
                         let position = last_viewport_shift
                             + Vec2f::new(
@@ -698,7 +698,7 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                         })
                     };
                     let format_player =
-                        || Some(format!("Player: {:?} {:?}", player_id, last_player_index));
+                        || Some(format!("Player: {:?} {:?}", actor_id, last_actor_index));
                     let format_actors = || Some(format!("Actors: {}", world.actors.len()));
                     let format_dynamic_objects =
                         || Some(format!("Dynamic objects: {}", world.dynamic_objects.len()));

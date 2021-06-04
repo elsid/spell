@@ -57,7 +57,7 @@ fn server_should_provide_player_id() {
                 .recv_timeout(Duration::from_secs(3))
                 .unwrap();
             assert!(
-                matches!(game_update, GameUpdate::SetPlayerId(..)),
+                matches!(game_update, GameUpdate::SetActorId(..)),
                 "{:?}",
                 game_update
             );
@@ -87,15 +87,15 @@ fn server_should_move_player() {
             player_name: String::from("test"),
         },
         |player_update_sender, game_update_receiver| {
-            let set_player_id = game_update_receiver
+            let set_actor_id = game_update_receiver
                 .recv_timeout(Duration::from_secs(3))
                 .unwrap();
             assert!(
-                matches!(set_player_id, GameUpdate::SetPlayerId(..)),
+                matches!(set_actor_id, GameUpdate::SetActorId(..)),
                 "{:?}",
-                set_player_id
+                set_actor_id
             );
-            let player_id = if let GameUpdate::SetPlayerId(v) = set_player_id {
+            let actor_id = if let GameUpdate::SetActorId(v) = set_actor_id {
                 v
             } else {
                 unreachable!()
@@ -118,7 +118,7 @@ fn server_should_move_player() {
                     moving = world
                         .actors
                         .iter()
-                        .find(|v| v.id == player_id)
+                        .find(|v| v.id == actor_id)
                         .map(|v| v.moving)
                         .unwrap();
                 }
@@ -168,7 +168,7 @@ fn server_should_limit_number_of_sessions() {
                             .recv_timeout(Duration::from_secs(3))
                             .unwrap();
                         assert!(
-                            matches!(game_update, GameUpdate::SetPlayerId(..)),
+                            matches!(game_update, GameUpdate::SetActorId(..)),
                             "{:?}",
                             game_update
                         );
@@ -238,7 +238,7 @@ fn server_should_limit_number_of_players() {
                             .recv_timeout(Duration::from_secs(3))
                             .unwrap();
                         assert!(
-                            matches!(game_update, GameUpdate::SetPlayerId(..)),
+                            matches!(game_update, GameUpdate::SetActorId(..)),
                             "{:?}",
                             game_update
                         );
@@ -313,7 +313,7 @@ fn server_should_support_multiple_players() {
                                 .recv_timeout(Duration::from_secs(3))
                                 .unwrap();
                             assert!(
-                                matches!(game_update, GameUpdate::SetPlayerId(..)),
+                                matches!(game_update, GameUpdate::SetActorId(..)),
                                 "{:?}",
                                 game_update
                             );
@@ -355,7 +355,7 @@ fn server_should_move_send_world_update_after_ack() {
                 .recv_timeout(Duration::from_secs(3))
                 .unwrap();
             assert!(
-                matches!(set_player_id, GameUpdate::SetPlayerId(..)),
+                matches!(set_player_id, GameUpdate::SetActorId(..)),
                 "{:?}",
                 set_player_id
             );

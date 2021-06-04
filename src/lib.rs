@@ -81,7 +81,7 @@ pub fn run_single_player(params: SinglePlayerParams) {
         &mut rng,
     ));
     let (sender, receiver) = channel();
-    sender.send(GameUpdate::SetPlayerId(id)).unwrap();
+    sender.send(GameUpdate::SetActorId(id)).unwrap();
     run_game(world, None, receiver);
     info!("Exit single player");
 }

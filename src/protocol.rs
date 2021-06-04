@@ -52,7 +52,7 @@ pub enum ClientMessageData {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub enum GameUpdate {
-    SetPlayerId(u64),
+    SetActorId(u64),
     WorldSnapshot(World),
     WorldUpdate(WorldUpdate),
     GameOver,
