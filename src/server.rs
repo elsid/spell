@@ -1,29 +1,107 @@
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
-use std::thread::sleep;
+use std::thread::{sleep, spawn};
 use std::time::{Duration, Instant};
 
+use clap::Clap;
 use lz4_flex::compress_prepend_size;
-use rand::rngs::StdRng;
+use rand::rngs::{SmallRng, StdRng};
 use rand::{CryptoRng, Rng, SeedableRng};
 use tokio::net::UdpSocket;
+use tokio::runtime::Builder;
 
 use crate::control::apply_actor_action;
 use crate::engine::{get_next_id, remove_actor, Engine};
-use crate::generators::generate_player_actor;
+use crate::generators::{generate_player_actor, generate_world};
 use crate::protocol::{
     deserialize_client_message, get_client_message_data_type, is_valid_player_name,
     make_world_update, ActorAction, ClientMessage, ClientMessageData, GameUpdate, PlayerUpdate,
     ServerMessage, ServerMessageData, WorldUpdate, HEARTBEAT_PERIOD,
 };
+use crate::rect::Rectf;
+use crate::vec2::Vec2f;
 use crate::world::World;
 
 const MAX_SESSION_MESSAGES_PER_FRAME: u8 = 3;
 const MAX_DELAYED_MESSAGES_PER_SESSION: usize = 10;
 const MAX_WORLD_HISTORY_SIZE: usize = 120;
+
+#[derive(Clap, Debug)]
+pub struct ServerParams {
+    #[clap(long, default_value = "127.0.0.1")]
+    pub address: String,
+    #[clap(long, default_value = "21227")]
+    pub port: u16,
+    #[clap(long, default_value = "20")]
+    pub max_sessions: usize,
+    #[clap(long, default_value = "10")]
+    pub max_players: usize,
+    #[clap(long, default_value = "11")]
+    pub udp_session_timeout: f64,
+    #[clap(long, default_value = "10")]
+    pub game_session_timeout: f64,
+    #[clap(long, default_value = "60")]
+    pub update_frequency: f64,
+    #[clap(long)]
+    pub random_seed: Option<u64>,
+}
+
+pub fn run_server(params: ServerParams, stop: Arc<AtomicBool>) {
+    info!("Run server: {:?}", params);
+    if params.udp_session_timeout < params.game_session_timeout {
+        warn!(
+            "UDP server session timeout {:?} is less than game session timeout {:?}",
+            params.udp_session_timeout, params.game_session_timeout
+        );
+    }
+    let runtime = Builder::new_current_thread().enable_all().build().unwrap();
+    let world = generate_world(
+        Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)),
+        &mut make_rng(params.random_seed),
+    );
+    let (server_sender, server_receiver) = channel();
+    let (client_sender, client_receiver) = channel();
+    let stop_game_server = Arc::new(AtomicBool::new(false));
+    let update_period = Duration::from_secs_f64(1.0 / params.update_frequency);
+    let server = {
+        let settings = GameServerSettings {
+            max_players: params.max_players,
+            update_period,
+            session_timeout: Duration::from_secs_f64(params.game_session_timeout),
+        };
+        let stop = stop_game_server.clone();
+        spawn(move || run_game_server(world, settings, server_sender, client_receiver, stop))
+    };
+    let settings = UdpServerSettings {
+        address: format!("{}:{}", params.address, params.port),
+        max_sessions: params.max_sessions,
+        update_period,
+        session_timeout: Duration::from_secs_f64(params.udp_session_timeout),
+    };
+    runtime
+        .block_on(run_udp_server(
+            settings,
+            client_sender,
+            server_receiver,
+            stop,
+        ))
+        .unwrap();
+    info!("Stopping game server...");
+    stop_game_server.store(true, Ordering::Release);
+    server.join().unwrap();
+    info!("Exit server");
+}
+
+pub fn make_rng(random_seed: Option<u64>) -> SmallRng {
+    if let Some(value) = random_seed {
+        SeedableRng::seed_from_u64(value)
+    } else {
+        SeedableRng::from_entropy()
+    }
+}
 
 pub enum InternalServerMessage {
     Unicast {

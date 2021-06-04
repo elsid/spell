@@ -11,7 +11,8 @@ use portpicker::pick_unused_port;
 
 use spell::client::{GameClientSettings, UdpClientSettings};
 use spell::protocol::{ActorAction, GameUpdate, PlayerUpdate};
-use spell::{run_server, with_background_client, ServerParams};
+use spell::server::{run_server, ServerParams};
+use spell::with_background_client;
 
 #[test]
 fn server_should_terminate() {

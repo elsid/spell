@@ -5,11 +5,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread::{spawn, JoinHandle};
+#[cfg(feature = "render")]
 use std::time::Duration;
 
+#[cfg(feature = "render")]
 use clap::Clap;
-use rand::rngs::SmallRng;
-use rand::SeedableRng;
 use tokio::runtime::Builder;
 
 use crate::client::{
@@ -21,13 +21,15 @@ use crate::engine::get_next_id;
 #[cfg(feature = "render")]
 use crate::game::{run_game, Server};
 #[cfg(feature = "render")]
-use crate::generators::generate_player_actor;
-use crate::generators::generate_world;
+use crate::generators::{generate_player_actor, generate_world};
 #[cfg(feature = "render")]
 use crate::protocol::{is_valid_player_name, MAX_PLAYER_NAME_LEN, MIN_PLAYER_NAME_LEN};
 use crate::protocol::{ClientMessage, GameUpdate, PlayerUpdate, ServerMessage};
+#[cfg(feature = "render")]
 use crate::rect::Rectf;
-use crate::server::{run_game_server, run_udp_server, GameServerSettings, UdpServerSettings};
+#[cfg(feature = "render")]
+use crate::server::make_rng;
+#[cfg(feature = "render")]
 use crate::vec2::Vec2f;
 #[cfg(feature = "render")]
 use crate::world::World;
@@ -42,7 +44,7 @@ mod generators;
 mod meters;
 pub mod protocol;
 mod rect;
-mod server;
+pub mod server;
 mod vec2;
 mod world;
 
@@ -64,26 +66,6 @@ pub struct MultiPlayerParams {
     pub connect_timeout: f64,
     #[clap(long, default_value = "0.25")]
     pub retry_period: f64,
-}
-
-#[derive(Clap, Debug)]
-pub struct ServerParams {
-    #[clap(long, default_value = "127.0.0.1")]
-    pub address: String,
-    #[clap(long, default_value = "21227")]
-    pub port: u16,
-    #[clap(long, default_value = "20")]
-    pub max_sessions: usize,
-    #[clap(long, default_value = "10")]
-    pub max_players: usize,
-    #[clap(long, default_value = "11")]
-    pub udp_session_timeout: f64,
-    #[clap(long, default_value = "10")]
-    pub game_session_timeout: f64,
-    #[clap(long, default_value = "60")]
-    pub update_frequency: f64,
-    #[clap(long)]
-    pub random_seed: Option<u64>,
 }
 
 #[cfg(feature = "render")]
@@ -230,58 +212,4 @@ pub fn run_background_udp_client(
             ))
             .unwrap();
     })
-}
-
-pub fn run_server(params: ServerParams, stop: Arc<AtomicBool>) {
-    info!("Run server: {:?}", params);
-    if params.udp_session_timeout < params.game_session_timeout {
-        warn!(
-            "UDP server session timeout {:?} is less than game session timeout {:?}",
-            params.udp_session_timeout, params.game_session_timeout
-        );
-    }
-    let runtime = Builder::new_current_thread().enable_all().build().unwrap();
-    let world = generate_world(
-        Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)),
-        &mut make_rng(params.random_seed),
-    );
-    let (server_sender, server_receiver) = channel();
-    let (client_sender, client_receiver) = channel();
-    let stop_game_server = Arc::new(AtomicBool::new(false));
-    let update_period = Duration::from_secs_f64(1.0 / params.update_frequency);
-    let server = {
-        let settings = GameServerSettings {
-            max_players: params.max_players,
-            update_period,
-            session_timeout: Duration::from_secs_f64(params.game_session_timeout),
-        };
-        let stop = stop_game_server.clone();
-        spawn(move || run_game_server(world, settings, server_sender, client_receiver, stop))
-    };
-    let settings = UdpServerSettings {
-        address: format!("{}:{}", params.address, params.port),
-        max_sessions: params.max_sessions,
-        update_period,
-        session_timeout: Duration::from_secs_f64(params.udp_session_timeout),
-    };
-    runtime
-        .block_on(run_udp_server(
-            settings,
-            client_sender,
-            server_receiver,
-            stop,
-        ))
-        .unwrap();
-    info!("Stopping game server...");
-    stop_game_server.store(true, Ordering::Release);
-    server.join().unwrap();
-    info!("Exit server");
-}
-
-fn make_rng(random_seed: Option<u64>) -> SmallRng {
-    if let Some(value) = random_seed {
-        SeedableRng::seed_from_u64(value)
-    } else {
-        SeedableRng::from_entropy()
-    }
 }

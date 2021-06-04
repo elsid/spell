@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use clap::Clap;
 
-use spell::{run_server, ServerParams};
+use spell::server::{run_server, ServerParams};
 
 fn main() {
     env_logger::init();
