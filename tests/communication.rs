@@ -51,8 +51,8 @@ fn server_should_provide_player_id() {
             retry_period: Duration::from_secs_f64(0.25),
             player_name: String::from("test"),
         },
-        |_action_sender, update_receiver| {
-            let game_update = update_receiver
+        |_, game_update_receiver| {
+            let game_update = game_update_receiver
                 .recv_timeout(Duration::from_secs(3))
                 .unwrap();
             assert!(
@@ -85,8 +85,8 @@ fn server_should_move_player() {
             retry_period: Duration::from_secs_f64(0.25),
             player_name: String::from("test"),
         },
-        |action_sender, update_receiver| {
-            let set_player_id = update_receiver
+        |player_update_sender, game_update_receiver| {
+            let set_player_id = game_update_receiver
                 .recv_timeout(Duration::from_secs(3))
                 .unwrap();
             assert!(
@@ -100,12 +100,12 @@ fn server_should_move_player() {
                 unreachable!()
             };
             let start = Instant::now();
-            action_sender
+            player_update_sender
                 .send(PlayerUpdate::Action(PlayerAction::Move(true)))
                 .unwrap();
             let mut moving = false;
             while !moving && Instant::now() - start < Duration::from_secs(3) {
-                let world_snapshot = update_receiver
+                let world_snapshot = game_update_receiver
                     .recv_timeout(Duration::from_secs(1))
                     .unwrap();
                 assert!(
@@ -162,8 +162,8 @@ fn server_should_limit_number_of_sessions() {
                 with_background_client(
                     session_game_client_settings,
                     session_udp_client_settings,
-                    |action_sender, update_receiver| {
-                        let game_update = update_receiver
+                    |player_update_sender, game_update_receiver| {
+                        let game_update = game_update_receiver
                             .recv_timeout(Duration::from_secs(3))
                             .unwrap();
                         assert!(
@@ -173,7 +173,7 @@ fn server_should_limit_number_of_sessions() {
                         );
                         session_barrier1.wait();
                         session_barrier2.wait();
-                        drop(action_sender);
+                        drop(player_update_sender);
                     },
                 );
             })
@@ -184,13 +184,13 @@ fn server_should_limit_number_of_sessions() {
         with_background_client(
             game_client_settings,
             udp_client_settings,
-            |action_sender, update_receiver| {
+            |player_update_sender, game_update_receiver| {
                 assert_eq!(
-                    update_receiver.recv_timeout(Duration::from_secs(3)),
+                    game_update_receiver.recv_timeout(Duration::from_secs(3)),
                     Err(RecvTimeoutError::Timeout)
                 );
                 barrier2.wait();
-                drop(action_sender);
+                drop(player_update_sender);
             },
         );
         first_session.join().unwrap();
@@ -232,8 +232,8 @@ fn server_should_limit_number_of_players() {
                 with_background_client(
                     session_game_client_settings,
                     session_udp_client_settings,
-                    |action_sender, update_receiver| {
-                        let game_update = update_receiver
+                    |player_update_sender, game_update_receiver| {
+                        let game_update = game_update_receiver
                             .recv_timeout(Duration::from_secs(3))
                             .unwrap();
                         assert!(
@@ -243,7 +243,7 @@ fn server_should_limit_number_of_players() {
                         );
                         session_barrier1.wait();
                         session_barrier2.wait();
-                        drop(action_sender);
+                        drop(player_update_sender);
                     },
                 );
             })
@@ -254,13 +254,13 @@ fn server_should_limit_number_of_players() {
         with_background_client(
             game_client_settings,
             udp_client_settings,
-            |action_sender, update_receiver| {
+            |player_update_sender, game_update_receiver| {
                 assert_eq!(
-                    update_receiver.recv_timeout(Duration::from_secs(3)),
+                    game_update_receiver.recv_timeout(Duration::from_secs(3)),
                     Err(RecvTimeoutError::Disconnected)
                 );
                 barrier2.wait();
-                drop(action_sender);
+                drop(player_update_sender);
             },
         );
         first_session.join().unwrap();
@@ -307,8 +307,8 @@ fn server_should_support_multiple_players() {
                     with_background_client(
                         session_game_client_settings,
                         session_udp_client_settings,
-                        |action_sender, update_receiver| {
-                            let game_update = update_receiver
+                        |player_update_sender, game_update_receiver| {
+                            let game_update = game_update_receiver
                                 .recv_timeout(Duration::from_secs(3))
                                 .unwrap();
                             assert!(
@@ -317,7 +317,7 @@ fn server_should_support_multiple_players() {
                                 game_update
                             );
                             session_barrier.wait();
-                            drop(action_sender);
+                            drop(player_update_sender);
                         },
                     );
                 })
@@ -349,8 +349,8 @@ fn server_should_move_send_world_update_after_ack() {
             retry_period: Duration::from_secs_f64(0.25),
             player_name: String::from("test"),
         },
-        |action_sender, update_receiver| {
-            let set_player_id = update_receiver
+        |player_update_sender, game_update_receiver| {
+            let set_player_id = game_update_receiver
                 .recv_timeout(Duration::from_secs(3))
                 .unwrap();
             assert!(
@@ -359,24 +359,24 @@ fn server_should_move_send_world_update_after_ack() {
                 set_player_id
             );
             let start = Instant::now();
-            action_sender
+            player_update_sender
                 .send(PlayerUpdate::Action(PlayerAction::Move(true)))
                 .unwrap();
             while Instant::now() - start < Duration::from_secs(3) {
-                let server_message = update_receiver
+                let server_message = game_update_receiver
                     .recv_timeout(Duration::from_secs(1))
                     .unwrap();
                 match server_message {
                     GameUpdate::WorldUpdate(..) => break,
                     GameUpdate::WorldSnapshot(world) => {
-                        action_sender
+                        player_update_sender
                             .send(PlayerUpdate::AckWorldRevision(world.revision))
                             .unwrap();
                     }
                     _ => (),
                 }
             }
-            let world_update = update_receiver
+            let world_update = game_update_receiver
                 .recv_timeout(Duration::from_secs(1))
                 .unwrap();
             assert!(
