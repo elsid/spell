@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::JoinHandle;
@@ -13,6 +14,8 @@ use macroquad::prelude::{
 };
 use rand::prelude::SmallRng;
 use rand::Rng;
+use yata::methods::{StDev, SMA, SMM};
+use yata::prelude::Method;
 
 use crate::client::{Client, GameClientSettings, UdpClientSettings};
 use crate::control::apply_actor_action;
@@ -20,7 +23,7 @@ use crate::engine::{get_next_id, normalize_angle, Engine};
 use crate::generators::{generate_player_actor, generate_world, make_rng};
 use crate::meters::{measure, DurationMovingAverage, FpsMovingAverage};
 use crate::protocol::{
-    apply_world_update, is_valid_player_name, ActorAction, GameUpdate, PlayerUpdate,
+    apply_world_update, is_valid_player_name, ActorAction, GameUpdate, PlayerUpdate, WorldUpdate,
     MAX_PLAYER_NAME_LEN, MIN_PLAYER_NAME_LEN,
 };
 use crate::rect::Rectf;
@@ -52,6 +55,10 @@ pub struct GameSettings {
     pub read_timeout: f64,
     #[clap(long, default_value = "0.25")]
     pub retry_period: f64,
+    #[clap(long, default_value = "15")]
+    pub max_world_frame_delay: u64,
+    #[clap(long, default_value = "0")]
+    pub world_updates_delay: usize,
 }
 
 struct GameState {
@@ -76,6 +83,8 @@ struct GameState {
     client_dropper: Dropper<Client>,
     debug_hud_font: Font,
     name_font: Font,
+    max_world_frame_delay: u64,
+    world_updates_delay: usize,
 }
 
 enum Menu {
@@ -109,6 +118,11 @@ struct Multiplayer {
     scene: Scene,
     local_world_frame: u64,
     local_world_time: f64,
+    world_updates: VecDeque<Box<WorldUpdate>>,
+    world_frame_delay: SMM,
+    world_frame_diff: SMA,
+    world_frame_st_dev: StDev,
+    last_world_frame_st_dev: f64,
 }
 
 pub async fn run_game(settings: GameSettings) {
@@ -141,6 +155,8 @@ pub async fn run_game(settings: GameSettings) {
         },
         debug_hud_font: ubuntu_mono,
         name_font: ubuntu_mono,
+        max_world_frame_delay: settings.max_world_frame_delay,
+        world_updates_delay: settings.world_updates_delay,
     };
     let mut frame_type = FrameType::Initial;
     while !matches!(frame_type, FrameType::None) {
@@ -346,6 +362,11 @@ fn multiplayer_menu(ctx: &CtxRef, game_state: &mut GameState, frame_type: &mut F
                         scene: make_empty_scene(),
                         local_world_frame: 0,
                         local_world_time: 0.0,
+                        world_updates: VecDeque::new(),
+                        world_frame_delay: SMM::new(100, 0.0).unwrap(),
+                        world_frame_diff: SMA::new(100, 0.0).unwrap(),
+                        world_frame_st_dev: StDev::new(100, 0.0).unwrap(),
+                        last_world_frame_st_dev: 0.0,
                     }));
                     game_state.next_client_id += 1;
                     game_state.menu = Menu::Joining;
@@ -446,6 +467,8 @@ fn update_single_player(scene: &mut Scene) {
 
 fn update_multiplayer(game_state: &mut GameState, data: &mut Multiplayer) -> Option<FrameType> {
     let mut ack_world_frame = None;
+    let world_frame = data.scene.world.frame;
+    let mut apply_all_updates = false;
     while let Some(update) = data.client.receiver().try_recv().ok() {
         match update {
             GameUpdate::GameOver(message) => {
@@ -453,11 +476,15 @@ fn update_multiplayer(game_state: &mut GameState, data: &mut Multiplayer) -> Opt
                 game_state.menu = Menu::Error(format!("Disconnected from server: {}", message));
                 return Some(FrameType::Initial);
             }
-            GameUpdate::SetActorId(v) => data.scene.actor_id = Some(v),
+            GameUpdate::SetActorId(v) => {
+                data.scene.actor_id = Some(v);
+                apply_all_updates = true;
+            }
             GameUpdate::WorldSnapshot(v) => {
                 if matches!(game_state.menu, Menu::Joining) {
                     game_state.menu = Menu::None;
                 }
+                data.world_updates.clear();
                 data.scene.world = v;
                 ack_world_frame = Some(data.scene.world.frame);
                 if let Some(actor_id) = data.scene.actor_id {
@@ -470,16 +497,9 @@ fn update_multiplayer(game_state: &mut GameState, data: &mut Multiplayer) -> Opt
                 }
             }
             GameUpdate::WorldUpdate(world_update) => {
-                apply_world_update(*world_update, &mut data.scene.world);
-                ack_world_frame = Some(data.scene.world.frame);
-                if let Some(actor_id) = data.scene.actor_id {
-                    data.scene.last_actor_index = data
-                        .scene
-                        .world
-                        .actors
-                        .iter()
-                        .position(|v| v.id == actor_id);
-                }
+                data.world_frame_delay
+                    .next((world_update.after_frame - world_update.before_frame) as f64);
+                data.world_updates.push_back(world_update);
             }
         }
     }
@@ -494,6 +514,44 @@ fn update_multiplayer(game_state: &mut GameState, data: &mut Multiplayer) -> Opt
         }
         return Some(FrameType::Initial);
     }
+    if let Some(max_frame_diff) = data
+        .world_updates
+        .iter()
+        .map(|v| v.after_frame - v.before_frame)
+        .min()
+    {
+        let apply_updates = if apply_all_updates {
+            data.world_updates.len()
+        } else if max_frame_diff >= game_state.max_world_frame_delay {
+            max_frame_diff as usize / 2
+        } else if max_frame_diff >= game_state.max_world_frame_delay / 2 {
+            max_frame_diff as usize / 4
+        } else {
+            1
+        };
+        for _ in 0..apply_updates.max(1) {
+            if !apply_all_updates && data.world_updates.len() <= game_state.world_updates_delay {
+                break;
+            }
+            if let Some(world_update) = data.world_updates.pop_front() {
+                apply_world_update(*world_update, &mut data.scene.world);
+                ack_world_frame = Some(data.scene.world.frame);
+                if let Some(actor_id) = data.scene.actor_id {
+                    data.scene.last_actor_index = data
+                        .scene
+                        .world
+                        .actors
+                        .iter()
+                        .position(|v| v.id == actor_id);
+                }
+            } else {
+                break;
+            }
+        }
+    }
+    let frame_diff = (data.scene.world.frame - world_frame) as f64;
+    data.world_frame_diff.next(frame_diff);
+    data.last_world_frame_st_dev = data.world_frame_st_dev.next(frame_diff);
     if let Some(frame) = ack_world_frame {
         data.client
             .sender()
@@ -822,6 +880,19 @@ fn draw_debug_multiplayer_text(counter: &mut usize, game_state: &GameState, data
             format!(
                 "World time delay: {:.3}",
                 data.local_world_time - data.scene.world.time
+            ),
+            format!("World updates buffer: {}", data.world_updates.len()),
+            format!(
+                "Median world update delay: {:.3}",
+                data.world_frame_delay.get_last_value()
+            ),
+            format!(
+                "Mean world frame diff: {:.3}",
+                data.world_frame_diff.get_last_value()
+            ),
+            format!(
+                "St dev world frame diff: {:.3}",
+                data.last_world_frame_st_dev
             ),
         ],
     );

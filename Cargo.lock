@@ -2462,6 +2462,7 @@ dependencies = [
  "reqwest",
  "serde",
  "tokio",
+ "yata",
 ]
 
 [[package]]
@@ -3062,3 +3063,12 @@ name = "xml-rs"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b07db065a5cf61a7e4ba64f29e67db906fb1787316516c4e6e5ff0fea1efcd8a"
+
+[[package]]
+name = "yata"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "94cad6b3c9b043cd13647ea1cd6a4c6aa9bde3ce56e0c9268e73079189e7264e"
+dependencies = [
+ "serde",
+]
