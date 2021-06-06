@@ -3,22 +3,26 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
-use std::thread::{sleep, spawn};
+use std::thread::{sleep, spawn, JoinHandle};
 use std::time::{Duration, Instant};
 
+use actix_web::{web, HttpResponse};
 use clap::Clap;
 use lz4_flex::compress_prepend_size;
 use rand::rngs::StdRng;
 use rand::{CryptoRng, Rng, SeedableRng};
+use serde::Deserialize;
 use tokio::net::UdpSocket;
 
 use crate::control::apply_actor_action;
 use crate::engine::{get_next_id, remove_actor, Engine};
 use crate::generators::{generate_player_actor, generate_world, make_rng};
+use crate::meters::{measure, DurationMovingAverage, FpsMovingAverage};
 use crate::protocol::{
     deserialize_client_message, get_client_message_data_type, is_valid_player_name,
-    make_world_update, ActorAction, ClientMessage, ClientMessageData, GameUpdate, PlayerUpdate,
-    ServerMessage, ServerMessageData, WorldUpdate, HEARTBEAT_PERIOD,
+    make_world_update, ActorAction, ClientMessage, ClientMessageData, GameSessionInfo, GameUpdate,
+    HttpMessage, Metric, PlayerUpdate, ServerMessage, ServerMessageData, ServerStatus, Session,
+    UdpSessionState, WorldUpdate, HEARTBEAT_PERIOD,
 };
 use crate::rect::Rectf;
 use crate::vec2::Vec2f;
@@ -46,6 +50,12 @@ pub struct ServerParams {
     pub update_frequency: f64,
     #[clap(long)]
     pub random_seed: Option<u64>,
+    #[clap(long, default_value = "127.0.0.1")]
+    pub http_address: String,
+    #[clap(long, default_value = "21228")]
+    pub http_port: u16,
+    #[clap(long, default_value = "10")]
+    pub http_max_connections: usize,
 }
 
 pub fn run_server(params: ServerParams, stop: Arc<AtomicBool>) {
@@ -56,49 +66,74 @@ pub fn run_server(params: ServerParams, stop: Arc<AtomicBool>) {
             params.udp_session_timeout, params.game_session_timeout
         );
     }
+    let (udp_admin_sender, udp_admin_receiver) = channel();
+    let (game_admin_sender, game_admin_receiver) = channel();
+    let (http_server, http_server_handler) = run_background_http_server(
+        HttpServerSettings {
+            address: format!("{}:{}", params.http_address, params.http_port),
+            max_connections: params.http_max_connections,
+        },
+        udp_admin_sender,
+        game_admin_sender,
+    );
     let (server_sender, server_receiver) = channel();
     let (client_sender, client_receiver) = channel();
     let stop_udp_server = Arc::new(AtomicBool::new(false));
     let update_period = Duration::from_secs_f64(1.0 / params.update_frequency);
-    let udp_server = {
-        let settings = UdpServerSettings {
+    let udp_server = run_background_udp_sever(
+        UdpServerSettings {
             address: format!("{}:{}", params.address, params.port),
             max_sessions: params.max_sessions,
             update_period,
             session_timeout: Duration::from_secs_f64(params.udp_session_timeout),
-        };
-        let stop = stop_udp_server.clone();
-        spawn(move || {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap();
-            runtime.block_on(run_udp_server(
-                settings,
-                client_sender,
-                server_receiver,
-                stop,
-            ))
-        })
-    };
-    let world = generate_world(
-        Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)),
-        &mut make_rng(params.random_seed),
+        },
+        client_sender,
+        server_receiver,
+        udp_admin_receiver,
+        stop_udp_server.clone(),
     );
-    let settings = GameServerSettings {
-        max_players: params.max_players,
-        update_period,
-        session_timeout: Duration::from_secs_f64(params.game_session_timeout),
-    };
-    run_game_server(world, settings, server_sender, client_receiver, stop);
-    info!("Game server has stopped");
+    run_game_server(
+        generate_world(
+            Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)),
+            &mut make_rng(params.random_seed),
+        ),
+        GameServerSettings {
+            max_players: params.max_players,
+            update_period,
+            session_timeout: Duration::from_secs_f64(params.game_session_timeout),
+        },
+        server_sender,
+        client_receiver,
+        game_admin_receiver,
+        stop,
+    );
     info!("Stopping UDP server...");
     stop_udp_server.store(true, Ordering::Release);
     info!(
         "UDP server has stopped with result: {:?}",
         udp_server.join()
     );
-    info!("Exit server");
+    info!("Stopping HTTP server...");
+    actix_rt::System::new().block_on(http_server.stop(true));
+    info!(
+        "HTTP server has stopped with result: {:?}",
+        http_server_handler.join()
+    );
+}
+
+pub enum UdpAdminMessage {
+    GetSessions(tokio::sync::mpsc::Sender<Vec<UdpSession>>),
+}
+
+pub enum GameAdminMessage {
+    Stop(tokio::sync::mpsc::Sender<()>),
+    GetSessions(tokio::sync::mpsc::Sender<Vec<GameSessionInfo>>),
+    RemoveSession {
+        session_id: u64,
+        response: tokio::sync::mpsc::Sender<Result<(), String>>,
+    },
+    GetStatus(tokio::sync::mpsc::Sender<ServerStatus>),
+    GetWorld(tokio::sync::mpsc::Sender<Box<World>>),
 }
 
 pub enum InternalServerMessage {
@@ -121,10 +156,33 @@ pub struct UdpServerSettings {
     pub session_timeout: Duration,
 }
 
+pub fn run_background_udp_sever(
+    settings: UdpServerSettings,
+    sender: Sender<ClientMessage>,
+    client_receiver: Receiver<InternalServerMessage>,
+    admin_receiver: Receiver<UdpAdminMessage>,
+    stop: Arc<AtomicBool>,
+) -> JoinHandle<Result<(), std::io::Error>> {
+    spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(run_udp_server(
+            settings,
+            sender,
+            client_receiver,
+            admin_receiver,
+            stop,
+        ))
+    })
+}
+
 pub async fn run_udp_server(
     settings: UdpServerSettings,
     sender: Sender<ClientMessage>,
-    receiver: Receiver<InternalServerMessage>,
+    client_receiver: Receiver<InternalServerMessage>,
+    admin_receiver: Receiver<UdpAdminMessage>,
     stop: Arc<AtomicBool>,
 ) -> Result<(), std::io::Error> {
     info!("Run UDP server: {:?}", settings);
@@ -139,7 +197,8 @@ pub async fn run_udp_server(
         stop,
         settings,
         sender,
-        receiver,
+        client_receiver,
+        admin_receiver,
         recv_buffer: vec![0u8; 65_507],
         sessions: Vec::new(),
         rng: StdRng::from_entropy(),
@@ -154,7 +213,8 @@ struct UdpServer {
     stop: Arc<AtomicBool>,
     settings: UdpServerSettings,
     sender: Sender<ClientMessage>,
-    receiver: Receiver<InternalServerMessage>,
+    client_receiver: Receiver<InternalServerMessage>,
+    admin_receiver: Receiver<UdpAdminMessage>,
     socket: UdpSocket,
     recv_buffer: Vec<u8>,
     sessions: Vec<UdpSession>,
@@ -162,17 +222,12 @@ struct UdpServer {
     message_counter: u64,
 }
 
-struct UdpSession {
+#[derive(Clone)]
+pub struct UdpSession {
     peer: SocketAddr,
     session_id: u64,
     last_recv_time: Instant,
     state: UdpSessionState,
-}
-
-enum UdpSessionState {
-    New,
-    Established,
-    Done,
 }
 
 impl UdpServer {
@@ -189,6 +244,7 @@ impl UdpServer {
             }
             self.clean_udp_sessions(stop).await;
             self.handle_game_messages().await;
+            self.handle_admin_messages().await;
             if !stop {
                 self.receive_messages(last_update).await;
             }
@@ -236,7 +292,7 @@ impl UdpServer {
     }
 
     async fn handle_game_messages(&mut self) {
-        while let Ok(message) = self.receiver.try_recv() {
+        while let Ok(message) = self.client_receiver.try_recv() {
             self.message_counter += 1;
             match message {
                 InternalServerMessage::Unicast { session_id, data } => {
@@ -265,6 +321,16 @@ impl UdpServer {
                         data,
                     })
                     .await;
+                }
+            }
+        }
+    }
+
+    async fn handle_admin_messages(&mut self) {
+        while let Ok(message) = self.admin_receiver.try_recv() {
+            match message {
+                UdpAdminMessage::GetSessions(response) => {
+                    response.try_send(self.sessions.clone()).ok();
                 }
             }
         }
@@ -398,7 +464,8 @@ pub fn run_game_server(
     mut world: World,
     settings: GameServerSettings,
     sender: Sender<InternalServerMessage>,
-    receiver: Receiver<ClientMessage>,
+    client_receiver: Receiver<ClientMessage>,
+    admin_receiver: Receiver<GameAdminMessage>,
     stop: Arc<AtomicBool>,
 ) {
     info!("Run game server: {:?}", settings);
@@ -420,29 +487,50 @@ pub fn run_game_server(
             ServerMessageData::GameUpdate(GameUpdate::WorldSnapshot(Box::new(world.clone()))),
         ))
         .ok();
+    let mut meters = Meters {
+        fps: FpsMovingAverage::new(100, Duration::from_secs(1)),
+        frame_duration: DurationMovingAverage::new(100, Duration::from_secs(1)),
+    };
     while !stop.load(Ordering::Acquire) {
-        handle_delayed_messages(&settings, &sender, &mut sessions, &mut world);
-        handle_new_messages(
-            &settings,
-            &sender,
-            &receiver,
-            &mut sessions,
-            &mut rng,
-            &mut world,
-        );
-        close_timed_out_sessions(settings.session_timeout, &sender, &mut sessions);
-        handle_dropped_messages(&mut sessions);
-        remove_inactive_actors(&mut sessions, &mut world);
-        engine.update(time_step, &mut world);
-        sessions.retain(|v| v.active);
-        update_actor_index(&world, &mut sessions);
-        if world_history.len() >= MAX_WORLD_HISTORY_SIZE {
-            world_history.pop_front();
-        }
-        send_world_messages(&sender, &world, &world_history, &sessions);
-        world_history.push_back(world.clone());
+        meters.fps.add(Instant::now());
+        meters.frame_duration.add(measure(|| {
+            handle_delayed_messages(&settings, &sender, &mut sessions, &mut world);
+            handle_new_client_messages(
+                &settings,
+                &sender,
+                &client_receiver,
+                &mut sessions,
+                &mut rng,
+                &mut world,
+            );
+            close_timed_out_sessions(settings.session_timeout, &sender, &mut sessions);
+            handle_dropped_messages(&mut sessions);
+            remove_inactive_actors(&mut sessions, &mut world);
+            engine.update(time_step, &mut world);
+            sessions.retain(|v| v.active);
+            update_actor_index(&world, &mut sessions);
+            if world_history.len() >= MAX_WORLD_HISTORY_SIZE {
+                world_history.pop_front();
+            }
+            send_world_messages(&sender, &world, &world_history, &sessions);
+            world_history.push_back(world.clone());
+            handle_admin_messages(
+                &admin_receiver,
+                frame_rate_limiter.left(Instant::now()),
+                &sender,
+                &meters,
+                &mut sessions,
+                &mut world,
+                &stop,
+            );
+        }));
         frame_rate_limiter.limit(Instant::now());
     }
+}
+
+struct Meters {
+    fps: FpsMovingAverage,
+    frame_duration: DurationMovingAverage,
 }
 
 #[derive(Debug)]
@@ -457,6 +545,101 @@ struct GameSession {
     dropped_messages: usize,
     delayed_messages: VecDeque<ClientMessage>,
     ack_world_frame: u64,
+}
+
+fn handle_admin_messages(
+    receiver: &Receiver<GameAdminMessage>,
+    left: Duration,
+    sender: &Sender<InternalServerMessage>,
+    meters: &Meters,
+    sessions: &mut Vec<GameSession>,
+    world: &mut World,
+    stop: &Arc<AtomicBool>,
+) {
+    let deadline = Instant::now() + left;
+    while let Ok(message) = receiver.try_recv() {
+        match message {
+            GameAdminMessage::Stop(response) => {
+                stop.store(true, Ordering::Release);
+                response.try_send(()).ok();
+                info!("Server has stopped by admin");
+            }
+            GameAdminMessage::GetSessions(response) => {
+                response
+                    .try_send(
+                        sessions
+                            .iter()
+                            .map(|v| GameSessionInfo {
+                                session_id: v.session_id,
+                                actor_id: v.actor_id,
+                                actor_index: v.actor_index,
+                                last_message_time: v.last_message_time.elapsed().as_secs_f64(),
+                                last_message_number: v.last_message_number,
+                                messages_per_frame: v.messages_per_frame,
+                                dropped_messages: v.dropped_messages,
+                                delayed_messages: v.delayed_messages.len(),
+                                ack_world_frame: v.ack_world_frame,
+                                since_last_message: (Instant::now() - v.last_message_time)
+                                    .as_secs_f64(),
+                                world_frame_delay: world.frame - v.ack_world_frame,
+                            })
+                            .collect(),
+                    )
+                    .ok();
+            }
+            GameAdminMessage::RemoveSession {
+                session_id,
+                response,
+            } => {
+                if let Some(session) = sessions.iter_mut().find(|v| v.session_id == session_id) {
+                    if let Some(actor_index) = session.actor_index {
+                        remove_actor(actor_index, world);
+                        session.actor_index = None;
+                    }
+                    sender
+                        .send(InternalServerMessage::Unicast {
+                            session_id: session.session_id,
+                            data: ServerMessageData::GameUpdate(GameUpdate::GameOver(
+                                String::from("Kicked by admin"),
+                            )),
+                        })
+                        .ok();
+                    session.active = false;
+                    response.try_send(Ok(())).ok();
+                    info!("Game session {} is removed by admin", session.session_id);
+                } else {
+                    response
+                        .try_send(Err(String::from("Session is not found")))
+                        .ok();
+                }
+            }
+            GameAdminMessage::GetStatus(response) => {
+                let (fps_min, fps_max) = meters.fps.minmax();
+                let (frame_duration_min, frame_duration_max) = meters.frame_duration.minmax();
+                response
+                    .try_send(ServerStatus {
+                        fps: Metric {
+                            mean: meters.fps.get(),
+                            min: fps_min,
+                            max: fps_max,
+                        },
+                        frame_duration: Metric {
+                            mean: meters.frame_duration.get(),
+                            min: frame_duration_min,
+                            max: frame_duration_max,
+                        },
+                        sessions: sessions.len(),
+                    })
+                    .ok();
+            }
+            GameAdminMessage::GetWorld(response) => {
+                response.try_send(Box::new(world.clone())).ok();
+            }
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+    }
 }
 
 fn handle_delayed_messages(
@@ -521,7 +704,7 @@ fn handle_session_delayed_message(
     true
 }
 
-fn handle_new_messages<R: Rng + CryptoRng>(
+fn handle_new_client_messages<R: Rng + CryptoRng>(
     settings: &GameServerSettings,
     sender: &Sender<InternalServerMessage>,
     receiver: &Receiver<ClientMessage>,
@@ -738,13 +921,26 @@ impl FrameRateLimiter {
     }
 
     fn limit(&mut self, now: Instant) {
-        let passed = now - self.last_measurement;
+        let passed = self.passed(now);
         if passed < self.max_frame_duration {
             sleep(self.max_frame_duration - passed);
             self.last_measurement += self.max_frame_duration;
         } else {
             self.last_measurement = now;
         }
+    }
+
+    fn left(&self, now: Instant) -> Duration {
+        let passed = self.passed(now);
+        if passed < self.max_frame_duration {
+            self.max_frame_duration - passed
+        } else {
+            Duration::new(0, 0)
+        }
+    }
+
+    fn passed(&self, now: Instant) -> Duration {
+        now - self.last_measurement
     }
 }
 
@@ -822,4 +1018,178 @@ fn send_world_messages(
             })
             .ok();
     }
+}
+
+#[derive(Debug)]
+pub struct HttpServerSettings {
+    pub address: String,
+    pub max_connections: usize,
+}
+
+fn run_background_http_server(
+    settings: HttpServerSettings,
+    udp_admin_sender: Sender<UdpAdminMessage>,
+    game_admin_sender: Sender<GameAdminMessage>,
+) -> (actix_web::dev::Server, JoinHandle<std::io::Result<()>>) {
+    let (server_sender, receiver) = channel();
+    let handler = spawn(move || {
+        run_http_server(settings, udp_admin_sender, game_admin_sender, server_sender)
+    });
+    (receiver.recv().unwrap(), handler)
+}
+
+fn run_http_server(
+    settings: HttpServerSettings,
+    udp_admin_sender: Sender<UdpAdminMessage>,
+    game_admin_sender: Sender<GameAdminMessage>,
+    server_sender: Sender<actix_web::dev::Server>,
+) -> std::io::Result<()> {
+    use actix_web::{middleware, App, HttpServer};
+
+    let http_server = HttpServer::new(move || {
+        App::new()
+            .wrap(middleware::Logger::default())
+            .data(udp_admin_sender.clone())
+            .data(game_admin_sender.clone())
+            .service(web::resource("/ping").route(web::get().to(ping)))
+            .service(web::resource("/stop").route(web::post().to(stop)))
+            .service(web::resource("/sessions").route(web::get().to(sessions)))
+            .service(web::resource("/remove_session").route(web::post().to(remove_sessions)))
+            .service(web::resource("/status").route(web::get().to(status)))
+            .service(web::resource("/world").route(web::get().to(world)))
+            .default_service(web::resource("").to(HttpResponse::NotFound))
+    })
+    .workers(1)
+    .max_connections(settings.max_connections)
+    .disable_signals()
+    .bind(settings.address)?;
+    actix_rt::System::new().block_on(async move { server_sender.send(http_server.run()).unwrap() });
+    Ok(())
+}
+
+async fn ping() -> HttpResponse {
+    HttpResponse::Ok().json(HttpMessage::Ok)
+}
+
+async fn stop(game_admin_sender: web::Data<Sender<GameAdminMessage>>) -> HttpResponse {
+    let (response, mut request) = tokio::sync::mpsc::channel(1);
+    if let Err(e) = game_admin_sender.send(GameAdminMessage::Stop(response)) {
+        return HttpResponse::Ok().json(HttpMessage::Error {
+            message: format!("{}", e),
+        });
+    }
+    HttpResponse::Ok().json(match request.recv().await {
+        Some(..) => HttpMessage::Ok,
+        None => HttpMessage::Error {
+            message: String::from("Failed to get response"),
+        },
+    })
+}
+
+async fn sessions(
+    udp_admin_sender: web::Data<Sender<UdpAdminMessage>>,
+    game_admin_sender: web::Data<Sender<GameAdminMessage>>,
+) -> HttpResponse {
+    let (udp_response, mut udp_request) = tokio::sync::mpsc::channel(1);
+    if let Err(e) = udp_admin_sender.send(UdpAdminMessage::GetSessions(udp_response)) {
+        return HttpResponse::Ok().json(HttpMessage::Error {
+            message: format!("Failed to send UDP admin request: {}", e),
+        });
+    }
+    let (game_response, mut game_request) = tokio::sync::mpsc::channel(1);
+    if let Err(e) = game_admin_sender.send(GameAdminMessage::GetSessions(game_response)) {
+        return HttpResponse::Ok().json(HttpMessage::Error {
+            message: format!("Failed to send game admin request: {}", e),
+        });
+    }
+    let udp_sessions = match udp_request.recv().await {
+        Some(v) => v,
+        None => {
+            return HttpResponse::Ok().json(HttpMessage::Error {
+                message: String::from("Failed to get UDP admin response"),
+            });
+        }
+    };
+    let game_sessions = match game_request.recv().await {
+        Some(v) => v,
+        None => {
+            return HttpResponse::Ok().json(HttpMessage::Error {
+                message: String::from("Failed to get game admin response"),
+            });
+        }
+    };
+    HttpResponse::Ok().json(HttpMessage::Sessions {
+        sessions: udp_sessions
+            .iter()
+            .map(|udp| Session {
+                session_id: udp.session_id,
+                peer: udp.peer.to_string(),
+                last_recv_time: udp.last_recv_time.elapsed().as_secs_f64(),
+                state: udp.state,
+                game: game_sessions
+                    .iter()
+                    .find(|v| v.session_id == udp.session_id)
+                    .cloned(),
+            })
+            .collect(),
+    })
+}
+
+#[derive(Deserialize)]
+struct RemoveSession {
+    session_id: u64,
+}
+
+async fn remove_sessions(
+    game_admin_sender: web::Data<Sender<GameAdminMessage>>,
+    query: web::Query<RemoveSession>,
+) -> HttpResponse {
+    let (response, mut request) = tokio::sync::mpsc::channel(1);
+    if let Err(e) = game_admin_sender.send(GameAdminMessage::RemoveSession {
+        session_id: query.session_id,
+        response,
+    }) {
+        return HttpResponse::Ok().json(HttpMessage::Error {
+            message: format!("{}", e),
+        });
+    }
+    HttpResponse::Ok().json(match request.recv().await {
+        Some(v) => match v {
+            Ok(..) => HttpMessage::Ok,
+            Err(e) => HttpMessage::Error { message: e },
+        },
+        None => HttpMessage::Error {
+            message: String::from("Failed to get response"),
+        },
+    })
+}
+
+async fn status(game_admin_sender: web::Data<Sender<GameAdminMessage>>) -> HttpResponse {
+    let (response, mut request) = tokio::sync::mpsc::channel(1);
+    if let Err(e) = game_admin_sender.send(GameAdminMessage::GetStatus(response)) {
+        return HttpResponse::Ok().json(HttpMessage::Error {
+            message: format!("{}", e),
+        });
+    }
+    HttpResponse::Ok().json(match request.recv().await {
+        Some(v) => HttpMessage::Status { status: v },
+        None => HttpMessage::Error {
+            message: String::from("Failed to get response"),
+        },
+    })
+}
+
+async fn world(game_admin_sender: web::Data<Sender<GameAdminMessage>>) -> HttpResponse {
+    let (response, mut request) = tokio::sync::mpsc::channel(1);
+    if let Err(e) = game_admin_sender.send(GameAdminMessage::GetWorld(response)) {
+        return HttpResponse::Ok().json(HttpMessage::Error {
+            message: format!("{}", e),
+        });
+    }
+    HttpResponse::Ok().json(match request.recv().await {
+        Some(v) => HttpMessage::World { world: v },
+        None => HttpMessage::Error {
+            message: String::from("Failed to get response"),
+        },
+    })
 }

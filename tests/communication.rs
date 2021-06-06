@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use portpicker::pick_unused_port;
 
 use spell::client::{GameClientSettings, UdpClientSettings};
-use spell::protocol::{ActorAction, GameUpdate, PlayerUpdate};
+use spell::protocol::{ActorAction, GameUpdate, HttpMessage, PlayerUpdate, ServerStatus};
 use spell::server::{run_server, ServerParams};
 use spell::with_background_client;
 
@@ -27,6 +27,9 @@ fn server_should_terminate() {
         game_session_timeout: 3.0,
         update_frequency: 1.0,
         random_seed: Some(42),
+        http_address: String::from("127.0.0.2"),
+        http_port: pick_unused_port().unwrap(),
+        http_max_connections: 1,
     };
     run_background_server(server_params, stop).join().unwrap();
 }
@@ -43,6 +46,9 @@ fn server_should_provide_player_id() {
         game_session_timeout: 3.0,
         update_frequency: 60.0,
         random_seed: Some(42),
+        http_address: String::from("127.0.0.3"),
+        http_port: pick_unused_port().unwrap(),
+        http_max_connections: 1,
     };
     with_background_server_and_client(
         server_params,
@@ -77,6 +83,9 @@ fn server_should_move_player() {
         game_session_timeout: 3.0,
         update_frequency: 60.0,
         random_seed: Some(42),
+        http_address: String::from("127.0.0.4"),
+        http_port: pick_unused_port().unwrap(),
+        http_max_connections: 1,
     };
     with_background_server_and_client(
         server_params,
@@ -140,6 +149,9 @@ fn server_should_limit_number_of_sessions() {
         game_session_timeout: 10.0,
         update_frequency: 60.0,
         random_seed: Some(42),
+        http_address: String::from("127.0.0.5"),
+        http_port: pick_unused_port().unwrap(),
+        http_max_connections: 1,
     };
     let mut game_client_settings = GameClientSettings {
         id: 1,
@@ -154,7 +166,7 @@ fn server_should_limit_number_of_sessions() {
             .unwrap(),
         read_timeout: Duration::from_secs(3),
     };
-    with_background_server(server_params, || {
+    with_background_server(server_params, |_| {
         let barrier1 = Arc::new(Barrier::new(2));
         let barrier2 = Arc::new(Barrier::new(2));
         let first_session = {
@@ -213,6 +225,9 @@ fn server_should_limit_number_of_players() {
         game_session_timeout: 10.0,
         update_frequency: 60.0,
         random_seed: Some(42),
+        http_address: String::from("127.0.0.6"),
+        http_port: pick_unused_port().unwrap(),
+        http_max_connections: 1,
     };
     let mut game_client_settings = GameClientSettings {
         id: 1,
@@ -227,7 +242,7 @@ fn server_should_limit_number_of_players() {
             .unwrap(),
         read_timeout: Duration::from_secs(3),
     };
-    with_background_server(server_params, || {
+    with_background_server(server_params, |_| {
         let barrier1 = Arc::new(Barrier::new(2));
         let barrier2 = Arc::new(Barrier::new(2));
         let first_session = {
@@ -287,6 +302,9 @@ fn server_should_support_multiple_players() {
         game_session_timeout: 10.0,
         update_frequency: 60.0,
         random_seed: Some(42),
+        http_address: String::from("127.0.0.7"),
+        http_port: pick_unused_port().unwrap(),
+        http_max_connections: 1,
     };
     let game_client_settings = GameClientSettings {
         id: 1,
@@ -301,7 +319,7 @@ fn server_should_support_multiple_players() {
             .unwrap(),
         read_timeout: Duration::from_secs(3),
     };
-    with_background_server(server_params, || {
+    with_background_server(server_params, |_| {
         let barrier = Arc::new(Barrier::new(players_number));
         let mut sessions = Vec::with_capacity(players_number);
         for i in 0..players_number {
@@ -342,7 +360,7 @@ fn server_should_support_multiple_players() {
 fn server_should_move_send_world_update_after_ack() {
     init_logger();
     let server_params = ServerParams {
-        address: String::from("127.0.0.4"),
+        address: String::from("127.0.0.8"),
         port: pick_unused_port().unwrap(),
         max_sessions: 1,
         max_players: 1,
@@ -350,6 +368,9 @@ fn server_should_move_send_world_update_after_ack() {
         game_session_timeout: 3.0,
         update_frequency: 60.0,
         random_seed: Some(42),
+        http_address: String::from("127.0.0.8"),
+        http_port: pick_unused_port().unwrap(),
+        http_max_connections: 1,
     };
     with_background_server_and_client(
         server_params,
@@ -398,6 +419,153 @@ fn server_should_move_send_world_update_after_ack() {
     );
 }
 
+#[test]
+fn server_should_response_to_http_ping() {
+    init_logger();
+    let server_params = ServerParams {
+        address: String::from("127.0.0.9"),
+        port: pick_unused_port().unwrap(),
+        max_sessions: 1,
+        max_players: 1,
+        udp_session_timeout: 4.0,
+        game_session_timeout: 3.0,
+        update_frequency: 1.0,
+        random_seed: Some(42),
+        http_address: String::from("127.0.0.9"),
+        http_port: pick_unused_port().unwrap(),
+        http_max_connections: 1,
+    };
+    with_background_server(server_params, |http_client| {
+        assert_eq!(http_client.ping(), HttpMessage::Ok);
+    });
+}
+
+#[test]
+fn server_should_response_to_http_status() {
+    init_logger();
+    let server_params = ServerParams {
+        address: String::from("127.0.0.10"),
+        port: pick_unused_port().unwrap(),
+        max_sessions: 1,
+        max_players: 1,
+        udp_session_timeout: 4.0,
+        game_session_timeout: 3.0,
+        update_frequency: 1.0,
+        random_seed: Some(42),
+        http_address: String::from("127.0.0.10"),
+        http_port: pick_unused_port().unwrap(),
+        http_max_connections: 1,
+    };
+    with_background_server(server_params, |http_client| {
+        let result = http_client.status();
+        assert!(
+            matches!(
+                result,
+                HttpMessage::Status {
+                    status: ServerStatus { sessions: 0, .. }
+                }
+            ),
+            "{:?}",
+            result
+        );
+    });
+}
+
+#[test]
+fn server_should_response_to_http_sessions() {
+    init_logger();
+    let server_params = ServerParams {
+        address: String::from("127.0.0.11"),
+        port: pick_unused_port().unwrap(),
+        max_sessions: 1,
+        max_players: 1,
+        udp_session_timeout: 4.0,
+        game_session_timeout: 3.0,
+        update_frequency: 1.0,
+        random_seed: Some(42),
+        http_address: String::from("127.0.0.11"),
+        http_port: pick_unused_port().unwrap(),
+        http_max_connections: 1,
+    };
+    with_background_server(server_params, |http_client| {
+        assert_eq!(
+            http_client.sessions(),
+            HttpMessage::Sessions {
+                sessions: Vec::new()
+            }
+        );
+    });
+}
+
+#[test]
+fn server_should_response_to_http_remove_session() {
+    init_logger();
+    let server_params = ServerParams {
+        address: String::from("127.0.0.12"),
+        port: pick_unused_port().unwrap(),
+        max_sessions: 1,
+        max_players: 1,
+        udp_session_timeout: 4.0,
+        game_session_timeout: 3.0,
+        update_frequency: 1.0,
+        random_seed: Some(42),
+        http_address: String::from("127.0.0.12"),
+        http_port: pick_unused_port().unwrap(),
+        http_max_connections: 1,
+    };
+    with_background_server(server_params, |http_client| {
+        assert_eq!(
+            http_client.remove_session(1),
+            HttpMessage::Error {
+                message: String::from("Session is not found")
+            }
+        );
+    });
+}
+
+#[test]
+fn server_should_response_to_http_world() {
+    init_logger();
+    let server_params = ServerParams {
+        address: String::from("127.0.0.12"),
+        port: pick_unused_port().unwrap(),
+        max_sessions: 1,
+        max_players: 1,
+        udp_session_timeout: 4.0,
+        game_session_timeout: 3.0,
+        update_frequency: 1.0,
+        random_seed: Some(42),
+        http_address: String::from("127.0.0.12"),
+        http_port: pick_unused_port().unwrap(),
+        http_max_connections: 1,
+    };
+    with_background_server(server_params, |http_client| {
+        let result = http_client.world();
+        assert!(matches!(result, HttpMessage::World { .. }), "{:?}", result);
+    });
+}
+
+#[test]
+fn server_should_response_to_http_stop() {
+    init_logger();
+    let server_params = ServerParams {
+        address: String::from("127.0.0.13"),
+        port: pick_unused_port().unwrap(),
+        max_sessions: 1,
+        max_players: 1,
+        udp_session_timeout: 4.0,
+        game_session_timeout: 3.0,
+        update_frequency: 1.0,
+        random_seed: Some(42),
+        http_address: String::from("127.0.0.13"),
+        http_port: pick_unused_port().unwrap(),
+        http_max_connections: 1,
+    };
+    with_background_server(server_params, |http_client| {
+        assert_eq!(http_client.stop(), HttpMessage::Ok);
+    });
+}
+
 fn init_logger() {
     env_logger::try_init().ok();
 }
@@ -416,16 +584,18 @@ fn with_background_server_and_client<F>(
             .unwrap(),
         read_timeout: Duration::from_secs(3),
     };
-    let w = move || {
+    let w = move |_| {
         with_background_client(game_client_settings, upd_client_settings, f);
     };
     with_background_server(server_params, w);
 }
 
-fn with_background_server<F: FnOnce()>(params: ServerParams, f: F) {
+fn with_background_server<F: FnOnce(HttpClient)>(params: ServerParams, f: F) {
     let stop = Arc::new(AtomicBool::new(false));
+    let http_server_address = params.http_address.clone();
+    let http_server_port = params.http_port;
     let server = run_background_server(params, stop.clone());
-    f();
+    f(HttpClient::new(http_server_address, http_server_port));
     info!("Stopping server...");
     stop.store(true, Ordering::Release);
     server.join().unwrap();
@@ -433,4 +603,85 @@ fn with_background_server<F: FnOnce()>(params: ServerParams, f: F) {
 
 fn run_background_server(params: ServerParams, stop: Arc<AtomicBool>) -> JoinHandle<()> {
     spawn(move || run_server(params, stop))
+}
+
+struct HttpClient {
+    address: String,
+    port: u16,
+    client: reqwest::blocking::Client,
+}
+
+impl HttpClient {
+    fn new(address: String, port: u16) -> Self {
+        Self {
+            address,
+            port,
+            client: reqwest::blocking::Client::builder().build().unwrap(),
+        }
+    }
+
+    fn ping(&self) -> HttpMessage {
+        self.client
+            .get(self.url("ping").as_str())
+            .timeout(Duration::from_secs(5))
+            .send()
+            .unwrap()
+            .json()
+            .unwrap()
+    }
+
+    fn status(&self) -> HttpMessage {
+        self.client
+            .get(self.url("status").as_str())
+            .timeout(Duration::from_secs(5))
+            .send()
+            .unwrap()
+            .json()
+            .unwrap()
+    }
+
+    fn sessions(&self) -> HttpMessage {
+        self.client
+            .get(self.url("sessions").as_str())
+            .timeout(Duration::from_secs(5))
+            .send()
+            .unwrap()
+            .json()
+            .unwrap()
+    }
+
+    fn remove_session(&self, session_id: u64) -> HttpMessage {
+        self.client
+            .post(self.url("remove_session").as_str())
+            .query(&[("session_id", session_id)])
+            .timeout(Duration::from_secs(5))
+            .send()
+            .unwrap()
+            .json()
+            .unwrap()
+    }
+
+    fn world(&self) -> HttpMessage {
+        self.client
+            .get(self.url("world").as_str())
+            .timeout(Duration::from_secs(5))
+            .send()
+            .unwrap()
+            .json()
+            .unwrap()
+    }
+
+    fn stop(&self) -> HttpMessage {
+        self.client
+            .post(self.url("stop").as_str())
+            .timeout(Duration::from_secs(5))
+            .send()
+            .unwrap()
+            .json()
+            .unwrap()
+    }
+
+    fn url(&self, endpoint: &str) -> String {
+        format!("http://{}:{}/{}", self.address, self.port, endpoint)
+    }
 }

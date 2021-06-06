@@ -1192,11 +1192,11 @@ fn is_instant_effect_element(element: Element) -> bool {
 fn can_absorb_physical_damage(elements: &[bool; 11]) -> bool {
     let expect =
         elements[Element::Shield as usize] as i32 + elements[Element::Earth as usize] as i32;
-    elements[Element::Shield as usize] && expect == elements.iter().map(|v| *v as i32).sum()
+    elements[Element::Shield as usize] && expect == elements.iter().map(|v| *v as i32).sum::<i32>()
 }
 
 fn can_reflect_beams(elements: &[bool; 11]) -> bool {
-    elements[Element::Shield as usize] && 1 == elements.iter().map(|v| *v as i32).sum()
+    elements[Element::Shield as usize] && 1 == elements.iter().map(|v| *v as i32).sum::<i32>()
 }
 
 fn get_current_direction(

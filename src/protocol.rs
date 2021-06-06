@@ -133,6 +133,61 @@ pub enum ActorAction {
     StartAreaOfEffectMagick,
 }
 
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[serde(tag = "type")]
+pub enum HttpMessage {
+    Ok,
+    Error { message: String },
+    Sessions { sessions: Vec<Session> },
+    Status { status: ServerStatus },
+    World { world: Box<World> },
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+pub struct Session {
+    pub session_id: u64,
+    pub peer: String,
+    pub last_recv_time: f64,
+    pub state: UdpSessionState,
+    pub game: Option<GameSessionInfo>,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub struct GameSessionInfo {
+    pub session_id: u64,
+    pub actor_id: u64,
+    pub actor_index: Option<usize>,
+    pub last_message_time: f64,
+    pub last_message_number: u64,
+    pub messages_per_frame: u8,
+    pub dropped_messages: usize,
+    pub delayed_messages: usize,
+    pub ack_world_frame: u64,
+    pub since_last_message: f64,
+    pub world_frame_delay: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq, Copy, Clone)]
+pub enum UdpSessionState {
+    New,
+    Established,
+    Done,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+pub struct ServerStatus {
+    pub fps: Metric,
+    pub frame_duration: Metric,
+    pub sessions: usize,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+pub struct Metric {
+    pub min: f64,
+    pub mean: f64,
+    pub max: f64,
+}
+
 pub fn get_server_message_data_type(value: &ServerMessageData) -> &'static str {
     match value {
         ServerMessageData::NewPlayer { .. } => "NewPlayer",

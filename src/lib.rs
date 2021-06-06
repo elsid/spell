@@ -49,7 +49,7 @@ mod engine;
 mod game;
 #[cfg(any(feature = "client", feature = "server"))]
 mod generators;
-#[cfg(feature = "client")]
+#[cfg(any(feature = "client", feature = "server"))]
 mod meters;
 #[cfg(any(feature = "client", feature = "server"))]
 pub mod protocol;
