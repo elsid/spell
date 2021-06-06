@@ -162,12 +162,12 @@ pub struct Engine {
 }
 
 impl Engine {
-    #[cfg(feature = "render")]
+    #[cfg(feature = "client")]
     pub fn initial_emitted_beams(&self) -> &Vec<EmittedBeam> {
         &self.beam_collider.initial_beams
     }
 
-    #[cfg(feature = "render")]
+    #[cfg(feature = "client")]
     pub fn reflected_emitted_beams(&self) -> &Vec<EmittedBeam> {
         &self.beam_collider.reflected_beams
     }
@@ -225,7 +225,7 @@ impl Engine {
         handle_completed_magicks(world);
     }
 
-    #[cfg(feature = "render")]
+    #[cfg(feature = "client")]
     pub fn update_visual(&mut self, world: &mut World) {
         self.update_beams(world);
     }

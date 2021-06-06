@@ -5,10 +5,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread::{spawn, JoinHandle};
-#[cfg(feature = "render")]
+#[cfg(feature = "client")]
 use std::time::Duration;
 
-#[cfg(feature = "render")]
+#[cfg(feature = "client")]
 use clap::Clap;
 use tokio::runtime::Builder;
 
@@ -16,31 +16,31 @@ use crate::client::{
     run_game_client, run_udp_client, GameChannel, GameClientSettings, ServerChannel,
     UdpClientSettings,
 };
-#[cfg(feature = "render")]
+#[cfg(feature = "client")]
 use crate::engine::get_next_id;
-#[cfg(feature = "render")]
+#[cfg(feature = "client")]
 use crate::game::{run_game, Server};
-#[cfg(feature = "render")]
+#[cfg(feature = "client")]
 use crate::generators::{generate_player_actor, generate_world};
-#[cfg(feature = "render")]
+#[cfg(feature = "client")]
 use crate::protocol::{is_valid_player_name, MAX_PLAYER_NAME_LEN, MIN_PLAYER_NAME_LEN};
 use crate::protocol::{ClientMessage, GameUpdate, PlayerUpdate, ServerMessage};
-#[cfg(feature = "render")]
+#[cfg(feature = "client")]
 use crate::rect::Rectf;
-#[cfg(feature = "render")]
+#[cfg(feature = "client")]
 use crate::server::make_rng;
-#[cfg(feature = "render")]
+#[cfg(feature = "client")]
 use crate::vec2::Vec2f;
-#[cfg(feature = "render")]
+#[cfg(feature = "client")]
 use crate::world::World;
 
 pub mod client;
 mod control;
 mod engine;
-#[cfg(feature = "render")]
+#[cfg(feature = "client")]
 mod game;
 mod generators;
-#[cfg(feature = "render")]
+#[cfg(feature = "client")]
 mod meters;
 pub mod protocol;
 mod rect;
@@ -48,14 +48,14 @@ pub mod server;
 mod vec2;
 mod world;
 
-#[cfg(feature = "render")]
+#[cfg(feature = "client")]
 #[derive(Clap, Debug)]
 pub struct SinglePlayerParams {
     #[clap(long)]
     pub random_seed: Option<u64>,
 }
 
-#[cfg(feature = "render")]
+#[cfg(feature = "client")]
 #[derive(Clap, Debug)]
 pub struct MultiPlayerParams {
     pub server_address: String,
@@ -68,7 +68,7 @@ pub struct MultiPlayerParams {
     pub retry_period: f64,
 }
 
-#[cfg(feature = "render")]
+#[cfg(feature = "client")]
 pub fn run_single_player(params: SinglePlayerParams) {
     info!("Run single player: {:?}", params);
     let mut rng = make_rng(params.random_seed);
@@ -86,7 +86,7 @@ pub fn run_single_player(params: SinglePlayerParams) {
     info!("Exit single player");
 }
 
-#[cfg(feature = "render")]
+#[cfg(feature = "client")]
 pub fn run_multi_player(params: MultiPlayerParams) {
     info!("Run multiplayer: {:?}", params);
     if !is_valid_player_name(params.player_name.as_str()) {
