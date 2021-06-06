@@ -11,7 +11,6 @@ use lz4_flex::compress_prepend_size;
 use rand::rngs::StdRng;
 use rand::{CryptoRng, Rng, SeedableRng};
 use tokio::net::UdpSocket;
-use tokio::runtime::Builder;
 
 use crate::control::apply_actor_action;
 use crate::engine::{get_next_id, remove_actor, Engine};
@@ -57,41 +56,48 @@ pub fn run_server(params: ServerParams, stop: Arc<AtomicBool>) {
             params.udp_session_timeout, params.game_session_timeout
         );
     }
-    let runtime = Builder::new_current_thread().enable_all().build().unwrap();
+    let (server_sender, server_receiver) = channel();
+    let (client_sender, client_receiver) = channel();
+    let stop_udp_server = Arc::new(AtomicBool::new(false));
+    let update_period = Duration::from_secs_f64(1.0 / params.update_frequency);
+    let udp_server = {
+        let settings = UdpServerSettings {
+            address: format!("{}:{}", params.address, params.port),
+            max_sessions: params.max_sessions,
+            update_period,
+            session_timeout: Duration::from_secs_f64(params.udp_session_timeout),
+        };
+        let stop = stop_udp_server.clone();
+        spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(run_udp_server(
+                settings,
+                client_sender,
+                server_receiver,
+                stop,
+            ))
+        })
+    };
     let world = generate_world(
         Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)),
         &mut make_rng(params.random_seed),
     );
-    let (server_sender, server_receiver) = channel();
-    let (client_sender, client_receiver) = channel();
-    let stop_game_server = Arc::new(AtomicBool::new(false));
-    let update_period = Duration::from_secs_f64(1.0 / params.update_frequency);
-    let server = {
-        let settings = GameServerSettings {
-            max_players: params.max_players,
-            update_period,
-            session_timeout: Duration::from_secs_f64(params.game_session_timeout),
-        };
-        let stop = stop_game_server.clone();
-        spawn(move || run_game_server(world, settings, server_sender, client_receiver, stop))
-    };
-    let settings = UdpServerSettings {
-        address: format!("{}:{}", params.address, params.port),
-        max_sessions: params.max_sessions,
+    let settings = GameServerSettings {
+        max_players: params.max_players,
         update_period,
-        session_timeout: Duration::from_secs_f64(params.udp_session_timeout),
+        session_timeout: Duration::from_secs_f64(params.game_session_timeout),
     };
-    runtime
-        .block_on(run_udp_server(
-            settings,
-            client_sender,
-            server_receiver,
-            stop,
-        ))
-        .unwrap();
-    info!("Stopping game server...");
-    stop_game_server.store(true, Ordering::Release);
-    server.join().unwrap();
+    run_game_server(world, settings, server_sender, client_receiver, stop);
+    info!("Game server has stopped");
+    info!("Stopping UDP server...");
+    stop_udp_server.store(true, Ordering::Release);
+    info!(
+        "UDP server has stopped with result: {:?}",
+        udp_server.join()
+    );
     info!("Exit server");
 }
 
@@ -141,7 +147,6 @@ pub async fn run_udp_server(
     }
     .run()
     .await;
-    info!("UDP server has stopped");
     Ok(())
 }
 
@@ -409,7 +414,6 @@ pub fn run_game_server(
         world_history.push_back(world.clone());
         frame_rate_limiter.limit(Instant::now());
     }
-    info!("Game server has stopped");
 }
 
 #[derive(Debug)]
