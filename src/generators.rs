@@ -1,4 +1,5 @@
-use rand::Rng;
+use rand::rngs::SmallRng;
+use rand::{Rng, SeedableRng};
 
 use crate::engine::get_next_id;
 use crate::rect::Rectf;
@@ -7,6 +8,14 @@ use crate::world::{
     Actor, Aura, Body, Disk, DynamicObject, Effect, Element, Magick, Material, StaticArea,
     StaticObject, StaticShape, World, WorldSettings,
 };
+
+pub fn make_rng(random_seed: Option<u64>) -> SmallRng {
+    if let Some(value) = random_seed {
+        SeedableRng::seed_from_u64(value)
+    } else {
+        SeedableRng::from_entropy()
+    }
+}
 
 pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
     let settings = WorldSettings::default();

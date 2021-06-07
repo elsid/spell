@@ -8,14 +8,14 @@ use std::time::{Duration, Instant};
 
 use clap::Clap;
 use lz4_flex::compress_prepend_size;
-use rand::rngs::{SmallRng, StdRng};
+use rand::rngs::StdRng;
 use rand::{CryptoRng, Rng, SeedableRng};
 use tokio::net::UdpSocket;
 use tokio::runtime::Builder;
 
 use crate::control::apply_actor_action;
 use crate::engine::{get_next_id, remove_actor, Engine};
-use crate::generators::{generate_player_actor, generate_world};
+use crate::generators::{generate_player_actor, generate_world, make_rng};
 use crate::protocol::{
     deserialize_client_message, get_client_message_data_type, is_valid_player_name,
     make_world_update, ActorAction, ClientMessage, ClientMessageData, GameUpdate, PlayerUpdate,
@@ -93,14 +93,6 @@ pub fn run_server(params: ServerParams, stop: Arc<AtomicBool>) {
     stop_game_server.store(true, Ordering::Release);
     server.join().unwrap();
     info!("Exit server");
-}
-
-pub fn make_rng(random_seed: Option<u64>) -> SmallRng {
-    if let Some(value) = random_seed {
-        SeedableRng::seed_from_u64(value)
-    } else {
-        SeedableRng::from_entropy()
-    }
 }
 
 pub enum InternalServerMessage {

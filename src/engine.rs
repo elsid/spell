@@ -241,6 +241,7 @@ pub fn get_next_id(counter: &mut u64) -> u64 {
     result
 }
 
+#[cfg(feature = "server")]
 pub fn remove_actor(actor_index: usize, world: &mut World) {
     world.actors[actor_index].active = false;
 }

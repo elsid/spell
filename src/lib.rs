@@ -1,17 +1,22 @@
+#[cfg(any(feature = "client", feature = "server"))]
 #[macro_use]
 extern crate log;
 
+#[cfg(feature = "client")]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(feature = "client")]
 use std::sync::mpsc::{channel, Receiver, Sender};
+#[cfg(feature = "client")]
 use std::sync::Arc;
+#[cfg(feature = "client")]
 use std::thread::{spawn, JoinHandle};
 #[cfg(feature = "client")]
 use std::time::Duration;
 
 #[cfg(feature = "client")]
 use clap::Clap;
-use tokio::runtime::Builder;
 
+#[cfg(feature = "client")]
 use crate::client::{
     run_game_client, run_udp_client, GameChannel, GameClientSettings, ServerChannel,
     UdpClientSettings,
@@ -21,31 +26,40 @@ use crate::engine::get_next_id;
 #[cfg(feature = "client")]
 use crate::game::{run_game, Server};
 #[cfg(feature = "client")]
-use crate::generators::{generate_player_actor, generate_world};
+use crate::generators::{generate_player_actor, generate_world, make_rng};
 #[cfg(feature = "client")]
-use crate::protocol::{is_valid_player_name, MAX_PLAYER_NAME_LEN, MIN_PLAYER_NAME_LEN};
-use crate::protocol::{ClientMessage, GameUpdate, PlayerUpdate, ServerMessage};
+use crate::protocol::{
+    is_valid_player_name, ClientMessage, GameUpdate, PlayerUpdate, ServerMessage,
+    MAX_PLAYER_NAME_LEN, MIN_PLAYER_NAME_LEN,
+};
 #[cfg(feature = "client")]
 use crate::rect::Rectf;
-#[cfg(feature = "client")]
-use crate::server::make_rng;
 #[cfg(feature = "client")]
 use crate::vec2::Vec2f;
 #[cfg(feature = "client")]
 use crate::world::World;
 
+#[cfg(feature = "client")]
 pub mod client;
+#[cfg(any(feature = "client", feature = "server"))]
 mod control;
+#[cfg(any(feature = "client", feature = "server"))]
 mod engine;
 #[cfg(feature = "client")]
 mod game;
+#[cfg(any(feature = "client", feature = "server"))]
 mod generators;
 #[cfg(feature = "client")]
 mod meters;
+#[cfg(any(feature = "client", feature = "server"))]
 pub mod protocol;
+#[cfg(any(feature = "client", feature = "server"))]
 mod rect;
+#[cfg(feature = "server")]
 pub mod server;
+#[cfg(any(feature = "client", feature = "server"))]
 mod vec2;
+#[cfg(any(feature = "client", feature = "server"))]
 mod world;
 
 #[cfg(feature = "client")]
@@ -121,6 +135,7 @@ pub fn run_multi_player(params: MultiPlayerParams) {
     info!("Exit multiplayer");
 }
 
+#[cfg(feature = "client")]
 pub fn with_background_client<F>(
     game_client_settings: GameClientSettings,
     udp_client_settings: UdpClientSettings,
@@ -134,6 +149,7 @@ pub fn with_background_client<F>(
     with_background_udp_client(udp_client_settings, w);
 }
 
+#[cfg(feature = "client")]
 pub fn with_background_game_client<F>(
     settings: GameClientSettings,
     client_sender: Sender<ClientMessage>,
@@ -160,6 +176,7 @@ pub fn with_background_game_client<F>(
     game_client.join().unwrap();
 }
 
+#[cfg(feature = "client")]
 pub fn with_background_udp_client<F>(settings: UdpClientSettings, f: F)
 where
     F: FnOnce(Sender<ClientMessage>, Receiver<ServerMessage>),
@@ -176,6 +193,7 @@ where
     udp_client.join().unwrap();
 }
 
+#[cfg(feature = "client")]
 pub fn run_background_game_client(
     settings: GameClientSettings,
     update_sender: Sender<GameUpdate>,
@@ -195,6 +213,7 @@ pub fn run_background_game_client(
     spawn(move || run_game_client(settings, server_channel, game_channel, stop))
 }
 
+#[cfg(feature = "client")]
 pub fn run_background_udp_client(
     settings: UdpClientSettings,
     server_sender: Sender<ServerMessage>,
@@ -202,7 +221,10 @@ pub fn run_background_udp_client(
     stop: Arc<AtomicBool>,
 ) -> JoinHandle<()> {
     spawn(move || {
-        let runtime = Builder::new_current_thread().enable_all().build().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         runtime
             .block_on(run_udp_client(
                 settings,

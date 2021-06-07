@@ -3,8 +3,8 @@ on: [push, pull_request]
 name: CI
 
 jobs:
-  build_default:
-    name: Build default
+  build_server:
+    name: Build server
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -16,7 +16,23 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --bins
+          args: --features=server --bins
+
+  build_client:
+    name: Build client
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - run: sudo apt install -y libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+      - uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --features=client --bins
 
   build_all:
     name: Build all
@@ -33,23 +49,6 @@ jobs:
         with:
           command: build
           args: --all-features --all-targets
-
-  test_default:
-    name: Tests default
-    runs-on: ubuntu-latest
-    env:
-      RUST_BACKTRACE: 1
-      RUST_LOG: debug
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-      - uses: actions-rs/cargo@v1
-        with:
-          command: test
 
   test_all:
     name: Tests all
@@ -105,8 +104,8 @@ jobs:
           command: fmt
           args: --all -- --check
 
-  clippy:
-    name: Clippy default
+  clippy_server:
+    name: Clippy server
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -119,7 +118,24 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --bins -- -D warnings
+          args: --features=server --bins -- -D warnings
+
+  clippy_client:
+    name: Clippy client
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - run: rustup component add clippy
+      - run: sudo apt install -y libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+      - uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --features=client --bins -- -D warnings
 
   clippy_all:
     name: Clippy all
