@@ -78,6 +78,8 @@ pub struct MultiPlayerParams {
     pub server_port: u16,
     #[clap(long, default_value = "3")]
     pub connect_timeout: f64,
+    #[clap(long, default_value = "3")]
+    pub read_timeout: f64,
     #[clap(long, default_value = "0.25")]
     pub retry_period: f64,
 }
@@ -121,6 +123,7 @@ pub fn run_multi_player(params: MultiPlayerParams) {
             server_address: format!("{}:{}", server_address, server_port)
                 .parse()
                 .unwrap(),
+            read_timeout: Duration::from_secs_f64(params.read_timeout),
         },
         move |action_sender, update_receiver| {
             run_game(

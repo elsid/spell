@@ -16,6 +16,7 @@ use crate::protocol::{
 pub struct UdpClientSettings {
     pub id: u64,
     pub server_address: SocketAddr,
+    pub read_timeout: Duration,
 }
 
 pub async fn run_udp_client(
@@ -42,6 +43,7 @@ pub async fn run_udp_client(
     );
     let mut recv_buffer = vec![0u8; 65_507];
     let mut last_update = Instant::now();
+    let mut last_recv = last_update;
     let mut update_period = Duration::from_secs_f64(1.0);
     while !stop.load(Ordering::Acquire) {
         if !send_client_messages(
@@ -55,15 +57,29 @@ pub async fn run_udp_client(
             debug!("[{}] UDP client is quitting...", settings.id);
             break;
         }
-        let left = Instant::now() - last_update;
-        let recv_timeout = if left < update_period {
-            update_period - left
+        let now = Instant::now();
+        if now - last_recv >= settings.read_timeout {
+            sender
+                .send(ServerMessage {
+                    session_id: 0,
+                    number: u64::MAX,
+                    data: ServerMessageData::GameUpdate(GameUpdate::GameOver(String::from(
+                        "Timeout",
+                    ))),
+                })
+                .ok();
+            break;
+        }
+        let passed = now - last_update;
+        let recv_timeout = if passed < update_period {
+            update_period - passed
         } else {
             Duration::from_millis(1)
         };
         if let Ok(Ok(size)) =
             tokio::time::timeout(recv_timeout, socket.recv(&mut recv_buffer)).await
         {
+            last_recv = Instant::now();
             let server_message = match deserialize_server_message(&recv_buffer[0..size]) {
                 Ok(v) => v,
                 Err(e) => {

@@ -152,6 +152,7 @@ fn server_should_limit_number_of_sessions() {
         server_address: format!("{}:{}", server_params.address, server_params.port)
             .parse()
             .unwrap(),
+        read_timeout: Duration::from_secs(3),
     };
     with_background_server(server_params, || {
         let barrier1 = Arc::new(Barrier::new(2));
@@ -224,6 +225,7 @@ fn server_should_limit_number_of_players() {
         server_address: format!("{}:{}", server_params.address, server_params.port)
             .parse()
             .unwrap(),
+        read_timeout: Duration::from_secs(3),
     };
     with_background_server(server_params, || {
         let barrier1 = Arc::new(Barrier::new(2));
@@ -297,6 +299,7 @@ fn server_should_support_multiple_players() {
         server_address: format!("{}:{}", server_params.address, server_params.port)
             .parse()
             .unwrap(),
+        read_timeout: Duration::from_secs(3),
     };
     with_background_server(server_params, || {
         let barrier = Arc::new(Barrier::new(players_number));
@@ -411,6 +414,7 @@ fn with_background_server_and_client<F>(
         server_address: format!("{}:{}", server_params.address, server_params.port)
             .parse()
             .unwrap(),
+        read_timeout: Duration::from_secs(3),
     };
     let w = move || {
         with_background_client(game_client_settings, upd_client_settings, f);
