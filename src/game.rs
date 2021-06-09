@@ -32,8 +32,9 @@ pub struct Server {
     pub sender: Sender<PlayerUpdate>,
 }
 
-pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<GameUpdate>) {
+pub fn run_game(initial_world: World, server: Option<Server>, receiver: Receiver<GameUpdate>) {
     info!("Run game");
+    let mut world = Box::new(initial_world);
     let opengl = OpenGL::V2_1;
     let mut window: GlfwWindow = WindowSettings::new("spell", [640, 480])
         .graphics_api(opengl)
@@ -241,7 +242,7 @@ pub fn run_game(mut world: World, server: Option<Server>, receiver: Receiver<Gam
                         }
                     }
                     GameUpdate::WorldUpdate(world_update) => {
-                        apply_world_update(world_update, &mut world);
+                        apply_world_update(*world_update, &mut world);
                         if let Some(player_id) = actor_id {
                             last_actor_index = world.actors.iter().position(|v| v.id == player_id);
                         }

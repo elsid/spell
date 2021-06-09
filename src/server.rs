@@ -388,7 +388,7 @@ pub fn run_game_server(
     world_history.push_back(world.clone());
     sender
         .send(InternalServerMessage::Broadcast(
-            ServerMessageData::GameUpdate(GameUpdate::WorldSnapshot(world.clone())),
+            ServerMessageData::GameUpdate(GameUpdate::WorldSnapshot(Box::new(world.clone()))),
         ))
         .ok();
     while !stop.load(Ordering::Acquire) {
@@ -777,7 +777,9 @@ fn send_world_messages(
         sender
             .send(InternalServerMessage::Multicast {
                 session_ids,
-                data: ServerMessageData::GameUpdate(GameUpdate::WorldUpdate(world_update.clone())),
+                data: ServerMessageData::GameUpdate(GameUpdate::WorldUpdate(Box::new(
+                    world_update.clone(),
+                ))),
             })
             .ok();
     }
@@ -785,7 +787,9 @@ fn send_world_messages(
         sender
             .send(InternalServerMessage::Multicast {
                 session_ids: world_snapshot_session_ids,
-                data: ServerMessageData::GameUpdate(GameUpdate::WorldSnapshot(world.clone())),
+                data: ServerMessageData::GameUpdate(GameUpdate::WorldSnapshot(Box::new(
+                    world.clone(),
+                ))),
             })
             .ok();
     }
