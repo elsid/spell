@@ -182,19 +182,31 @@ impl UdpServer {
             self.socket.local_addr().unwrap()
         );
         let mut last_update = Instant::now();
-        while !self.stop.load(Ordering::Acquire) {
-            self.clean_udp_sessions();
+        loop {
+            let stop = self.stop.load(Ordering::Acquire);
+            if stop && self.sessions.is_empty() {
+                break;
+            }
+            self.clean_udp_sessions(stop).await;
             self.handle_game_messages().await;
-            self.receive_messages(last_update).await;
+            if !stop {
+                self.receive_messages(last_update).await;
+            }
             last_update = Instant::now();
         }
     }
 
-    fn clean_udp_sessions(&mut self) {
+    async fn clean_udp_sessions(&mut self, stop: bool) {
         let now = Instant::now();
         let session_timeout = self.settings.session_timeout;
         for session in self.sessions.iter() {
-            if session_timeout <= now - session.last_recv_time {
+            let quit = if session_timeout <= now - session.last_recv_time {
+                warn!("UDP session {} is timed out", session.session_id);
+                true
+            } else {
+                stop
+            };
+            if quit {
                 self.sender
                     .send(ClientMessage {
                         session_id: session.session_id,
@@ -202,12 +214,25 @@ impl UdpServer {
                         data: ClientMessageData::Quit,
                     })
                     .ok();
-                warn!("UDP session {} is timed out", session.session_id);
             }
         }
-        self.sessions.retain(|v| {
-            !matches!(v.state, UdpSessionState::Done) && now - v.last_recv_time < session_timeout
-        });
+        if stop {
+            self.message_counter += 1;
+            self.send_broadcast_server_message(&ServerMessage {
+                session_id: 0,
+                number: self.message_counter,
+                data: ServerMessageData::GameUpdate(GameUpdate::GameOver(String::from(
+                    "Server is stopped",
+                ))),
+            })
+            .await;
+            self.sessions.clear();
+        } else {
+            self.sessions.retain(|v| {
+                !matches!(v.state, UdpSessionState::Done)
+                    && now - v.last_recv_time < session_timeout
+            });
+        }
     }
 
     async fn handle_game_messages(&mut self) {
@@ -251,8 +276,12 @@ impl UdpServer {
             .iter_mut()
             .find(|v| v.session_id == server_message.session_id)
         {
-            if matches!(server_message.data, ServerMessageData::NewPlayer { .. }) {
-                session.state = UdpSessionState::Established;
+            match server_message.data {
+                ServerMessageData::NewPlayer { .. } => session.state = UdpSessionState::Established,
+                ServerMessageData::GameUpdate(GameUpdate::GameOver(..)) => {
+                    session.state = UdpSessionState::Done
+                }
+                _ => (),
             }
             let buffer = bincode::serialize(&server_message).unwrap();
             let compressed = compress_prepend_size(&buffer);
