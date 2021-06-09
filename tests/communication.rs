@@ -149,7 +149,9 @@ fn server_should_limit_number_of_sessions() {
     };
     let mut udp_client_settings = UdpClientSettings {
         id: 1,
-        server_address: format!("{}:{}", server_params.address, server_params.port),
+        server_address: format!("{}:{}", server_params.address, server_params.port)
+            .parse()
+            .unwrap(),
     };
     with_background_server(server_params, || {
         let barrier1 = Arc::new(Barrier::new(2));
@@ -219,7 +221,9 @@ fn server_should_limit_number_of_players() {
     };
     let mut udp_client_settings = UdpClientSettings {
         id: 1,
-        server_address: format!("{}:{}", server_params.address, server_params.port),
+        server_address: format!("{}:{}", server_params.address, server_params.port)
+            .parse()
+            .unwrap(),
     };
     with_background_server(server_params, || {
         let barrier1 = Arc::new(Barrier::new(2));
@@ -290,7 +294,9 @@ fn server_should_support_multiple_players() {
     };
     let udp_client_settings = UdpClientSettings {
         id: 1,
-        server_address: format!("{}:{}", server_params.address, server_params.port),
+        server_address: format!("{}:{}", server_params.address, server_params.port)
+            .parse()
+            .unwrap(),
     };
     with_background_server(server_params, || {
         let barrier = Arc::new(Barrier::new(players_number));
@@ -402,7 +408,9 @@ fn with_background_server_and_client<F>(
 {
     let upd_client_settings = UdpClientSettings {
         id: game_client_settings.id,
-        server_address: format!("{}:{}", server_params.address, server_params.port),
+        server_address: format!("{}:{}", server_params.address, server_params.port)
+            .parse()
+            .unwrap(),
     };
     let w = move || {
         with_background_client(game_client_settings, upd_client_settings, f);

@@ -118,7 +118,9 @@ pub fn run_multi_player(params: MultiPlayerParams) {
         },
         UdpClientSettings {
             id: 1,
-            server_address: format!("{}:{}", server_address, server_port),
+            server_address: format!("{}:{}", server_address, server_port)
+                .parse()
+                .unwrap(),
         },
         move |action_sender, update_receiver| {
             run_game(

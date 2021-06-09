@@ -15,7 +15,7 @@ use crate::protocol::{
 #[derive(Debug, Clone)]
 pub struct UdpClientSettings {
     pub id: u64,
-    pub server_address: String,
+    pub server_address: SocketAddr,
 }
 
 pub async fn run_udp_client(
@@ -25,8 +25,7 @@ pub async fn run_udp_client(
     stop: Arc<AtomicBool>,
 ) -> Result<(), std::io::Error> {
     info!("[{}] Run UDP client: {:?}", settings.id, settings);
-    let server_address: SocketAddr = settings.server_address.parse().unwrap();
-    let local_address = match server_address {
+    let local_address = match settings.server_address {
         SocketAddr::V4(..) => SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
         SocketAddr::V6(..) => SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)),
     };
@@ -36,10 +35,10 @@ pub async fn run_udp_client(
         settings.id,
         socket.local_addr().unwrap()
     );
-    socket.connect(server_address).await?;
+    socket.connect(settings.server_address).await?;
     info!(
         "[{}] UDP client is connected to {}",
-        settings.id, server_address
+        settings.id, settings.server_address
     );
     let mut recv_buffer = vec![0u8; 65_507];
     let mut last_update = Instant::now();
