@@ -53,7 +53,7 @@ pub enum GameUpdate {
     SetActorId(u64),
     WorldSnapshot(Box<World>),
     WorldUpdate(Box<WorldUpdate>),
-    GameOver,
+    GameOver(String),
 }
 
 #[derive(Default, Debug, Clone, Deserialize, Serialize, PartialEq)]

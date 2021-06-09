@@ -233,7 +233,7 @@ pub fn run_game(initial_world: World, server: Option<Server>, receiver: Receiver
             let start = Instant::now();
             while let Ok(update) = receiver.try_recv() {
                 match update {
-                    GameUpdate::GameOver => actor_id = None,
+                    GameUpdate::GameOver(..) => actor_id = None,
                     GameUpdate::SetActorId(v) => actor_id = Some(v),
                     GameUpdate::WorldSnapshot(v) => {
                         world = v;
