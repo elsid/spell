@@ -715,7 +715,7 @@ fn create_new_session<R: CryptoRng + Rng>(
         }
         ClientMessageData::Quit => None,
         v => {
-            warn!(
+            debug!(
                 "New session invalid message type: {}",
                 get_client_message_data_type(&v)
             );
