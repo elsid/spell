@@ -977,6 +977,7 @@ fn update_actors(now: f64, duration: f64, settings: &WorldSettings, actors: &mut
             duration,
             actor.body.mass(),
             actor.dynamic_force,
+            settings.min_move_distance,
             &mut actor.velocity,
         );
         update_velocity_z(
@@ -1015,6 +1016,7 @@ fn update_dynamic_objects(
             duration,
             object.body.mass(),
             object.dynamic_force,
+            settings.min_move_distance,
             &mut object.velocity,
         );
         update_position_z(
@@ -1102,14 +1104,16 @@ fn update_position(duration: f64, velocity: Vec2f, position: &mut Vec2f) {
     *position += velocity * duration;
 }
 
-fn update_velocity(duration: f64, mass: f64, dynamic_force: Vec2f, velocity: &mut Vec2f) {
-    let dynamic_force_norm = dynamic_force.norm();
-    let velocity_norm = velocity.norm();
-    if dynamic_force_norm > 0.0 && velocity_norm > 0.0 {
-        *velocity += (dynamic_force / dynamic_force_norm)
-            * (dynamic_force_norm * duration / (2.0 * mass)).min(velocity_norm);
-    } else {
-        *velocity += dynamic_force * (duration / (2.0 * mass));
+fn update_velocity(
+    duration: f64,
+    mass: f64,
+    dynamic_force: Vec2f,
+    min_move_distance: f64,
+    velocity: &mut Vec2f,
+) {
+    *velocity += dynamic_force * (duration / (2.0 * mass));
+    if velocity.norm() * duration <= min_move_distance {
+        *velocity = Vec2f::ZERO;
     }
 }
 

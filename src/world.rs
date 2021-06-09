@@ -40,6 +40,7 @@ pub struct WorldSettings {
     pub spray_force_factor: f64,
     pub area_of_effect_magick_duration: f64,
     pub border_width: f64,
+    pub min_move_distance: f64,
 }
 
 impl Default for WorldSettings {
@@ -63,6 +64,7 @@ impl Default for WorldSettings {
             spray_force_factor: 1e5,
             area_of_effect_magick_duration: 0.5,
             border_width: 0.1,
+            min_move_distance: 1e-3,
         }
     }
 }
@@ -269,7 +271,7 @@ mod tests {
 
     #[test]
     fn serialized_default_world_size() {
-        assert_eq!(bincode::serialize(&World::default()).unwrap().len(), 250);
+        assert_eq!(bincode::serialize(&World::default()).unwrap().len(), 258);
     }
 
     #[test]
