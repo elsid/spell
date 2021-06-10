@@ -29,7 +29,7 @@ use crate::game::{run_game, Server};
 use crate::generators::{generate_player_actor, generate_world, make_rng};
 #[cfg(feature = "client")]
 use crate::protocol::{
-    is_valid_player_name, ClientMessage, GameUpdate, PlayerUpdate, ServerMessage,
+    is_valid_player_name, ClientMessageData, GameUpdate, PlayerUpdate, ServerMessageData,
     MAX_PLAYER_NAME_LEN, MIN_PLAYER_NAME_LEN,
 };
 #[cfg(feature = "client")]
@@ -157,8 +157,8 @@ pub fn with_background_client<F>(
 #[cfg(feature = "client")]
 pub fn with_background_game_client<F>(
     settings: GameClientSettings,
-    client_sender: Sender<ClientMessage>,
-    server_receiver: Receiver<ServerMessage>,
+    client_sender: Sender<ClientMessageData>,
+    server_receiver: Receiver<ServerMessageData>,
     f: F,
 ) where
     F: FnOnce(Sender<PlayerUpdate>, Receiver<GameUpdate>),
@@ -184,7 +184,7 @@ pub fn with_background_game_client<F>(
 #[cfg(feature = "client")]
 pub fn with_background_udp_client<F>(settings: UdpClientSettings, f: F)
 where
-    F: FnOnce(Sender<ClientMessage>, Receiver<ServerMessage>),
+    F: FnOnce(Sender<ClientMessageData>, Receiver<ServerMessageData>),
 {
     let (server_sender, server_receiver) = channel();
     let (client_sender, client_receiver) = channel();
@@ -203,8 +203,8 @@ pub fn run_background_game_client(
     settings: GameClientSettings,
     update_sender: Sender<GameUpdate>,
     action_receiver: Receiver<PlayerUpdate>,
-    client_sender: Sender<ClientMessage>,
-    server_receiver: Receiver<ServerMessage>,
+    client_sender: Sender<ClientMessageData>,
+    server_receiver: Receiver<ServerMessageData>,
     stop: Arc<AtomicBool>,
 ) -> JoinHandle<()> {
     let game_channel = GameChannel {
@@ -221,8 +221,8 @@ pub fn run_background_game_client(
 #[cfg(feature = "client")]
 pub fn run_background_udp_client(
     settings: UdpClientSettings,
-    server_sender: Sender<ServerMessage>,
-    client_receiver: Receiver<ClientMessage>,
+    server_sender: Sender<ServerMessageData>,
+    client_receiver: Receiver<ClientMessageData>,
     stop: Arc<AtomicBool>,
 ) -> JoinHandle<()> {
     spawn(move || {

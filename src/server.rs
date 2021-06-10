@@ -8,7 +8,6 @@ use std::time::{Duration, Instant};
 
 use actix_web::{web, HttpResponse};
 use clap::Clap;
-use lz4_flex::compress_prepend_size;
 use rand::rngs::StdRng;
 use rand::{CryptoRng, Rng, SeedableRng};
 use serde::Deserialize;
@@ -20,9 +19,10 @@ use crate::generators::{generate_player_actor, generate_world, make_rng};
 use crate::meters::{measure, DurationMovingAverage, FpsMovingAverage};
 use crate::protocol::{
     deserialize_client_message, get_client_message_data_type, is_valid_player_name,
-    make_world_update, ActorAction, ClientMessage, ClientMessageData, GameSessionInfo, GameUpdate,
-    HttpMessage, Metric, PlayerUpdate, ServerMessage, ServerMessageData, ServerStatus, Session,
-    UdpSessionState, WorldUpdate, HEARTBEAT_PERIOD,
+    make_server_message, make_world_update, serialize_server_message, ActorAction, ClientMessage,
+    ClientMessageData, GameSessionInfo, GameUpdate, HttpMessage, Metric, PlayerUpdate,
+    ServerMessage, ServerMessageData, ServerStatus, Session, UdpSessionState, WorldUpdate,
+    HEARTBEAT_PERIOD,
 };
 use crate::rect::Rectf;
 use crate::vec2::Vec2f;
@@ -273,14 +273,9 @@ impl UdpServer {
             }
         }
         if stop {
-            self.message_counter += 1;
-            self.send_broadcast_server_message(&ServerMessage {
-                session_id: 0,
-                number: self.message_counter,
-                data: ServerMessageData::GameUpdate(GameUpdate::GameOver(String::from(
-                    "Server is stopped",
-                ))),
-            })
+            self.send_broadcast_server_message(&ServerMessageData::GameUpdate(
+                GameUpdate::GameOver(String::from("Server is stopped")),
+            ))
             .await;
             self.sessions.clear();
         } else {
@@ -293,34 +288,16 @@ impl UdpServer {
 
     async fn handle_game_messages(&mut self) {
         while let Ok(message) = self.client_receiver.try_recv() {
-            self.message_counter += 1;
             match message {
                 InternalServerMessage::Unicast { session_id, data } => {
-                    self.send_server_message_for_session(&ServerMessage {
-                        session_id,
-                        number: self.message_counter,
-                        data,
-                    })
-                    .await;
+                    self.send_unicast_server_message(session_id, &data).await;
                 }
                 InternalServerMessage::Multicast { session_ids, data } => {
-                    let mut server_message = ServerMessage {
-                        session_id: 0,
-                        number: self.message_counter,
-                        data,
-                    };
-                    for session_id in session_ids {
-                        server_message.session_id = session_id;
-                        self.send_server_message_for_session(&server_message).await;
-                    }
+                    self.send_multicast_server_message(&session_ids, &data)
+                        .await;
                 }
                 InternalServerMessage::Broadcast(data) => {
-                    self.send_broadcast_server_message(&ServerMessage {
-                        session_id: 0,
-                        number: self.message_counter,
-                        data,
-                    })
-                    .await;
+                    self.send_broadcast_server_message(&data).await;
                 }
             }
         }
@@ -336,43 +313,65 @@ impl UdpServer {
         }
     }
 
-    async fn send_server_message_for_session(&mut self, server_message: &ServerMessage) {
+    async fn send_unicast_server_message(&mut self, session_id: u64, data: &ServerMessageData) {
         if let Some(session) = self
             .sessions
             .iter_mut()
-            .find(|v| v.session_id == server_message.session_id)
+            .find(|v| v.session_id == session_id)
         {
-            match server_message.data {
+            match data {
                 ServerMessageData::NewPlayer { .. } => session.state = UdpSessionState::Established,
                 ServerMessageData::GameUpdate(GameUpdate::GameOver(..)) => {
                     session.state = UdpSessionState::Done
                 }
                 _ => (),
             }
-            let buffer = bincode::serialize(&server_message).unwrap();
-            let compressed = compress_prepend_size(&buffer);
-            if let Err(e) = self.socket.send_to(&compressed, session.peer).await {
-                warn!("Failed to send: {}", e);
+            self.message_counter += 1;
+            send_server_message(
+                &self.socket,
+                session,
+                &make_server_message(session.session_id, self.message_counter, &data),
+            )
+            .await;
+        }
+    }
+
+    async fn send_multicast_server_message(
+        &mut self,
+        session_ids: &[u64],
+        data: &ServerMessageData,
+    ) {
+        if self.sessions.iter().any(|v| {
+            session_ids.contains(&v.session_id) && matches!(v.state, UdpSessionState::Established)
+        }) {
+            self.message_counter += 1;
+            let mut server_message = make_server_message(0, self.message_counter, &data);
+            for session_id in session_ids {
+                if let Some(session) = self.sessions.iter_mut().find(|v| {
+                    v.session_id == *session_id && matches!(v.state, UdpSessionState::Established)
+                }) {
+                    server_message.session_id = *session_id;
+                    send_server_message(&self.socket, session, &server_message).await;
+                }
             }
         }
     }
 
-    async fn send_broadcast_server_message(&mut self, server_message: &ServerMessage) {
-        if self.sessions.is_empty()
-            || self
+    async fn send_broadcast_server_message(&mut self, data: &ServerMessageData) {
+        if self
+            .sessions
+            .iter()
+            .any(|v| matches!(v.state, UdpSessionState::Established))
+        {
+            self.message_counter += 1;
+            let mut server_message = make_server_message(0, self.message_counter, data);
+            for session in self
                 .sessions
                 .iter()
-                .all(|v| !matches!(v.state, UdpSessionState::Established))
-        {
-            return;
-        }
-        let buffer = bincode::serialize(server_message).unwrap();
-        let compressed = compress_prepend_size(&buffer);
-        for session in self.sessions.iter() {
-            if matches!(session.state, UdpSessionState::Established) {
-                if let Err(e) = self.socket.send_to(&compressed, session.peer).await {
-                    warn!("Failed to send: {}", e);
-                }
+                .filter(|v| matches!(v.state, UdpSessionState::Established))
+            {
+                server_message.session_id = session.session_id;
+                send_server_message(&self.socket, session, &server_message).await;
             }
         }
     }
@@ -450,6 +449,22 @@ impl UdpServer {
                 break;
             }
         }
+    }
+}
+
+async fn send_server_message(
+    socket: &UdpSocket,
+    session: &UdpSession,
+    server_message: &ServerMessage,
+) {
+    if let Err(e) = socket
+        .send_to(&serialize_server_message(server_message), session.peer)
+        .await
+    {
+        warn!(
+            "Failed to send server message for session {}: {}",
+            session.session_id, e
+        );
     }
 }
 

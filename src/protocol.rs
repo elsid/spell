@@ -1,4 +1,3 @@
-use std::convert::TryInto;
 use std::fmt::Formatter;
 use std::time::Duration;
 
@@ -14,13 +13,15 @@ pub const HEARTBEAT_PERIOD: Duration = Duration::from_secs(1);
 pub const MIN_PLAYER_NAME_LEN: usize = 3;
 pub const MAX_PLAYER_NAME_LEN: usize = 16;
 pub const MAX_SERVER_MESSAGE_SIZE: usize = 65_507;
+pub const MAX_SERVER_MESSAGE_DATA_SIZE: usize = 32_768;
 pub const MAX_CLIENT_MESSAGE_SIZE: usize = 1024;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ServerMessage {
     pub session_id: u64,
     pub number: u64,
-    pub data: ServerMessageData,
+    pub decompressed_data_size: u64,
+    pub data: Vec<u8>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -656,38 +657,68 @@ pub fn is_valid_player_name(value: &str) -> bool {
 
 #[derive(Debug)]
 pub enum DeserializeError {
-    CompressedMessageTooLong(usize),
-    InvalidCompressedMessageFormat,
-    DeclaredDecompressedMessageTooLong(usize),
+    SerializedServerMessageTooLong(usize),
+    CompressedServerMessageDataTooLong(usize),
+    DeclaredDecompressedServerMessageDataTooLong(usize),
     DecompressError(lz4_flex::block::DecompressError),
-    DecompressedMessageTooLong(usize),
+    DecompressedServerMessageDataTooLong(usize),
+    ClientMessageTooLong(usize),
     DeserializeError(bincode::Error),
 }
 
 impl std::fmt::Display for DeserializeError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            DeserializeError::CompressedMessageTooLong(v) => {
-                write!(f, "Compressed message is too long: {} bytes", v)
+            DeserializeError::SerializedServerMessageTooLong(v) => {
+                write!(f, "Serialized server message is too long: {} bytes", v)
             }
-            DeserializeError::InvalidCompressedMessageFormat => {
-                write!(f, "Invalid compressed message format")
+            DeserializeError::CompressedServerMessageDataTooLong(v) => {
+                write!(f, "Compressed server message data is too long: {} bytes", v)
             }
-            DeserializeError::DeclaredDecompressedMessageTooLong(v) => {
-                write!(f, "Declared decompressed message is too long: {} bytes", v)
+            DeserializeError::DeclaredDecompressedServerMessageDataTooLong(v) => {
+                write!(
+                    f,
+                    "Declared decompressed server message data is too long: {} bytes",
+                    v
+                )
             }
             DeserializeError::DecompressError(e) => write!(f, "{}", e),
-            DeserializeError::DecompressedMessageTooLong(v) => {
+            DeserializeError::DecompressedServerMessageDataTooLong(v) => {
                 write!(f, "Decompressed message is tool long: {} bytes", v)
+            }
+            DeserializeError::ClientMessageTooLong(v) => {
+                write!(f, "Client message is tool long: {} bytes", v)
             }
             DeserializeError::DeserializeError(e) => write!(f, "{}", e),
         }
     }
 }
 
+pub fn make_server_message(
+    session_id: u64,
+    number: u64,
+    data: &ServerMessageData,
+) -> ServerMessage {
+    let serialized = bincode::serialize(data).unwrap();
+    if serialized.len() > MAX_SERVER_MESSAGE_DATA_SIZE {
+        warn!(
+            "Serialized data size is greater than limit: {} > {}",
+            serialized.len(),
+            MAX_SERVER_MESSAGE_DATA_SIZE
+        );
+    }
+    let compressed = lz4_flex::compress(&serialized);
+    ServerMessage {
+        session_id,
+        number,
+        decompressed_data_size: serialized.len() as u64,
+        data: compressed,
+    }
+}
+
 pub fn deserialize_client_message(input: &[u8]) -> Result<ClientMessage, DeserializeError> {
     if input.len() > MAX_CLIENT_MESSAGE_SIZE {
-        return Err(DeserializeError::DecompressedMessageTooLong(input.len()));
+        return Err(DeserializeError::ClientMessageTooLong(input.len()));
     }
     match bincode::deserialize(input) {
         Ok(v) => Ok(v),
@@ -695,42 +726,49 @@ pub fn deserialize_client_message(input: &[u8]) -> Result<ClientMessage, Deseria
     }
 }
 
+pub fn serialize_server_message(value: &ServerMessage) -> Vec<u8> {
+    bincode::serialize(value).unwrap()
+}
+
 pub fn deserialize_server_message(input: &[u8]) -> Result<ServerMessage, DeserializeError> {
-    let decompressed = decompress_message(input, MAX_SERVER_MESSAGE_SIZE)?;
-    match bincode::deserialize(&decompressed) {
+    if input.len() > MAX_SERVER_MESSAGE_SIZE {
+        return Err(DeserializeError::SerializedServerMessageTooLong(
+            input.len(),
+        ));
+    }
+    match bincode::deserialize(&input) {
         Ok(v) => Ok(v),
         Err(e) => Err(DeserializeError::DeserializeError(e)),
     }
 }
 
-fn decompress_message(input: &[u8], max_size: usize) -> Result<Vec<u8>, DeserializeError> {
-    if input.len() > max_size {
-        return Err(DeserializeError::CompressedMessageTooLong(input.len()));
-    }
-    let decompressed_size = decompressed_size(input)?;
-    if decompressed_size > max_size {
-        return Err(DeserializeError::DeclaredDecompressedMessageTooLong(
-            decompressed_size,
+pub fn deserialize_server_message_data(
+    input: &[u8],
+    decompressed_size: usize,
+) -> Result<ServerMessageData, DeserializeError> {
+    if input.len() > MAX_SERVER_MESSAGE_DATA_SIZE {
+        return Err(DeserializeError::CompressedServerMessageDataTooLong(
+            input.len(),
         ));
     }
-    let decompressed = match lz4_flex::decompress_size_prepended(input) {
+    if decompressed_size > MAX_SERVER_MESSAGE_DATA_SIZE {
+        return Err(
+            DeserializeError::DeclaredDecompressedServerMessageDataTooLong(decompressed_size),
+        );
+    }
+    let decompressed = match lz4_flex::decompress(input, decompressed_size) {
         Ok(v) => v,
         Err(e) => return Err(DeserializeError::DecompressError(e)),
     };
-    if decompressed.len() > max_size {
-        return Err(DeserializeError::DecompressedMessageTooLong(
+    if decompressed.len() > MAX_SERVER_MESSAGE_DATA_SIZE {
+        return Err(DeserializeError::DecompressedServerMessageDataTooLong(
             decompressed.len(),
         ));
     }
-    Ok(decompressed)
-}
-
-fn decompressed_size(input: &[u8]) -> Result<usize, DeserializeError> {
-    let size = input
-        .get(..4)
-        .ok_or(DeserializeError::InvalidCompressedMessageFormat)?;
-    let size: &[u8; 4] = size.try_into().unwrap();
-    Ok(u32::from_le_bytes(*size) as usize)
+    match bincode::deserialize(&decompressed) {
+        Ok(v) => Ok(v),
+        Err(e) => Err(DeserializeError::DeserializeError(e)),
+    }
 }
 
 #[cfg(test)]
