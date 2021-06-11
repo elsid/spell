@@ -1,8 +1,8 @@
-#[cfg(any(feature = "client", feature = "server"))]
+#[cfg(any(all(feature = "client", feature = "desktop"), feature = "server"))]
 #[macro_use]
 extern crate log;
 
-#[cfg(feature = "client")]
+#[cfg(all(feature = "client", feature = "desktop"))]
 pub mod client;
 #[cfg(any(feature = "client", feature = "server"))]
 mod control;

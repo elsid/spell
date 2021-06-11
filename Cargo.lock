@@ -1119,6 +1119,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61124eeebbd69b8190558df225adf7e4caafce0d743919e5d6b19652314ec5ec"
 dependencies = [
  "cfg-if 1.0.0",
+ "time",
 ]
 
 [[package]]
@@ -2309,6 +2310,8 @@ dependencies = [
  "egui",
  "egui-macroquad",
  "env_logger",
+ "getrandom",
+ "instant",
  "itertools",
  "log",
  "lz4_flex",
@@ -2317,6 +2320,7 @@ dependencies = [
  "parry2d-f64",
  "rand",
  "reqwest",
+ "sapp-wasm",
  "serde",
  "tokio",
  "yata",

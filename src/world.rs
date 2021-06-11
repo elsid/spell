@@ -287,11 +287,13 @@ mod tests {
 
     use super::*;
 
+    #[cfg(any(feature = "client", feature = "server"))]
     #[test]
     fn serialized_default_world_size() {
         assert_eq!(bincode::serialize(&World::default()).unwrap().len(), 282);
     }
 
+    #[cfg(any(feature = "client", feature = "server"))]
     #[test]
     fn serialized_actor_size() {
         assert_eq!(
@@ -307,6 +309,7 @@ mod tests {
         );
     }
 
+    #[cfg(any(feature = "client", feature = "server"))]
     #[test]
     fn serialized_dynamic_object_size() {
         assert_eq!(
@@ -322,6 +325,7 @@ mod tests {
         );
     }
 
+    #[cfg(any(feature = "client", feature = "server"))]
     #[test]
     fn serialized_static_object_size() {
         assert_eq!(
@@ -337,11 +341,13 @@ mod tests {
         );
     }
 
+    #[cfg(any(feature = "client", feature = "server"))]
     #[test]
     fn serialized_default_beam_size() {
         assert_eq!(bincode::serialize(&Beam::default()).unwrap().len(), 112);
     }
 
+    #[cfg(any(feature = "client", feature = "server"))]
     #[test]
     fn serialized_static_area_size() {
         assert_eq!(

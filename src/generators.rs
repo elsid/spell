@@ -13,8 +13,23 @@ pub fn make_rng(random_seed: Option<u64>) -> SmallRng {
     if let Some(value) = random_seed {
         SeedableRng::seed_from_u64(value)
     } else {
-        SeedableRng::from_entropy()
+        make_rng_from_entropy()
     }
+}
+
+#[cfg(all(feature = "desktop", not(target_arch = "wasm32")))]
+fn make_rng_from_entropy() -> SmallRng {
+    SeedableRng::from_entropy()
+}
+
+#[cfg(all(not(feature = "desktop"), not(target_arch = "wasm32")))]
+fn make_rng_from_entropy() -> SmallRng {
+    SeedableRng::seed_from_u64(42)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn make_rng_from_entropy() -> SmallRng {
+    SmallRng::seed_from_u64(unsafe { sapp_wasm::rand() } as u64)
 }
 
 pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {

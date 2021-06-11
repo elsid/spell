@@ -1,12 +1,14 @@
 #[macro_use]
 extern crate log;
 
+use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Barrier};
 use std::thread::{sleep, spawn, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use instant::Instant;
 use reqwest::blocking::{RequestBuilder, Response};
 
 use spell::client::{Client, GameClientSettings, UdpClientSettings};
@@ -17,7 +19,6 @@ use spell::protocol::{
 use spell::server::{run_server, ServerParams};
 use spell::vec2::Vec2f;
 use spell::world::{Actor, Element, PlayerId, World};
-use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, UdpSocket};
 
 #[test]
 fn server_should_terminate() {

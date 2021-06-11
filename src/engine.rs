@@ -231,7 +231,7 @@ impl Engine {
         update_player_spawn_time(world);
     }
 
-    #[cfg(feature = "client")]
+    #[cfg(all(feature = "client", feature = "client"))]
     pub fn update_visual(&mut self, world: &mut World) {
         self.update_beams(world);
     }

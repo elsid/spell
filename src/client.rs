@@ -3,8 +3,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::thread::{sleep, spawn, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use instant::Instant;
 use tokio::net::UdpSocket;
 use tokio::runtime::Builder;
 

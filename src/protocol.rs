@@ -838,6 +838,7 @@ pub fn is_valid_player_name(value: &str) -> bool {
         && value.chars().all(|v| v.is_alphabetic())
 }
 
+#[cfg(any(feature = "desktop", feature = "server"))]
 #[derive(Debug)]
 pub enum DeserializeError {
     SerializedServerMessageTooLong(usize),
@@ -849,6 +850,7 @@ pub enum DeserializeError {
     DeserializeError(bincode::Error),
 }
 
+#[cfg(any(feature = "desktop", feature = "server"))]
 impl std::fmt::Display for DeserializeError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -877,6 +879,7 @@ impl std::fmt::Display for DeserializeError {
     }
 }
 
+#[cfg(any(feature = "desktop", feature = "server"))]
 pub fn make_server_message(
     session_id: u64,
     number: u64,
@@ -899,6 +902,7 @@ pub fn make_server_message(
     }
 }
 
+#[cfg(any(feature = "desktop", feature = "server"))]
 pub fn deserialize_client_message(input: &[u8]) -> Result<ClientMessage, DeserializeError> {
     if input.len() > MAX_CLIENT_MESSAGE_SIZE {
         return Err(DeserializeError::ClientMessageTooLong(input.len()));
@@ -909,10 +913,12 @@ pub fn deserialize_client_message(input: &[u8]) -> Result<ClientMessage, Deseria
     }
 }
 
+#[cfg(any(feature = "desktop", feature = "server"))]
 pub fn serialize_server_message(value: &ServerMessage) -> Vec<u8> {
     bincode::serialize(value).unwrap()
 }
 
+#[cfg(any(feature = "desktop", feature = "server"))]
 pub fn deserialize_server_message(input: &[u8]) -> Result<ServerMessage, DeserializeError> {
     if input.len() > MAX_SERVER_MESSAGE_SIZE {
         return Err(DeserializeError::SerializedServerMessageTooLong(
@@ -925,6 +931,7 @@ pub fn deserialize_server_message(input: &[u8]) -> Result<ServerMessage, Deseria
     }
 }
 
+#[cfg(any(feature = "desktop", feature = "server"))]
 pub fn deserialize_server_message_data(
     input: &[u8],
     decompressed_size: usize,
@@ -965,6 +972,7 @@ mod tests {
 
     use super::*;
 
+    #[cfg(any(feature = "desktop", feature = "server"))]
     #[test]
     fn serialized_default_world_update_size() {
         assert_eq!(
@@ -973,6 +981,7 @@ mod tests {
         );
     }
 
+    #[cfg(any(feature = "desktop", feature = "server"))]
     #[test]
     fn serialized_default_actor_update_size() {
         assert_eq!(
@@ -981,6 +990,7 @@ mod tests {
         );
     }
 
+    #[cfg(any(feature = "desktop", feature = "server"))]
     #[test]
     fn serialized_default_dynamic_object_update_size() {
         assert_eq!(
@@ -991,6 +1001,7 @@ mod tests {
         );
     }
 
+    #[cfg(any(feature = "desktop", feature = "server"))]
     #[test]
     fn serialized_default_static_object_update_size() {
         assert_eq!(
@@ -1001,6 +1012,7 @@ mod tests {
         );
     }
 
+    #[cfg(any(feature = "desktop", feature = "server"))]
     #[test]
     fn serialized_default_temp_area_update_size() {
         assert_eq!(

@@ -4,10 +4,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread::{sleep, spawn, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use actix_web::{web, HttpResponse};
 use clap::Clap;
+use instant::Instant;
 use rand::prelude::SmallRng;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};

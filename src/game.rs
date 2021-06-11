@@ -2,10 +2,10 @@ use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use clap::Clap;
 use egui::{Color32, CtxRef};
+use instant::Instant;
 use macroquad::prelude::{
     clear_background, draw_line, draw_poly, draw_rectangle, draw_rectangle_lines, draw_text_ex,
     get_internal_gl, is_key_down, is_key_pressed, is_mouse_button_down, load_ttf_font,
@@ -18,6 +18,7 @@ use rand::Rng;
 use yata::methods::{StDev, SMA};
 use yata::prelude::Method;
 
+#[cfg(feature = "desktop")]
 use crate::client::{Client, GameClientSettings, UdpClientSettings};
 use crate::control::{apply_actor_action, apply_cast_action};
 use crate::engine::{get_next_id, normalize_angle, Engine};
@@ -46,26 +47,33 @@ const HUD_MARGIN: f64 = 12.0;
 const HUD_FONT_SIZE: u16 = 24;
 const MESSAGE_FONT_SIZE: u16 = 48;
 
-#[derive(Clap, Debug)]
+#[derive(Debug)]
 pub struct GameSettings {
-    #[clap(long)]
     pub random_seed: Option<u64>,
-    #[clap(long, default_value = "127.0.0.1")]
     pub default_server_address: String,
-    #[clap(long, default_value = "21227")]
     pub default_server_port: u16,
-    #[clap(long, default_value = "Player")]
     pub default_player_name: String,
-    #[clap(long, default_value = "3")]
     pub connect_timeout: f64,
-    #[clap(long, default_value = "3")]
     pub read_timeout: f64,
-    #[clap(long, default_value = "0.25")]
     pub retry_period: f64,
-    #[clap(long, default_value = "15")]
     pub max_world_frame_delay: u64,
-    #[clap(long, default_value = "0")]
     pub world_updates_delay: usize,
+}
+
+impl Default for GameSettings {
+    fn default() -> Self {
+        Self {
+            random_seed: None,
+            default_server_address: "127.0.0.1".into(),
+            default_server_port: 21227,
+            default_player_name: "Player".into(),
+            connect_timeout: 3.0,
+            read_timeout: 3.0,
+            retry_period: 0.25,
+            max_world_frame_delay: 15,
+            world_updates_delay: 0,
+        }
+    }
 }
 
 struct GameState {
@@ -87,6 +95,7 @@ struct GameState {
     connect_timeout: Duration,
     read_timeout: Duration,
     retry_period: Duration,
+    #[cfg(feature = "desktop")]
     client_dropper: Dropper<Client>,
     debug_hud_font: Font,
     name_font: Font,
@@ -127,6 +136,7 @@ struct Scene {
 }
 
 struct Multiplayer {
+    #[cfg(feature = "desktop")]
     client: AsyncDrop<Client>,
     scene: Scene,
     local_world_frame: u64,
@@ -163,6 +173,7 @@ pub async fn run_game(settings: GameSettings) {
         connect_timeout: Duration::from_secs_f64(settings.connect_timeout),
         read_timeout: Duration::from_secs_f64(settings.read_timeout),
         retry_period: Duration::from_secs_f64(settings.retry_period),
+        #[cfg(feature = "desktop")]
         client_dropper: {
             let (sender, receiver) = channel();
             Dropper {
@@ -187,12 +198,15 @@ pub async fn run_game(settings: GameSettings) {
         next_frame().await;
         game_state.fps.add(Instant::now());
     }
-    game_state
-        .client_dropper
-        .sender
-        .send(DropperMessage::Stop)
-        .ok();
-    game_state.client_dropper.handle.join().ok();
+    #[cfg(feature = "desktop")]
+    {
+        game_state
+            .client_dropper
+            .sender
+            .send(DropperMessage::Stop)
+            .ok();
+        game_state.client_dropper.handle.join().ok();
+    }
 }
 
 fn run_dropper<T>(receiver: Receiver<DropperMessage<T>>) {
@@ -242,6 +256,7 @@ fn handle_input(game_state: &mut GameState, frame_type: &mut FrameType) {
                 }
             }
         }
+        #[cfg(feature = "desktop")]
         FrameType::Multiplayer(v) => {
             let scene = &mut v.scene;
             let actor_action = &mut v.actor_action;
@@ -314,9 +329,13 @@ fn update_ui(game_state: &mut GameState, frame_type: &mut FrameType) {
         match &game_state.menu {
             Menu::None => (),
             Menu::Main => main_menu(ctx, game_state, frame_type),
+            #[cfg(feature = "desktop")]
             Menu::Multiplayer => multiplayer_menu(ctx, game_state, frame_type),
+            #[cfg(not(feature = "desktop"))]
+            Menu::Multiplayer | Menu::Joining => main_menu(ctx, game_state, frame_type),
+            #[cfg(feature = "desktop")]
             Menu::Joining => joining_menu(ctx, game_state, frame_type),
-            Menu::Error(message) => error_menu(ctx, message.clone(), game_state),
+            Menu::Error(message) => error_menu(ctx, message.clone(), game_state, frame_type),
         }
     });
     game_state.draw_ui = true;
@@ -335,12 +354,7 @@ fn main_menu(ctx: &CtxRef, game_state: &mut GameState, frame_type: &mut FrameTyp
                 game_state.menu = Menu::None;
             }
             if playing && ui.button("Logout").clicked() {
-                game_state.menu = if matches!(frame_type, FrameType::Multiplayer(..)) {
-                    Menu::Multiplayer
-                } else {
-                    Menu::Main
-                };
-                *frame_type = FrameType::Initial;
+                on_back_button_clicked(game_state, frame_type);
             }
             if ui.button("Single player").clicked() {
                 *frame_type = FrameType::SinglePlayer(Box::new(make_single_player_scene(
@@ -358,6 +372,7 @@ fn main_menu(ctx: &CtxRef, game_state: &mut GameState, frame_type: &mut FrameTyp
     });
 }
 
+#[cfg(feature = "desktop")]
 fn multiplayer_menu(ctx: &CtxRef, game_state: &mut GameState, frame_type: &mut FrameType) {
     egui::CentralPanel::default().show(ctx, |ui| {
         ui.vertical_centered(|ui| {
@@ -417,6 +432,7 @@ fn multiplayer_menu(ctx: &CtxRef, game_state: &mut GameState, frame_type: &mut F
     });
 }
 
+#[cfg(feature = "desktop")]
 fn joining_menu(ctx: &CtxRef, game_state: &mut GameState, frame_type: &mut FrameType) {
     egui::CentralPanel::default().show(ctx, |ui| {
         ui.vertical_centered(|ui| {
@@ -429,15 +445,29 @@ fn joining_menu(ctx: &CtxRef, game_state: &mut GameState, frame_type: &mut Frame
     });
 }
 
-fn error_menu(ctx: &CtxRef, message: String, game_state: &mut GameState) {
+fn error_menu(
+    ctx: &CtxRef,
+    message: String,
+    game_state: &mut GameState,
+    frame_type: &mut FrameType,
+) {
     egui::CentralPanel::default().show(ctx, |ui| {
         ui.vertical_centered(|ui| {
             ui.heading(message);
             if ui.button("Back").clicked() {
-                game_state.menu = Menu::Multiplayer;
+                on_back_button_clicked(game_state, frame_type);
             }
         });
     });
+}
+
+fn on_back_button_clicked(game_state: &mut GameState, frame_type: &mut FrameType) {
+    game_state.menu = if matches!(frame_type, FrameType::Multiplayer(..)) {
+        Menu::Multiplayer
+    } else {
+        Menu::Main
+    };
+    *frame_type = FrameType::Initial;
 }
 
 fn update(game_state: &mut GameState, frame_type: &mut FrameType) {
@@ -446,6 +476,7 @@ fn update(game_state: &mut GameState, frame_type: &mut FrameType) {
             update_single_player(v, &mut game_state.rng);
             None
         }
+        #[cfg(feature = "desktop")]
         FrameType::Multiplayer(v) => update_multiplayer(game_state, v),
         _ => None,
     };
@@ -505,6 +536,7 @@ fn update_single_player<R: Rng>(scene: &mut Scene, rng: &mut R) {
     update_scene_actor_index(scene);
 }
 
+#[cfg(feature = "desktop")]
 fn update_multiplayer(game_state: &mut GameState, data: &mut Multiplayer) -> Option<FrameType> {
     let world_frame = data.scene.world.frame;
     let mut apply_all_updates = false;
