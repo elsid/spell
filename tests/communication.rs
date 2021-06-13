@@ -4,10 +4,11 @@ extern crate log;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Barrier};
-use std::thread::{spawn, JoinHandle};
+use std::thread::{sleep, spawn, JoinHandle};
 use std::time::{Duration, Instant};
 
 use portpicker::pick_unused_port;
+use reqwest::blocking::{RequestBuilder, Response};
 
 use spell::client::{GameClientSettings, UdpClientSettings};
 use spell::protocol::{ActorAction, GameUpdate, HttpMessage, PlayerUpdate, ServerStatus};
@@ -621,67 +622,82 @@ impl HttpClient {
     }
 
     fn ping(&self) -> HttpMessage {
-        self.client
-            .get(self.url("ping").as_str())
-            .timeout(Duration::from_secs(5))
-            .send()
-            .unwrap()
-            .json()
-            .unwrap()
+        send_with_retries(
+            self.client
+                .get(self.url("ping").as_str())
+                .timeout(Duration::from_secs(5)),
+        )
+        .json()
+        .unwrap()
     }
 
     fn status(&self) -> HttpMessage {
-        self.client
-            .get(self.url("status").as_str())
-            .timeout(Duration::from_secs(5))
-            .send()
-            .unwrap()
-            .json()
-            .unwrap()
+        send_with_retries(
+            self.client
+                .get(self.url("status").as_str())
+                .timeout(Duration::from_secs(5)),
+        )
+        .json()
+        .unwrap()
     }
 
     fn sessions(&self) -> HttpMessage {
-        self.client
-            .get(self.url("sessions").as_str())
-            .timeout(Duration::from_secs(5))
-            .send()
-            .unwrap()
-            .json()
-            .unwrap()
+        send_with_retries(
+            self.client
+                .get(self.url("sessions").as_str())
+                .timeout(Duration::from_secs(5)),
+        )
+        .json()
+        .unwrap()
     }
 
     fn remove_session(&self, session_id: u64) -> HttpMessage {
-        self.client
-            .post(self.url("remove_session").as_str())
-            .query(&[("session_id", session_id)])
-            .timeout(Duration::from_secs(5))
-            .send()
-            .unwrap()
-            .json()
-            .unwrap()
+        send_with_retries(
+            self.client
+                .post(self.url("remove_session").as_str())
+                .query(&[("session_id", session_id)])
+                .timeout(Duration::from_secs(5)),
+        )
+        .json()
+        .unwrap()
     }
 
     fn world(&self) -> HttpMessage {
-        self.client
-            .get(self.url("world").as_str())
-            .timeout(Duration::from_secs(5))
-            .send()
-            .unwrap()
-            .json()
-            .unwrap()
+        send_with_retries(
+            self.client
+                .get(self.url("world").as_str())
+                .timeout(Duration::from_secs(5)),
+        )
+        .json()
+        .unwrap()
     }
 
     fn stop(&self) -> HttpMessage {
-        self.client
-            .post(self.url("stop").as_str())
-            .timeout(Duration::from_secs(5))
-            .send()
-            .unwrap()
-            .json()
-            .unwrap()
+        send_with_retries(
+            self.client
+                .post(self.url("stop").as_str())
+                .timeout(Duration::from_secs(5)),
+        )
+        .json()
+        .unwrap()
     }
 
     fn url(&self, endpoint: &str) -> String {
         format!("http://{}:{}/{}", self.address, self.port, endpoint)
+    }
+}
+
+fn send_with_retries(request: RequestBuilder) -> Response {
+    let mut try_num: usize = 0;
+    loop {
+        let result = request.try_clone().unwrap().send();
+        if let Ok(v) = result {
+            return v;
+        }
+        try_num += 1;
+        if try_num >= 3 {
+            result.unwrap();
+        }
+        sleep(Duration::from_millis(100));
     }
 }
