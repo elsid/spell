@@ -10,7 +10,8 @@ use macroquad::prelude::{
     clear_background, draw_line, draw_poly, draw_rectangle, draw_rectangle_lines, draw_text_ex,
     get_internal_gl, is_key_released, load_ttf_font, measure_text, mouse_position_local,
     mouse_wheel, next_frame, screen_height, screen_width, set_camera, set_default_camera, vec2,
-    Camera2D, Color, DrawMode, Font, KeyCode, Mat4, Quat, TextParams, Vec3, Vertex, BLACK, WHITE,
+    Camera2D, Color, DrawMode, Font, KeyCode, Mat4, MouseButton, Quat, TextParams, Vec3, Vertex,
+    BLACK, WHITE,
 };
 use rand::prelude::SmallRng;
 use rand::Rng;
@@ -36,8 +37,11 @@ const BORDER_FACTOR: f64 = 0.85;
 const HALF_WIDTH: f64 = 0.66;
 const HALF_HEIGHT: f64 = 0.1;
 const BORDER_WIDTH: f64 = HALF_HEIGHT * (1.0 - BORDER_FACTOR);
-const HUD_ELEMENT_RADIUS: f64 = 40.0;
+const HUD_ELEMENT_RADIUS: f64 = 32.0;
 const HUD_ELEMENT_WIDTH: f64 = HUD_ELEMENT_RADIUS * 2.2;
+const HUD_ELEMENT_BORDER_WIDTH: f64 = HUD_ELEMENT_RADIUS * (1.0 - BORDER_FACTOR);
+const HUD_MARGIN: f64 = 12.0;
+const HUD_FONT_SIZE: u16 = 24;
 
 #[derive(Clap, Debug)]
 pub struct GameSettings {
@@ -85,6 +89,8 @@ struct GameState {
     name_font: Font,
     max_world_frame_delay: u64,
     world_updates_delay: usize,
+    control_hud_font: Font,
+    show_control_hud: bool,
 }
 
 enum Menu {
@@ -157,6 +163,8 @@ pub async fn run_game(settings: GameSettings) {
         name_font: ubuntu_mono,
         max_world_frame_delay: settings.max_world_frame_delay,
         world_updates_delay: settings.world_updates_delay,
+        control_hud_font: ubuntu_mono,
+        show_control_hud: true,
     };
     let mut frame_type = FrameType::Initial;
     while !matches!(frame_type, FrameType::None) {
@@ -219,6 +227,9 @@ fn handle_input(game_state: &mut GameState, frame_type: &mut FrameType) {
             handle_scene_input(game_state, &mut v.scene, send_actor_action)
         }
         _ => (),
+    }
+    if is_key_released(KeyCode::F1) {
+        game_state.show_control_hud = !game_state.show_control_hud;
     }
     if is_key_released(KeyCode::F2) {
         game_state.show_debug_hud = !game_state.show_debug_hud;
@@ -792,16 +803,12 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
     );
 
     if let Some(actor_index) = scene.last_actor_index {
-        set_default_camera();
-        draw_spell_elements(
-            &scene.world.actors[actor_index].spell_elements,
-            Vec2f::new(
-                (screen_width() as f64 - 5.0 * HUD_ELEMENT_WIDTH) / 2.0,
-                screen_height() as f64 - 150.0,
-            ),
-            HUD_ELEMENT_RADIUS,
-            HUD_ELEMENT_WIDTH,
-        );
+        if game_state.show_control_hud {
+            draw_control_hud(
+                &scene.world.actors[actor_index].spell_elements,
+                game_state.control_hud_font,
+            );
+        }
     }
 }
 
@@ -947,11 +954,11 @@ fn draw_debug_text(counter: &mut usize, font: Font, text: &str) {
     *counter += 1;
     draw_text_ex(
         text,
-        10.0,
-        (4 + *counter * 24) as f32,
+        HUD_MARGIN as f32,
+        (4 + *counter * HUD_FONT_SIZE as usize) as f32,
         TextParams {
             font,
-            font_size: 24,
+            font_size: HUD_FONT_SIZE,
             font_scale: 1.0,
             color: WHITE,
         },
@@ -1044,7 +1051,7 @@ fn draw_ring_sector_body_and_magick<T>(
 ) where
     T: Default + PartialEq,
 {
-    const BASE_RESOLUTION: f64 = 12.0;
+    const BASE_RESOLUTION: f64 = HUD_MARGIN;
     let color = get_magick_power_color(power);
     let resolution = (body.angle * BASE_RESOLUTION).round() as usize;
     let min_angle_step = body.angle / (resolution - 1) as f64;
@@ -1192,6 +1199,191 @@ fn draw_meter(value: f64, radius: f64, position: Vec2f, y: f64, color: Color) {
         (2.0 * (HALF_WIDTH - BORDER_WIDTH) * value) as f32,
         (2.0 * (HALF_HEIGHT - BORDER_WIDTH)) as f32,
         color,
+    );
+}
+
+fn draw_control_hud(spell_elements: &[Element], font: Font) {
+    set_default_camera();
+    draw_spell_elements(
+        spell_elements,
+        Vec2f::new(
+            (screen_width() as f64 - 5.0 * HUD_ELEMENT_WIDTH) / 2.0,
+            screen_height() as f64 - (3.0 * HUD_MARGIN + 5.0 * HUD_ELEMENT_RADIUS),
+        ),
+        HUD_ELEMENT_RADIUS,
+        HUD_ELEMENT_WIDTH,
+    );
+    let elements_position = Vec2f::new(
+        (screen_width() as f64 - 8.0 * HUD_ELEMENT_WIDTH) / 2.0,
+        screen_height() as f64 - (2.0 * HUD_MARGIN + 3.0 * HUD_ELEMENT_RADIUS),
+    );
+    const ELEMENT_KEYS: &[&str] = &["Q", "A", "W", "S", "E", "D", "R", "F"];
+    for (i, name) in ELEMENT_KEYS.iter().enumerate() {
+        let element_position =
+            elements_position + Vec2f::only_x((i as f64 + 0.5) * HUD_ELEMENT_WIDTH);
+        draw_element(Element::from(i), element_position, HUD_ELEMENT_RADIUS);
+        draw_keyboard_button(
+            name,
+            HUD_ELEMENT_RADIUS,
+            font,
+            Vec2f::new(
+                element_position.x - HUD_ELEMENT_RADIUS,
+                element_position.y + HUD_ELEMENT_RADIUS + HUD_MARGIN,
+            ),
+        );
+    }
+    const CONTROL_KEYS: &[(&str, &str, f64)] = &[
+        ("L.Shift", "Area of effect", 2.0),
+        ("F2", "Debug HUD", 1.0),
+        ("F1", "Control HUD", 1.0),
+    ];
+    for (i, v) in CONTROL_KEYS.iter().enumerate() {
+        draw_control_button(
+            v.0,
+            v.1,
+            HUD_ELEMENT_RADIUS * v.2,
+            font,
+            Vec2f::new(
+                HUD_MARGIN,
+                screen_height() as f64 - (2.0 * HUD_ELEMENT_RADIUS + HUD_MARGIN) * (i + 1) as f64,
+            ),
+        );
+    }
+    const MOUSE_KEYS: &[(MouseButton, &str)] = &[
+        (MouseButton::Middle, "Self cast"),
+        (MouseButton::Right, "Cast spell"),
+        (MouseButton::Left, "Move"),
+        (MouseButton::Unknown, "Rotate"),
+    ];
+    for (i, v) in MOUSE_KEYS.iter().enumerate() {
+        draw_mouse(
+            v.0,
+            v.1,
+            font,
+            Vec2f::new(
+                screen_width() as f64 - HUD_MARGIN - 100.0,
+                screen_height() as f64 - (2.0 * HUD_ELEMENT_RADIUS + HUD_MARGIN) * (i + 1) as f64,
+            ),
+        );
+    }
+}
+
+fn draw_control_button(name: &str, action: &str, half_width: f64, font: Font, position: Vec2f) {
+    draw_keyboard_button(name, half_width, font, position);
+    draw_text_ex(
+        action,
+        (position.x + 2.0 * half_width + HUD_MARGIN) as f32,
+        (position.y + 1.25 * HUD_ELEMENT_RADIUS) as f32,
+        TextParams {
+            font,
+            font_size: HUD_FONT_SIZE,
+            font_scale: 1.0,
+            color: WHITE,
+        },
+    );
+}
+
+fn draw_keyboard_button(name: &str, half_width: f64, font: Font, position: Vec2f) {
+    let width = 2.0 * half_width;
+    draw_rectangle(
+        position.x as f32,
+        position.y as f32,
+        width as f32,
+        (2.0 * HUD_ELEMENT_RADIUS) as f32,
+        BLACK,
+    );
+    draw_rectangle(
+        (position.x + HUD_ELEMENT_BORDER_WIDTH) as f32,
+        (position.y + HUD_ELEMENT_BORDER_WIDTH) as f32,
+        (width - 2.0 * HUD_ELEMENT_BORDER_WIDTH) as f32,
+        (2.0 * (HUD_ELEMENT_RADIUS - HUD_ELEMENT_BORDER_WIDTH)) as f32,
+        WHITE,
+    );
+    let text_dimensions = measure_text(name, Some(font), HUD_FONT_SIZE, 1.0);
+    draw_text_ex(
+        name,
+        (position.x + half_width) as f32 - text_dimensions.width / 2.0,
+        (position.y + 1.25 * HUD_ELEMENT_RADIUS) as f32,
+        TextParams {
+            font,
+            font_size: HUD_FONT_SIZE,
+            font_scale: 1.0,
+            color: BLACK,
+        },
+    );
+}
+
+fn draw_mouse(highlight: MouseButton, action: &str, font: Font, position: Vec2f) {
+    const HIGHLIGHT_COLOR: Color = Color::new(0.9, 0.9, 0.0, 1.0);
+    draw_rectangle(
+        position.x as f32,
+        position.y as f32,
+        (2.0 * HUD_ELEMENT_RADIUS) as f32,
+        (2.0 * HUD_ELEMENT_RADIUS) as f32,
+        BLACK,
+    );
+    draw_rectangle(
+        (position.x + HUD_ELEMENT_BORDER_WIDTH) as f32,
+        (position.y + HUD_ELEMENT_BORDER_WIDTH) as f32,
+        (HUD_ELEMENT_RADIUS - 1.5 * HUD_ELEMENT_BORDER_WIDTH) as f32,
+        (HUD_ELEMENT_RADIUS - 1.5 * HUD_ELEMENT_BORDER_WIDTH) as f32,
+        if matches!(highlight, MouseButton::Left) {
+            HIGHLIGHT_COLOR
+        } else {
+            WHITE
+        },
+    );
+    draw_rectangle(
+        (position.x + HUD_ELEMENT_RADIUS + 0.5 * HUD_ELEMENT_BORDER_WIDTH) as f32,
+        (position.y + HUD_ELEMENT_BORDER_WIDTH) as f32,
+        (HUD_ELEMENT_RADIUS - 1.5 * HUD_ELEMENT_BORDER_WIDTH) as f32,
+        (HUD_ELEMENT_RADIUS - 1.5 * HUD_ELEMENT_BORDER_WIDTH) as f32,
+        if matches!(highlight, MouseButton::Right) {
+            HIGHLIGHT_COLOR
+        } else {
+            WHITE
+        },
+    );
+    draw_rectangle(
+        (position.x + HUD_ELEMENT_BORDER_WIDTH) as f32,
+        (position.y + HUD_ELEMENT_RADIUS + 0.5 * HUD_ELEMENT_BORDER_WIDTH) as f32,
+        2.0 * (HUD_ELEMENT_RADIUS - HUD_ELEMENT_BORDER_WIDTH) as f32,
+        (HUD_ELEMENT_RADIUS - 1.5 * HUD_ELEMENT_BORDER_WIDTH) as f32,
+        if matches!(highlight, MouseButton::Unknown) {
+            HIGHLIGHT_COLOR
+        } else {
+            WHITE
+        },
+    );
+    draw_rectangle(
+        (position.x + 0.75 * HUD_ELEMENT_RADIUS) as f32,
+        position.y as f32,
+        (0.5 * HUD_ELEMENT_RADIUS) as f32,
+        (0.66 * HUD_ELEMENT_RADIUS) as f32,
+        BLACK,
+    );
+    draw_rectangle(
+        (position.x + 0.75 * HUD_ELEMENT_RADIUS + HUD_ELEMENT_BORDER_WIDTH) as f32,
+        (position.y + HUD_ELEMENT_BORDER_WIDTH) as f32,
+        (0.5 * HUD_ELEMENT_RADIUS - 2.0 * HUD_ELEMENT_BORDER_WIDTH) as f32,
+        (0.66 * HUD_ELEMENT_RADIUS - 2.0 * HUD_ELEMENT_BORDER_WIDTH) as f32,
+        if matches!(highlight, MouseButton::Middle) {
+            HIGHLIGHT_COLOR
+        } else {
+            WHITE
+        },
+    );
+    let text_dimensions = measure_text(action, Some(font), HUD_FONT_SIZE, 1.0);
+    draw_text_ex(
+        action,
+        (position.x - HUD_MARGIN) as f32 - text_dimensions.width,
+        (position.y + 1.25 * HUD_ELEMENT_RADIUS) as f32,
+        TextParams {
+            font,
+            font_size: HUD_FONT_SIZE,
+            font_scale: 1.0,
+            color: WHITE,
+        },
     );
 }
 
