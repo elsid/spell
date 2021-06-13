@@ -1230,7 +1230,7 @@ fn draw_element(element: Element, position: Vec2f, radius: f64) {
 }
 
 fn draw_name(text: &str, position: Vec2f, radius: f64, font: Font) {
-    let text_dimensions = measure_text(text, None, 36, 0.03);
+    let text_dimensions = measure_text(text, Some(font), NAME_FONT_SIZE, NAME_FONT_SCALE);
     draw_text_ex(
         text,
         position.x as f32 - text_dimensions.width / 2.0,
