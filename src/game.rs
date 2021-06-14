@@ -1236,6 +1236,7 @@ fn draw_control_hud(spell_elements: &[Element], font: Font) {
         ("L.Shift", "Area of effect", 2.0),
         ("F2", "Debug HUD", 1.0),
         ("F1", "Control HUD", 1.0),
+        ("Esc", "Main menu", 1.0),
     ];
     for (i, v) in CONTROL_KEYS.iter().enumerate() {
         draw_control_button(
