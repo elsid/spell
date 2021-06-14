@@ -8,7 +8,7 @@ use clap::Clap;
 use egui::{Color32, CtxRef};
 use macroquad::prelude::{
     clear_background, draw_line, draw_poly, draw_rectangle, draw_rectangle_lines, draw_text_ex,
-    get_internal_gl, is_key_released, load_ttf_font, measure_text, mouse_position_local,
+    get_internal_gl, is_key_pressed, load_ttf_font, measure_text, mouse_position_local,
     mouse_wheel, next_frame, screen_height, screen_width, set_camera, set_default_camera, vec2,
     Camera2D, Color, DrawMode, Font, KeyCode, Mat4, MouseButton, Quat, TextParams, Vec3, Vertex,
     BLACK, WHITE,
@@ -228,10 +228,10 @@ fn handle_input(game_state: &mut GameState, frame_type: &mut FrameType) {
         }
         _ => (),
     }
-    if is_key_released(KeyCode::F1) {
+    if is_key_pressed(KeyCode::F1) {
         game_state.show_control_hud = !game_state.show_control_hud;
     }
-    if is_key_released(KeyCode::F2) {
+    if is_key_pressed(KeyCode::F2) {
         game_state.show_debug_hud = !game_state.show_debug_hud;
     }
 }
@@ -248,7 +248,7 @@ where
             );
         handle_actor_input(scene, apply);
     }
-    if is_key_released(KeyCode::Escape) {
+    if is_key_pressed(KeyCode::Escape) {
         game_state.menu = if matches!(game_state.menu, Menu::None) {
             Menu::Main
         } else {
@@ -989,28 +989,28 @@ where
     if is_mouse_button_released(MouseButton::Middle) {
         f(ActorAction::SelfMagick);
     }
-    if is_key_released(KeyCode::Q) {
+    if is_key_pressed(KeyCode::Q) {
         f(ActorAction::AddSpellElement(Element::Water));
     }
-    if is_key_released(KeyCode::A) {
+    if is_key_pressed(KeyCode::A) {
         f(ActorAction::AddSpellElement(Element::Lightning));
     }
-    if is_key_released(KeyCode::W) {
+    if is_key_pressed(KeyCode::W) {
         f(ActorAction::AddSpellElement(Element::Life));
     }
-    if is_key_released(KeyCode::S) {
+    if is_key_pressed(KeyCode::S) {
         f(ActorAction::AddSpellElement(Element::Arcane));
     }
-    if is_key_released(KeyCode::E) {
+    if is_key_pressed(KeyCode::E) {
         f(ActorAction::AddSpellElement(Element::Shield));
     }
-    if is_key_released(KeyCode::D) {
+    if is_key_pressed(KeyCode::D) {
         f(ActorAction::AddSpellElement(Element::Earth));
     }
-    if is_key_released(KeyCode::R) {
+    if is_key_pressed(KeyCode::R) {
         f(ActorAction::AddSpellElement(Element::Cold));
     }
-    if is_key_released(KeyCode::F) {
+    if is_key_pressed(KeyCode::F) {
         f(ActorAction::AddSpellElement(Element::Fire));
     }
 }
