@@ -13,6 +13,7 @@ use reqwest::blocking::{RequestBuilder, Response};
 use spell::client::{Client, GameClientSettings, UdpClientSettings};
 use spell::protocol::{ActorAction, GameUpdate, HttpMessage, PlayerUpdate, ServerStatus};
 use spell::server::{run_server, ServerParams};
+use spell::vec2::Vec2f;
 
 #[test]
 fn server_should_terminate() {
@@ -111,7 +112,15 @@ fn server_should_move_player() {
             };
             let start = Instant::now();
             player_update_sender
-                .send(PlayerUpdate::Action(ActorAction::Move(true)))
+                .send(PlayerUpdate {
+                    ack_world_frame: 0,
+                    cast_action_world_frame: 0,
+                    actor_action: ActorAction {
+                        moving: true,
+                        target_direction: Vec2f::ZERO,
+                        cast_action: None,
+                    },
+                })
                 .unwrap();
             let mut moving = false;
             while !moving && Instant::now() - start < Duration::from_secs(3) {
@@ -119,11 +128,11 @@ fn server_should_move_player() {
                     .recv_timeout(Duration::from_secs(1))
                     .unwrap();
                 assert!(
-                    matches!(world_snapshot, GameUpdate::WorldSnapshot(..)),
+                    matches!(world_snapshot, GameUpdate::WorldSnapshot { .. }),
                     "{:?}",
                     world_snapshot
                 );
-                if let GameUpdate::WorldSnapshot(world) = world_snapshot {
+                if let GameUpdate::WorldSnapshot { world, .. } = world_snapshot {
                     moving = world
                         .actors
                         .iter()
@@ -386,17 +395,29 @@ fn server_should_move_send_world_update_after_ack() {
             );
             let start = Instant::now();
             player_update_sender
-                .send(PlayerUpdate::Action(ActorAction::Move(true)))
+                .send(PlayerUpdate {
+                    ack_world_frame: 0,
+                    cast_action_world_frame: 0,
+                    actor_action: ActorAction {
+                        moving: true,
+                        target_direction: Vec2f::ZERO,
+                        cast_action: None,
+                    },
+                })
                 .unwrap();
             while Instant::now() - start < Duration::from_secs(3) {
                 let server_message = game_update_receiver
                     .recv_timeout(Duration::from_secs(1))
                     .unwrap();
                 match server_message {
-                    GameUpdate::WorldUpdate(..) => break,
-                    GameUpdate::WorldSnapshot(world) => {
+                    GameUpdate::WorldUpdate { .. } => break,
+                    GameUpdate::WorldSnapshot { world, .. } => {
                         player_update_sender
-                            .send(PlayerUpdate::AckWorldFrame(world.frame))
+                            .send(PlayerUpdate {
+                                ack_world_frame: world.frame,
+                                cast_action_world_frame: 0,
+                                actor_action: ActorAction::default(),
+                            })
                             .unwrap();
                     }
                     _ => (),
@@ -406,7 +427,7 @@ fn server_should_move_send_world_update_after_ack() {
                 .recv_timeout(Duration::from_secs(1))
                 .unwrap();
             assert!(
-                matches!(world_update, GameUpdate::WorldUpdate(..)),
+                matches!(world_update, GameUpdate::WorldUpdate { .. }),
                 "{:?}",
                 world_update
             );

@@ -20,9 +20,8 @@ use crate::meters::{measure, DurationMovingAverage, FpsMovingAverage};
 use crate::protocol::{
     deserialize_client_message, get_client_message_data_type, is_valid_player_name,
     make_server_message, make_world_update, serialize_server_message, ActorAction, ClientMessage,
-    ClientMessageData, GameSessionInfo, GameUpdate, HttpMessage, Metric, PlayerUpdate,
-    ServerMessage, ServerMessageData, ServerStatus, Session, UdpSessionState, WorldUpdate,
-    HEARTBEAT_PERIOD,
+    ClientMessageData, GameSessionInfo, GameUpdate, HttpMessage, Metric, ServerMessage,
+    ServerMessageData, ServerStatus, Session, UdpSessionState, WorldUpdate, HEARTBEAT_PERIOD,
 };
 use crate::rect::Rectf;
 use crate::vec2::Vec2f;
@@ -139,10 +138,6 @@ pub enum GameAdminMessage {
 pub enum InternalServerMessage {
     Unicast {
         session_id: u64,
-        data: ServerMessageData,
-    },
-    Multicast {
-        session_ids: Vec<u64>,
         data: ServerMessageData,
     },
     Broadcast(ServerMessageData),
@@ -292,10 +287,6 @@ impl UdpServer {
                 InternalServerMessage::Unicast { session_id, data } => {
                     self.send_unicast_server_message(session_id, &data).await;
                 }
-                InternalServerMessage::Multicast { session_ids, data } => {
-                    self.send_multicast_server_message(&session_ids, &data)
-                        .await;
-                }
                 InternalServerMessage::Broadcast(data) => {
                     self.send_broadcast_server_message(&data).await;
                 }
@@ -333,27 +324,6 @@ impl UdpServer {
                 &make_server_message(session.session_id, self.message_counter, &data),
             )
             .await;
-        }
-    }
-
-    async fn send_multicast_server_message(
-        &mut self,
-        session_ids: &[u64],
-        data: &ServerMessageData,
-    ) {
-        if self.sessions.iter().any(|v| {
-            session_ids.contains(&v.session_id) && matches!(v.state, UdpSessionState::Established)
-        }) {
-            self.message_counter += 1;
-            let mut server_message = make_server_message(0, self.message_counter, &data);
-            for session_id in session_ids {
-                if let Some(session) = self.sessions.iter_mut().find(|v| {
-                    v.session_id == *session_id && matches!(v.state, UdpSessionState::Established)
-                }) {
-                    server_message.session_id = *session_id;
-                    send_server_message(&self.socket, session, &server_message).await;
-                }
-            }
         }
     }
 
@@ -499,7 +469,11 @@ pub fn run_game_server(
     world_history.push_back(world.clone());
     sender
         .send(InternalServerMessage::Broadcast(
-            ServerMessageData::GameUpdate(GameUpdate::WorldSnapshot(Box::new(world.clone()))),
+            ServerMessageData::GameUpdate(GameUpdate::WorldSnapshot {
+                ack_actor_action_world_frame: 0,
+                ack_cast_action_world_frame: 0,
+                world: Box::new(world.clone()),
+            }),
         ))
         .ok();
     let mut meters = Meters {
@@ -560,6 +534,7 @@ struct GameSession {
     dropped_messages: usize,
     delayed_messages: VecDeque<ClientMessage>,
     ack_world_frame: u64,
+    ack_cast_action_frame: u64,
 }
 
 fn handle_admin_messages(
@@ -594,6 +569,7 @@ fn handle_admin_messages(
                                 dropped_messages: v.dropped_messages,
                                 delayed_messages: v.delayed_messages.len(),
                                 ack_world_frame: v.ack_world_frame,
+                                ack_cast_action_frame: v.ack_cast_action_frame,
                                 since_last_message: (Instant::now() - v.last_message_time)
                                     .as_secs_f64(),
                                 world_frame_delay: world.frame - v.ack_world_frame,
@@ -813,22 +789,26 @@ fn handle_session_message(
                 },
             })
             .unwrap(),
-        ClientMessageData::PlayerUpdate(player_update) => match player_update {
-            PlayerUpdate::Action(mut actor_action) => {
-                if let Some(actor_index) = session.actor_index {
-                    sanitize_actor_action(&mut actor_action, actor_index, world);
-                    apply_actor_action(actor_action, actor_index, world);
+        ClientMessageData::PlayerUpdate(mut player_update) => {
+            session.ack_world_frame = player_update.ack_world_frame.min(world.frame);
+            if let Some(actor_index) = session.actor_index {
+                sanitize_actor_action(&mut player_update.actor_action, actor_index, world);
+                if player_update.actor_action.cast_action.is_some()
+                    && session.ack_cast_action_frame < player_update.cast_action_world_frame
+                    && player_update.cast_action_world_frame <= session.ack_world_frame
+                {
+                    session.ack_cast_action_frame = session.ack_world_frame;
                 } else {
-                    warn!(
-                        "Player actor is not found for game session: {}",
-                        session.session_id
-                    );
+                    player_update.actor_action.cast_action = None;
                 }
+                apply_actor_action(player_update.actor_action, actor_index, world);
+            } else {
+                debug!(
+                    "Player actor is not found for game session: {}",
+                    session.session_id
+                );
             }
-            PlayerUpdate::AckWorldFrame(frame) => {
-                session.ack_world_frame = frame.min(world.frame);
-            }
-        },
+        }
     }
 }
 
@@ -900,6 +880,7 @@ fn create_new_session<R: CryptoRng + Rng>(
                     delayed_messages: VecDeque::with_capacity(MAX_DELAYED_MESSAGES_PER_SESSION),
                     dropped_messages: 0,
                     ack_world_frame: 0,
+                    ack_cast_action_frame: world.frame,
                 })
             } else {
                 sender
@@ -970,18 +951,12 @@ fn try_add_player_actor<R: Rng>(name: String, world: &mut World, rng: &mut R) ->
     Some(actor_id)
 }
 
-fn sanitize_actor_action(actor_action: &mut ActorAction, actor_index: usize, world: &mut World) {
-    #[allow(clippy::single_match)]
-    match actor_action {
-        ActorAction::SetTargetDirection(target_direction) => {
-            let norm = target_direction.norm();
-            if norm > f64::EPSILON {
-                *target_direction /= norm;
-            } else {
-                *target_direction = world.actors[actor_index].target_direction;
-            }
-        }
-        _ => (),
+fn sanitize_actor_action(actor_action: &mut ActorAction, actor_index: usize, world: &World) {
+    let norm = actor_action.target_direction.norm();
+    if norm > f64::EPSILON {
+        actor_action.target_direction /= norm;
+    } else {
+        actor_action.target_direction = world.actors[actor_index].target_direction;
     }
 }
 
@@ -991,45 +966,55 @@ fn send_world_messages(
     world_history: &VecDeque<World>,
     sessions: &[GameSession],
 ) {
-    let mut world_snapshot_session_ids = Vec::new();
-    let mut world_updates: Vec<(usize, Vec<u64>, WorldUpdate)> = Vec::new();
-    for session in sessions.iter() {
+    let mut world_snapshot_session_indices = Vec::new();
+    let mut world_updates: Vec<(usize, Vec<usize>, WorldUpdate)> = Vec::new();
+    for (session_index, session) in sessions.iter().enumerate() {
         if session.ack_world_frame == 0 {
-            world_snapshot_session_ids.push(session.session_id);
+            world_snapshot_session_indices.push(session_index);
             continue;
         }
         let offset = (world.frame - session.ack_world_frame) as usize;
         if offset > world_history.len() {
-            world_snapshot_session_ids.push(session.session_id);
+            world_snapshot_session_indices.push(session_index);
             continue;
         }
-        if let Some((_, session_ids, _)) = world_updates.iter_mut().find(|(v, _, _)| *v == offset) {
-            session_ids.push(session.session_id);
+        if let Some((_, session_indices, _)) =
+            world_updates.iter_mut().find(|(v, _, _)| *v == offset)
+        {
+            session_indices.push(session_index);
             continue;
         }
         world_updates.push((
             offset,
-            vec![session.session_id],
+            vec![session_index],
             make_world_update(&world_history[world_history.len() - offset], &world),
         ));
     }
-    for (_, session_ids, world_update) in world_updates {
-        sender
-            .send(InternalServerMessage::Multicast {
-                session_ids,
-                data: ServerMessageData::GameUpdate(GameUpdate::WorldUpdate(Box::new(
-                    world_update.clone(),
-                ))),
-            })
-            .ok();
+    for (_, session_indices, world_update) in world_updates {
+        for session_index in session_indices {
+            let session = &sessions[session_index];
+            sender
+                .send(InternalServerMessage::Unicast {
+                    session_id: session.session_id,
+                    data: ServerMessageData::GameUpdate(GameUpdate::WorldUpdate {
+                        ack_actor_action_world_frame: session.ack_world_frame,
+                        ack_cast_action_world_frame: session.ack_cast_action_frame,
+                        world_update: Box::new(world_update.clone()),
+                    }),
+                })
+                .ok();
+        }
     }
-    if !world_snapshot_session_ids.is_empty() {
+    for session_index in world_snapshot_session_indices {
+        let session = &sessions[session_index];
         sender
-            .send(InternalServerMessage::Multicast {
-                session_ids: world_snapshot_session_ids,
-                data: ServerMessageData::GameUpdate(GameUpdate::WorldSnapshot(Box::new(
-                    world.clone(),
-                ))),
+            .send(InternalServerMessage::Unicast {
+                session_id: session.session_id,
+                data: ServerMessageData::GameUpdate(GameUpdate::WorldSnapshot {
+                    ack_actor_action_world_frame: session.ack_world_frame,
+                    ack_cast_action_world_frame: session.ack_cast_action_frame,
+                    world: Box::new(world.clone()),
+                }),
             })
             .ok();
     }

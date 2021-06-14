@@ -21,6 +21,6 @@ mod rect;
 #[cfg(feature = "server")]
 pub mod server;
 #[cfg(any(feature = "client", feature = "server"))]
-mod vec2;
+pub mod vec2;
 #[cfg(any(feature = "client", feature = "server"))]
 mod world;

@@ -8,10 +8,10 @@ use clap::Clap;
 use egui::{Color32, CtxRef};
 use macroquad::prelude::{
     clear_background, draw_line, draw_poly, draw_rectangle, draw_rectangle_lines, draw_text_ex,
-    get_internal_gl, is_key_pressed, load_ttf_font, measure_text, mouse_position_local,
-    mouse_wheel, next_frame, screen_height, screen_width, set_camera, set_default_camera, vec2,
-    Camera2D, Color, DrawMode, Font, KeyCode, Mat4, MouseButton, Quat, TextParams, Vec3, Vertex,
-    BLACK, WHITE,
+    get_internal_gl, is_key_pressed, is_mouse_button_down, load_ttf_font, measure_text,
+    mouse_position_local, mouse_wheel, next_frame, screen_height, screen_width, set_camera,
+    set_default_camera, vec2, Camera2D, Color, DrawMode, Font, KeyCode, Mat4, MouseButton, Quat,
+    TextParams, Vec3, Vertex, BLACK, WHITE,
 };
 use rand::prelude::SmallRng;
 use rand::Rng;
@@ -19,13 +19,13 @@ use yata::methods::{StDev, SMA};
 use yata::prelude::Method;
 
 use crate::client::{Client, GameClientSettings, UdpClientSettings};
-use crate::control::apply_actor_action;
+use crate::control::{apply_actor_action, apply_cast_action};
 use crate::engine::{get_next_id, normalize_angle, Engine};
 use crate::generators::{generate_player_actor, generate_world, make_rng};
 use crate::meters::{measure, DurationMovingAverage, FpsMovingAverage};
 use crate::protocol::{
-    apply_world_update, is_valid_player_name, ActorAction, GameUpdate, PlayerUpdate, WorldUpdate,
-    MAX_PLAYER_NAME_LEN, MIN_PLAYER_NAME_LEN,
+    apply_world_update, is_valid_player_name, ActorAction, CastAction, GameUpdate, PlayerUpdate,
+    WorldUpdate, MAX_PLAYER_NAME_LEN, MIN_PLAYER_NAME_LEN,
 };
 use crate::rect::Rectf;
 use crate::vec2::Vec2f;
@@ -129,6 +129,10 @@ struct Multiplayer {
     world_frame_diff: SMA,
     world_frame_st_dev: StDev,
     last_world_frame_st_dev: f64,
+    input_delay: SMA,
+    ack_cast_action_world_frame: u64,
+    actor_action: ActorAction,
+    delayed_cast_actions: VecDeque<CastAction>,
 }
 
 pub async fn run_game(settings: GameSettings) {
@@ -215,16 +219,27 @@ fn prepare_frame(game_state: &mut GameState, frame_type: &mut FrameType) {
 
 fn handle_input(game_state: &mut GameState, frame_type: &mut FrameType) {
     match frame_type {
-        FrameType::SinglePlayer(v) => handle_scene_input(game_state, v, apply_actor_action),
+        FrameType::SinglePlayer(v) => {
+            let mut actor_action = ActorAction::default();
+            let mut cast_actions = Vec::new();
+            handle_scene_input(game_state, v, &mut actor_action, |v| cast_actions.push(v));
+            if let Some(actor_index) = v.last_actor_index {
+                apply_actor_action(actor_action, actor_index, &mut v.world);
+                for cast_action in cast_actions {
+                    apply_cast_action(cast_action, actor_index, &mut v.world);
+                }
+            }
+        }
         FrameType::Multiplayer(v) => {
-            let client = &mut v.client;
-            let send_actor_action = |actor_action: ActorAction, _: usize, _: &mut World| {
-                client
-                    .sender()
-                    .send(PlayerUpdate::Action(actor_action))
-                    .ok();
-            };
-            handle_scene_input(game_state, &mut v.scene, send_actor_action)
+            let scene = &mut v.scene;
+            let actor_action = &mut v.actor_action;
+            let delayed_cast_actions = &mut v.delayed_cast_actions;
+            handle_scene_input(game_state, scene, actor_action, |v| {
+                delayed_cast_actions.push_back(v)
+            });
+            if actor_action.cast_action.is_none() {
+                actor_action.cast_action = delayed_cast_actions.pop_front();
+            }
         }
         _ => (),
     }
@@ -236,9 +251,13 @@ fn handle_input(game_state: &mut GameState, frame_type: &mut FrameType) {
     }
 }
 
-fn handle_scene_input<F>(game_state: &mut GameState, scene: &mut Scene, apply: F)
-where
-    F: FnMut(ActorAction, usize, &mut World),
+fn handle_scene_input<F>(
+    game_state: &mut GameState,
+    scene: &mut Scene,
+    actor_action: &mut ActorAction,
+    apply_cast_action: F,
+) where
+    F: FnMut(CastAction),
 {
     if matches!(game_state.menu, Menu::None) {
         scene.pointer = Vec2f::from(mouse_position_local())
@@ -246,7 +265,7 @@ where
                 scene.camera_zoom,
                 scene.camera_zoom * (screen_width() / screen_height()) as f64,
             );
-        handle_actor_input(scene, apply);
+        handle_actor_input(scene, actor_action, apply_cast_action);
     }
     if is_key_pressed(KeyCode::Escape) {
         game_state.menu = if matches!(game_state.menu, Menu::None) {
@@ -257,25 +276,16 @@ where
     }
 }
 
-fn handle_actor_input<F>(scene: &mut Scene, mut apply: F)
+fn handle_actor_input<F>(scene: &mut Scene, actor_action: &mut ActorAction, apply_cast_action: F)
 where
-    F: FnMut(ActorAction, usize, &mut World),
+    F: FnMut(CastAction),
 {
-    if let Some(actor_index) = scene.last_actor_index {
-        scene.camera_zoom *= 1.0 + mouse_wheel().1 as f64 * 0.1;
-
-        for_each_actor_action(|actor_action| apply(actor_action, actor_index, &mut scene.world));
-
-        if let Some(target_direction) = scene.pointer.safe_normalized() {
-            if target_direction != scene.world.actors[actor_index].target_direction {
-                apply(
-                    ActorAction::SetTargetDirection(target_direction),
-                    actor_index,
-                    &mut scene.world,
-                );
-            }
-        }
+    scene.camera_zoom *= 1.0 + mouse_wheel().1 as f64 * 0.1;
+    actor_action.moving = is_mouse_button_down(MouseButton::Left);
+    if let Some(target_direction) = scene.pointer.safe_normalized() {
+        actor_action.target_direction = target_direction;
     }
+    for_each_cast_action(apply_cast_action);
 }
 
 fn update_ui(game_state: &mut GameState, frame_type: &mut FrameType) {
@@ -378,6 +388,10 @@ fn multiplayer_menu(ctx: &CtxRef, game_state: &mut GameState, frame_type: &mut F
                         world_frame_diff: SMA::new(100, 0.0).unwrap(),
                         world_frame_st_dev: StDev::new(100, 0.0).unwrap(),
                         last_world_frame_st_dev: 0.0,
+                        input_delay: SMA::new(100, 0.0).unwrap(),
+                        ack_cast_action_world_frame: 0,
+                        actor_action: ActorAction::default(),
+                        delayed_cast_actions: VecDeque::new(),
                     }));
                     game_state.next_client_id += 1;
                     game_state.menu = Menu::Joining;
@@ -477,7 +491,6 @@ fn update_single_player(scene: &mut Scene) {
 }
 
 fn update_multiplayer(game_state: &mut GameState, data: &mut Multiplayer) -> Option<FrameType> {
-    let mut ack_world_frame = None;
     let world_frame = data.scene.world.frame;
     let mut apply_all_updates = false;
     while let Some(update) = data.client.receiver().try_recv().ok() {
@@ -491,13 +504,16 @@ fn update_multiplayer(game_state: &mut GameState, data: &mut Multiplayer) -> Opt
                 data.scene.actor_id = Some(v);
                 apply_all_updates = true;
             }
-            GameUpdate::WorldSnapshot(v) => {
+            GameUpdate::WorldSnapshot {
+                ack_actor_action_world_frame,
+                ack_cast_action_world_frame,
+                world,
+            } => {
                 if matches!(game_state.menu, Menu::Joining) {
                     game_state.menu = Menu::None;
                 }
                 data.world_updates.clear();
-                data.scene.world = v;
-                ack_world_frame = Some(data.scene.world.frame);
+                data.scene.world = world;
                 if let Some(actor_id) = data.scene.actor_id {
                     data.scene.last_actor_index = data
                         .scene
@@ -506,11 +522,25 @@ fn update_multiplayer(game_state: &mut GameState, data: &mut Multiplayer) -> Opt
                         .iter()
                         .position(|v| v.id == actor_id);
                 }
+                ack_actor_action(
+                    ack_actor_action_world_frame,
+                    ack_cast_action_world_frame,
+                    data,
+                );
             }
-            GameUpdate::WorldUpdate(world_update) => {
+            GameUpdate::WorldUpdate {
+                ack_actor_action_world_frame,
+                ack_cast_action_world_frame,
+                world_update,
+            } => {
                 data.world_frame_delay
                     .next((world_update.after_frame - world_update.before_frame) as f64);
                 data.world_updates.push_back(world_update);
+                ack_actor_action(
+                    ack_actor_action_world_frame,
+                    ack_cast_action_world_frame,
+                    data,
+                );
             }
         }
     }
@@ -546,7 +576,6 @@ fn update_multiplayer(game_state: &mut GameState, data: &mut Multiplayer) -> Opt
             }
             if let Some(world_update) = data.world_updates.pop_front() {
                 apply_world_update(*world_update, &mut data.scene.world);
-                ack_world_frame = Some(data.scene.world.frame);
                 if let Some(actor_id) = data.scene.actor_id {
                     data.scene.last_actor_index = data
                         .scene
@@ -560,15 +589,17 @@ fn update_multiplayer(game_state: &mut GameState, data: &mut Multiplayer) -> Opt
             }
         }
     }
+    data.client
+        .sender()
+        .send(PlayerUpdate {
+            actor_action: data.actor_action.clone(),
+            cast_action_world_frame: data.ack_cast_action_world_frame + 1,
+            ack_world_frame: data.scene.world.frame,
+        })
+        .ok();
     let frame_diff = (data.scene.world.frame - world_frame) as f64;
     data.world_frame_diff.next(frame_diff);
     data.last_world_frame_st_dev = data.world_frame_st_dev.next(frame_diff);
-    if let Some(frame) = ack_world_frame {
-        data.client
-            .sender()
-            .send(PlayerUpdate::AckWorldFrame(frame))
-            .ok();
-    }
     data.local_world_frame = (data.local_world_frame + 1).max(data.scene.world.frame);
     data.local_world_time += data.scene.time_step;
     if data.local_world_time < data.scene.world.time {
@@ -576,6 +607,19 @@ fn update_multiplayer(game_state: &mut GameState, data: &mut Multiplayer) -> Opt
     }
     data.scene.engine.update_visual(&mut data.scene.world);
     None
+}
+
+fn ack_actor_action(
+    ack_actor_action_world_frame: u64,
+    ack_cast_action_world_frame: u64,
+    data: &mut Multiplayer,
+) {
+    if data.ack_cast_action_world_frame < ack_cast_action_world_frame {
+        data.ack_cast_action_world_frame = ack_cast_action_world_frame;
+        data.actor_action.cast_action = data.delayed_cast_actions.pop_front();
+    }
+    data.input_delay
+        .next((data.scene.world.frame - ack_actor_action_world_frame) as f64);
 }
 
 fn draw_scene(game_state: &GameState, scene: &mut Scene) {
@@ -910,6 +954,15 @@ fn draw_debug_multiplayer_text(counter: &mut usize, game_state: &GameState, data
                 "St dev world frame diff: {:.3}",
                 data.last_world_frame_st_dev
             ),
+            format!("Mean input delay: {:.3}", data.input_delay.get_last_value()),
+            format!("Delayed cast actions: {}", data.delayed_cast_actions.len()),
+            String::from("Actor action:"),
+            format!("Moving: {}", data.actor_action.moving),
+            format!(
+                "Target direction: {:.3} {:.3}",
+                data.actor_action.target_direction.x, data.actor_action.target_direction.y
+            ),
+            format!("Cast action: {:?}", data.actor_action.cast_action),
         ],
     );
 }
@@ -965,53 +1018,47 @@ fn draw_debug_text(counter: &mut usize, font: Font, text: &str) {
     );
 }
 
-fn for_each_actor_action<F>(mut f: F)
+fn for_each_cast_action<F>(mut f: F)
 where
-    F: FnMut(ActorAction),
+    F: FnMut(CastAction),
 {
     use macroquad::input::*;
-    if is_mouse_button_pressed(MouseButton::Left) {
-        f(ActorAction::Move(true));
-    }
-    if is_mouse_button_released(MouseButton::Left) {
-        f(ActorAction::Move(false));
-    }
     if is_mouse_button_pressed(MouseButton::Right) {
         if is_key_down(KeyCode::LeftShift) {
-            f(ActorAction::StartAreaOfEffectMagick);
+            f(CastAction::StartAreaOfEffectMagick);
         } else {
-            f(ActorAction::StartDirectedMagick);
+            f(CastAction::StartDirectedMagick);
         }
     }
     if is_mouse_button_released(MouseButton::Right) {
-        f(ActorAction::CompleteDirectedMagick);
+        f(CastAction::CompleteDirectedMagick);
     }
     if is_mouse_button_released(MouseButton::Middle) {
-        f(ActorAction::SelfMagick);
+        f(CastAction::SelfMagick);
     }
     if is_key_pressed(KeyCode::Q) {
-        f(ActorAction::AddSpellElement(Element::Water));
+        f(CastAction::AddSpellElement(Element::Water));
     }
     if is_key_pressed(KeyCode::A) {
-        f(ActorAction::AddSpellElement(Element::Lightning));
+        f(CastAction::AddSpellElement(Element::Lightning));
     }
     if is_key_pressed(KeyCode::W) {
-        f(ActorAction::AddSpellElement(Element::Life));
+        f(CastAction::AddSpellElement(Element::Life));
     }
     if is_key_pressed(KeyCode::S) {
-        f(ActorAction::AddSpellElement(Element::Arcane));
+        f(CastAction::AddSpellElement(Element::Arcane));
     }
     if is_key_pressed(KeyCode::E) {
-        f(ActorAction::AddSpellElement(Element::Shield));
+        f(CastAction::AddSpellElement(Element::Shield));
     }
     if is_key_pressed(KeyCode::D) {
-        f(ActorAction::AddSpellElement(Element::Earth));
+        f(CastAction::AddSpellElement(Element::Earth));
     }
     if is_key_pressed(KeyCode::R) {
-        f(ActorAction::AddSpellElement(Element::Cold));
+        f(CastAction::AddSpellElement(Element::Cold));
     }
     if is_key_pressed(KeyCode::F) {
-        f(ActorAction::AddSpellElement(Element::Fire));
+        f(CastAction::AddSpellElement(Element::Fire));
     }
 }
 

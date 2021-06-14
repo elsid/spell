@@ -52,8 +52,16 @@ pub enum ClientMessageData {
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub enum GameUpdate {
     SetActorId(u64),
-    WorldSnapshot(Box<World>),
-    WorldUpdate(Box<WorldUpdate>),
+    WorldSnapshot {
+        ack_actor_action_world_frame: u64,
+        ack_cast_action_world_frame: u64,
+        world: Box<World>,
+    },
+    WorldUpdate {
+        ack_actor_action_world_frame: u64,
+        ack_cast_action_world_frame: u64,
+        world_update: Box<WorldUpdate>,
+    },
     GameOver(String),
 }
 
@@ -117,16 +125,22 @@ pub struct TempAreaUpdate {
     pub effect: Option<Effect>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub enum PlayerUpdate {
-    Action(ActorAction),
-    AckWorldFrame(u64),
+#[derive(Default, Debug, Deserialize, Serialize)]
+pub struct PlayerUpdate {
+    pub ack_world_frame: u64,
+    pub cast_action_world_frame: u64,
+    pub actor_action: ActorAction,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub enum ActorAction {
-    Move(bool),
-    SetTargetDirection(Vec2f),
+#[derive(Default, Clone, Debug, Deserialize, Serialize)]
+pub struct ActorAction {
+    pub moving: bool,
+    pub target_direction: Vec2f,
+    pub cast_action: Option<CastAction>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub enum CastAction {
     AddSpellElement(Element),
     StartDirectedMagick,
     CompleteDirectedMagick,
@@ -164,6 +178,7 @@ pub struct GameSessionInfo {
     pub dropped_messages: usize,
     pub delayed_messages: usize,
     pub ack_world_frame: u64,
+    pub ack_cast_action_frame: u64,
     pub since_last_message: f64,
     pub world_frame_delay: u64,
 }
@@ -945,5 +960,13 @@ mod tests {
         let world_update = make_world_update(&world_before, &world_after);
         apply_world_update(world_update, &mut world_before);
         assert_eq!(world_before, world_after);
+    }
+
+    #[test]
+    fn serialized_default_player_update_size() {
+        assert_eq!(
+            bincode::serialize(&PlayerUpdate::default()).unwrap().len(),
+            34
+        );
     }
 }
