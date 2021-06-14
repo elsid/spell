@@ -15,7 +15,7 @@ use macroquad::prelude::{
 };
 use rand::prelude::SmallRng;
 use rand::Rng;
-use yata::methods::{StDev, SMA, SMM};
+use yata::methods::{StDev, SMA};
 use yata::prelude::Method;
 
 use crate::client::{Client, GameClientSettings, UdpClientSettings};
@@ -125,7 +125,7 @@ struct Multiplayer {
     local_world_frame: u64,
     local_world_time: f64,
     world_updates: VecDeque<Box<WorldUpdate>>,
-    world_frame_delay: SMM,
+    world_frame_delay: SMA,
     world_frame_diff: SMA,
     world_frame_st_dev: StDev,
     last_world_frame_st_dev: f64,
@@ -374,7 +374,7 @@ fn multiplayer_menu(ctx: &CtxRef, game_state: &mut GameState, frame_type: &mut F
                         local_world_frame: 0,
                         local_world_time: 0.0,
                         world_updates: VecDeque::new(),
-                        world_frame_delay: SMM::new(100, 0.0).unwrap(),
+                        world_frame_delay: SMA::new(100, 0.0).unwrap(),
                         world_frame_diff: SMA::new(100, 0.0).unwrap(),
                         world_frame_st_dev: StDev::new(100, 0.0).unwrap(),
                         last_world_frame_st_dev: 0.0,
@@ -899,7 +899,7 @@ fn draw_debug_multiplayer_text(counter: &mut usize, game_state: &GameState, data
             ),
             format!("World updates buffer: {}", data.world_updates.len()),
             format!(
-                "Median world update delay: {:.3}",
+                "Mean world update delay: {:.3}",
                 data.world_frame_delay.get_last_value()
             ),
             format!(
