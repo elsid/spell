@@ -18,10 +18,11 @@ use crate::engine::{get_next_id, remove_actor, Engine};
 use crate::generators::{generate_player_actor, generate_world, make_rng};
 use crate::meters::{measure, DurationMovingAverage, FpsMovingAverage};
 use crate::protocol::{
-    deserialize_client_message, get_client_message_data_type, is_valid_player_name,
-    make_server_message, make_world_update, serialize_server_message, ActorAction, ClientMessage,
-    ClientMessageData, GameSessionInfo, GameUpdate, HttpMessage, Metric, ServerMessage,
-    ServerMessageData, ServerStatus, Session, UdpSessionState, WorldUpdate, HEARTBEAT_PERIOD,
+    add_all_removed, deserialize_client_message, get_client_message_data_type,
+    is_valid_player_name, make_server_message, make_world_update, serialize_server_message,
+    ActorAction, ClientMessage, ClientMessageData, GameSessionInfo, GameUpdate, HttpMessage,
+    Metric, ServerMessage, ServerMessageData, ServerStatus, Session, UdpSessionState, WorldUpdate,
+    HEARTBEAT_PERIOD,
 };
 use crate::rect::Rectf;
 use crate::vec2::Vec2f;
@@ -466,6 +467,7 @@ pub fn run_game_server(
     let mut rng = StdRng::from_entropy();
     let mut engine = Engine::default();
     let mut world_history = VecDeque::with_capacity(MAX_WORLD_HISTORY_SIZE);
+    let mut world_updates_history = VecDeque::with_capacity(MAX_WORLD_HISTORY_SIZE - 1);
     world_history.push_back(world.clone());
     sender
         .send(InternalServerMessage::Broadcast(
@@ -500,8 +502,19 @@ pub fn run_game_server(
             update_actor_index(&world, &mut sessions);
             if world_history.len() >= MAX_WORLD_HISTORY_SIZE {
                 world_history.pop_front();
+                world_updates_history.pop_front();
             }
-            send_world_messages(&sender, &world, &world_history, &sessions);
+            if let Some(last) = world_history.back() {
+                let world_update = make_world_update(last, &world);
+                world_updates_history.push_back(world_update);
+            }
+            send_world_messages(
+                &sender,
+                &world,
+                &world_history,
+                &world_updates_history,
+                &sessions,
+            );
             world_history.push_back(world.clone());
             handle_admin_messages(
                 &admin_receiver,
@@ -790,7 +803,10 @@ fn handle_session_message(
             })
             .unwrap(),
         ClientMessageData::PlayerUpdate(mut player_update) => {
-            session.ack_world_frame = player_update.ack_world_frame.min(world.frame);
+            session.ack_world_frame = player_update
+                .ack_world_frame
+                .max(session.ack_world_frame)
+                .min(world.frame);
             if let Some(actor_index) = session.actor_index {
                 sanitize_actor_action(&mut player_update.actor_action, actor_index, world);
                 if player_update.actor_action.cast_action.is_some()
@@ -964,6 +980,7 @@ fn send_world_messages(
     sender: &Sender<InternalServerMessage>,
     world: &World,
     world_history: &VecDeque<World>,
+    world_updates_history: &VecDeque<WorldUpdate>,
     sessions: &[GameSession],
 ) {
     let mut world_snapshot_session_indices = Vec::new();
@@ -984,11 +1001,15 @@ fn send_world_messages(
             session_indices.push(session_index);
             continue;
         }
-        world_updates.push((
-            offset,
-            vec![session_index],
-            make_world_update(&world_history[world_history.len() - offset], &world),
-        ));
+        let mut world_update =
+            make_world_update(&world_history[world_history.len() - offset], &world);
+        add_all_removed(
+            world_updates_history
+                .iter()
+                .skip(world_updates_history.len() - offset),
+            &mut world_update,
+        );
+        world_updates.push((offset, vec![session_index], world_update));
     }
     for (_, session_indices, world_update) in world_updates {
         for session_index in session_indices {

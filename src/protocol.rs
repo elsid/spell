@@ -664,6 +664,131 @@ fn clone_if_some<T: Clone>(src: &Option<T>, dst: &mut T) {
     }
 }
 
+pub fn add_all_removed<'a, I>(src: I, dst: &mut WorldUpdate)
+where
+    I: Iterator<Item = &'a WorldUpdate>,
+{
+    let mut sort_actors = false;
+    let mut sort_dynamic_objects = false;
+    let mut sort_static_objects = false;
+    let mut sort_beams = false;
+    let mut sort_static_areas = false;
+    let mut sort_temp_areas = false;
+    let mut sort_bounded_areas = false;
+    let mut sort_fields = false;
+    for v in src {
+        add_removed_difference(&v.actors, &mut dst.actors, &mut sort_actors);
+        add_removed_difference(
+            &v.dynamic_objects,
+            &mut dst.dynamic_objects,
+            &mut sort_dynamic_objects,
+        );
+        add_removed_difference(
+            &v.static_objects,
+            &mut dst.static_objects,
+            &mut sort_static_objects,
+        );
+        add_removed_existence_difference(&v.beams, &mut dst.beams, &mut sort_beams);
+        add_removed_existence_difference(
+            &v.static_areas,
+            &mut dst.static_areas,
+            &mut sort_static_areas,
+        );
+        add_removed_difference(&v.temp_areas, &mut dst.temp_areas, &mut sort_temp_areas);
+        add_removed_existence_difference(
+            &v.bounded_areas,
+            &mut dst.bounded_areas,
+            &mut sort_bounded_areas,
+        );
+        add_removed_existence_difference(&v.fields, &mut dst.fields, &mut sort_fields);
+    }
+    sort_and_dedup(sort_actors, dst.actors.as_mut().map(|v| v.removed.as_mut()));
+    sort_and_dedup(
+        sort_dynamic_objects,
+        dst.dynamic_objects.as_mut().map(|v| v.removed.as_mut()),
+    );
+    sort_and_dedup(
+        sort_static_objects,
+        dst.static_objects.as_mut().map(|v| v.removed.as_mut()),
+    );
+    sort_and_dedup(sort_beams, dst.beams.as_mut().map(|v| v.removed.as_mut()));
+    sort_and_dedup(
+        sort_static_areas,
+        dst.static_areas.as_mut().map(|v| v.removed.as_mut()),
+    );
+    sort_and_dedup(
+        sort_temp_areas,
+        dst.temp_areas.as_mut().map(|v| v.removed.as_mut()),
+    );
+    sort_and_dedup(
+        sort_bounded_areas,
+        dst.bounded_areas.as_mut().map(|v| v.removed.as_mut()),
+    );
+    sort_and_dedup(sort_fields, dst.fields.as_mut().map(|v| v.removed.as_mut()));
+}
+
+fn add_removed_difference<T, U>(
+    src: &Option<Difference<T, U>>,
+    dst: &mut Option<Difference<T, U>>,
+    sort: &mut bool,
+) where
+    T: std::fmt::Debug + PartialEq,
+    U: std::fmt::Debug + PartialEq,
+{
+    if let Some(src_diff) = src.as_ref() {
+        if let Some(src_removed) = src_diff.removed.as_ref() {
+            if let Some(dst_diff) = dst.as_mut() {
+                if let Some(dst_removed) = dst_diff.removed.as_mut() {
+                    dst_removed.extend_from_slice(src_removed);
+                    *sort = true;
+                } else {
+                    dst_diff.removed = Some(src_removed.clone());
+                }
+            } else {
+                *dst = Some(Difference {
+                    added: None,
+                    updated: None,
+                    removed: Some(src_removed.clone()),
+                });
+            }
+        }
+    }
+}
+
+fn add_removed_existence_difference<T>(
+    src: &Option<ExistenceDifference<T>>,
+    dst: &mut Option<ExistenceDifference<T>>,
+    sort: &mut bool,
+) where
+    T: std::fmt::Debug + PartialEq,
+{
+    if let Some(src_diff) = src.as_ref() {
+        if let Some(src_removed) = src_diff.removed.as_ref() {
+            if let Some(dst_diff) = dst.as_mut() {
+                if let Some(dst_removed) = dst_diff.removed.as_mut() {
+                    dst_removed.extend_from_slice(src_removed);
+                    *sort = true;
+                } else {
+                    dst_diff.removed = Some(src_removed.clone());
+                }
+            } else {
+                *dst = Some(ExistenceDifference {
+                    added: None,
+                    removed: Some(src_removed.clone()),
+                });
+            }
+        }
+    }
+}
+
+fn sort_and_dedup(sort: bool, values: Option<Option<&mut Vec<u64>>>) {
+    if sort {
+        let v = values.unwrap().unwrap();
+        v.sort_unstable();
+        v.dedup();
+    }
+}
+
 pub fn is_valid_player_name(value: &str) -> bool {
     MIN_PLAYER_NAME_LEN <= value.len()
         && value.len() <= MAX_PLAYER_NAME_LEN
