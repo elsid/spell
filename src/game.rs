@@ -206,15 +206,17 @@ fn prepare_frame(game_state: &mut GameState, frame_type: &mut FrameType) {
     game_state.ui_update_duration.add(ui_update_duration);
     let draw_duration = measure(|| draw(game_state, frame_type));
     game_state.draw_duration.add(draw_duration);
-    if game_state.draw_ui {
-        game_state
-            .ui_draw_duration
-            .add(measure(egui_macroquad::draw));
-    }
-    if game_state.show_debug_hud {
-        let debug_hud_duration = measure(|| draw_debug_hud(game_state, &frame_type));
-        game_state.debug_hud_duration.add(debug_hud_duration);
-    }
+    game_state.ui_draw_duration.add(measure(|| {
+        if game_state.draw_ui {
+            egui_macroquad::draw();
+        }
+    }));
+    let debug_hud_duration = measure(|| {
+        if game_state.show_debug_hud {
+            draw_debug_hud(game_state, &frame_type);
+        }
+    });
+    game_state.debug_hud_duration.add(debug_hud_duration);
 }
 
 fn handle_input(game_state: &mut GameState, frame_type: &mut FrameType) {
