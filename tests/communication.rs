@@ -11,9 +11,13 @@ use portpicker::pick_unused_port;
 use reqwest::blocking::{RequestBuilder, Response};
 
 use spell::client::{Client, GameClientSettings, UdpClientSettings};
-use spell::protocol::{ActorAction, GameUpdate, HttpMessage, PlayerUpdate, ServerStatus};
+use spell::protocol::{
+    apply_world_update, ActorAction, CastAction, GameUpdate, HttpMessage, PlayerUpdate,
+    ServerStatus,
+};
 use spell::server::{run_server, ServerParams};
 use spell::vec2::Vec2f;
+use spell::world::{Element, World};
 
 #[test]
 fn server_should_terminate() {
@@ -97,19 +101,7 @@ fn server_should_move_player() {
             player_name: String::from("test"),
         },
         |player_update_sender, game_update_receiver| {
-            let set_actor_id = game_update_receiver
-                .recv_timeout(Duration::from_secs(3))
-                .unwrap();
-            assert!(
-                matches!(set_actor_id, GameUpdate::SetActorId(..)),
-                "{:?}",
-                set_actor_id
-            );
-            let actor_id = if let GameUpdate::SetActorId(v) = set_actor_id {
-                v
-            } else {
-                unreachable!()
-            };
+            let actor_id = recv_actor_id(game_update_receiver);
             let start = Instant::now();
             player_update_sender
                 .send(PlayerUpdate {
@@ -361,7 +353,7 @@ fn server_should_support_multiple_players() {
 }
 
 #[test]
-fn server_should_move_send_world_update_after_ack() {
+fn server_should_send_world_update_after_ack() {
     init_logger();
     let server_params = ServerParams {
         address: String::from("127.0.0.8"),
@@ -385,31 +377,20 @@ fn server_should_move_send_world_update_after_ack() {
             player_name: String::from("test"),
         },
         |player_update_sender, game_update_receiver| {
-            let set_player_id = game_update_receiver
+            let mut last_server_message = game_update_receiver
                 .recv_timeout(Duration::from_secs(3))
                 .unwrap();
             assert!(
-                matches!(set_player_id, GameUpdate::SetActorId(..)),
+                matches!(last_server_message, GameUpdate::SetActorId(..)),
                 "{:?}",
-                set_player_id
+                last_server_message
             );
             let start = Instant::now();
-            player_update_sender
-                .send(PlayerUpdate {
-                    ack_world_frame: 0,
-                    cast_action_world_frame: 0,
-                    actor_action: ActorAction {
-                        moving: true,
-                        target_direction: Vec2f::ZERO,
-                        cast_action: None,
-                    },
-                })
-                .unwrap();
             while Instant::now() - start < Duration::from_secs(3) {
-                let server_message = game_update_receiver
+                last_server_message = game_update_receiver
                     .recv_timeout(Duration::from_secs(1))
                     .unwrap();
-                match server_message {
+                match &last_server_message {
                     GameUpdate::WorldUpdate { .. } => break,
                     GameUpdate::WorldSnapshot { world, .. } => {
                         player_update_sender
@@ -423,13 +404,10 @@ fn server_should_move_send_world_update_after_ack() {
                     _ => (),
                 }
             }
-            let world_update = game_update_receiver
-                .recv_timeout(Duration::from_secs(1))
-                .unwrap();
             assert!(
-                matches!(world_update, GameUpdate::WorldUpdate { .. }),
+                matches!(last_server_message, GameUpdate::WorldUpdate { .. }),
                 "{:?}",
-                world_update
+                last_server_message
             );
         },
     );
@@ -582,6 +560,73 @@ fn server_should_response_to_http_stop() {
     });
 }
 
+#[test]
+fn server_should_add_spell_on_client_request() {
+    init_logger();
+    let server_params = ServerParams {
+        address: String::from("127.0.0.14"),
+        port: pick_unused_port().unwrap(),
+        max_sessions: 1,
+        max_players: 1,
+        udp_session_timeout: 4.0,
+        game_session_timeout: 3.0,
+        update_frequency: 60.0,
+        random_seed: Some(42),
+        http_address: String::from("127.0.0.14"),
+        http_port: pick_unused_port().unwrap(),
+        http_max_connections: 1,
+    };
+    with_background_server_and_client(
+        server_params,
+        GameClientSettings {
+            id: 1,
+            connect_timeout: Duration::from_secs(3),
+            retry_period: Duration::from_secs_f64(0.25),
+            player_name: String::from("test"),
+        },
+        |player_update_sender, game_update_receiver| {
+            let actor_id = recv_actor_id(game_update_receiver);
+            let start = Instant::now();
+            let mut world = World::default();
+            let mut spell_elements = Vec::new();
+            let mut cast_action_world_frame = 0;
+            while Instant::now() - start < Duration::from_secs(3) && spell_elements.is_empty() {
+                let server_message = game_update_receiver
+                    .recv_timeout(Duration::from_secs(1))
+                    .unwrap();
+                match server_message {
+                    GameUpdate::WorldUpdate { world_update, .. } => {
+                        apply_world_update(*world_update, &mut world);
+                    }
+                    GameUpdate::WorldSnapshot { world: w, .. } => {
+                        world = *w;
+                    }
+                    _ => (),
+                }
+                let cast_action = if cast_action_world_frame == 0 {
+                    cast_action_world_frame = world.frame;
+                    None
+                } else {
+                    Some(CastAction::AddSpellElement(Element::Earth))
+                };
+                player_update_sender
+                    .send(PlayerUpdate {
+                        ack_world_frame: world.frame,
+                        cast_action_world_frame,
+                        actor_action: ActorAction {
+                            moving: false,
+                            target_direction: Vec2f::ZERO,
+                            cast_action,
+                        },
+                    })
+                    .unwrap();
+                spell_elements = get_actor_spell_elements(&world, actor_id);
+            }
+            assert_eq!(spell_elements, vec![Element::Earth]);
+        },
+    );
+}
+
 fn init_logger() {
     env_logger::try_init().ok();
 }
@@ -725,5 +770,30 @@ fn send_with_retries(request: RequestBuilder) -> Response {
             result.unwrap();
         }
         sleep(Duration::from_millis(100));
+    }
+}
+
+fn get_actor_spell_elements(world: &World, actor_id: u64) -> Vec<Element> {
+    world
+        .actors
+        .iter()
+        .find(|v| v.id == actor_id)
+        .map(|v| v.spell_elements.clone())
+        .unwrap()
+}
+
+fn recv_actor_id(game_update_receiver: &Receiver<GameUpdate>) -> u64 {
+    let set_actor_id = game_update_receiver
+        .recv_timeout(Duration::from_secs(3))
+        .unwrap();
+    assert!(
+        matches!(set_actor_id, GameUpdate::SetActorId(..)),
+        "{:?}",
+        set_actor_id
+    );
+    if let GameUpdate::SetActorId(v) = set_actor_id {
+        v
+    } else {
+        unreachable!()
     }
 }
