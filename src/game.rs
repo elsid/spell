@@ -143,7 +143,7 @@ struct Multiplayer {
 }
 
 pub async fn run_game(settings: GameSettings) {
-    let ubuntu_mono = load_ttf_font("fonts/UbuntuMono-R.ttf").await;
+    let ubuntu_mono = load_ttf_font("fonts/UbuntuMono-R.ttf").await.unwrap();
     let mut game_state = GameState {
         rng: make_rng(settings.random_seed),
         fps: FpsMovingAverage::new(100, Duration::from_secs(1)),
@@ -1031,6 +1031,7 @@ fn draw_debug_text(counter: &mut usize, font: Font, text: &str) {
             font_size: HUD_FONT_SIZE,
             font_scale: 1.0,
             color: WHITE,
+            font_scale_aspect: 1.0,
         },
     );
 }
@@ -1345,6 +1346,7 @@ fn draw_control_button(name: &str, action: &str, half_width: f64, font: Font, po
             font_size: HUD_FONT_SIZE,
             font_scale: 1.0,
             color: WHITE,
+            font_scale_aspect: 1.0,
         },
     );
 }
@@ -1375,6 +1377,7 @@ fn draw_keyboard_button(name: &str, half_width: f64, font: Font, position: Vec2f
             font_size: HUD_FONT_SIZE,
             font_scale: 1.0,
             color: BLACK,
+            font_scale_aspect: 1.0,
         },
     );
 }
@@ -1449,6 +1452,7 @@ fn draw_mouse(highlight: MouseButton, action: &str, font: Font, position: Vec2f)
             font_size: HUD_FONT_SIZE,
             font_scale: 1.0,
             color: WHITE,
+            font_scale_aspect: 1.0,
         },
     );
 }
@@ -1498,6 +1502,7 @@ fn draw_name(text: &str, position: Vec2f, radius: f64, font: Font) {
             font_size: NAME_FONT_SIZE,
             font_scale: NAME_FONT_SCALE,
             color: Color::new(1.0, 1.0, 1.0, 0.8),
+            font_scale_aspect: 1.0,
         },
     );
 }
@@ -1591,6 +1596,7 @@ fn draw_spawn_message(time_left: f64, font: Font) {
             font_size: MESSAGE_FONT_SIZE,
             font_scale: 1.0,
             color: WHITE,
+            font_scale_aspect: 1.0,
         },
     );
 }
@@ -1614,6 +1620,7 @@ fn draw_player_list(players: &[Player], font: Font) {
         font_size,
         font_scale: FONT_SCALE,
         color: WHITE,
+        font_scale_aspect: 1.0,
     };
     draw_rectangle(x, y, width, height, Color::new(0.0, 0.0, 0.0, 0.25));
     draw_text_ex(
