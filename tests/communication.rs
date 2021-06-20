@@ -7,7 +7,6 @@ use std::sync::{Arc, Barrier};
 use std::thread::{sleep, spawn, JoinHandle};
 use std::time::{Duration, Instant};
 
-use portpicker::pick_unused_port;
 use reqwest::blocking::{RequestBuilder, Response};
 
 use spell::client::{Client, GameClientSettings, UdpClientSettings};
@@ -18,6 +17,7 @@ use spell::protocol::{
 use spell::server::{run_server, ServerParams};
 use spell::vec2::Vec2f;
 use spell::world::{Actor, Element, PlayerId, World};
+use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, UdpSocket};
 
 #[test]
 fn server_should_terminate() {
@@ -25,7 +25,7 @@ fn server_should_terminate() {
     let stop = Arc::new(AtomicBool::new(true));
     let server_params = ServerParams {
         address: String::from("127.0.0.2"),
-        port: pick_unused_port().unwrap(),
+        port: ask_free_udp_port(),
         max_sessions: 1,
         max_players: 1,
         udp_session_timeout: 4.0,
@@ -33,7 +33,7 @@ fn server_should_terminate() {
         update_frequency: 1.0,
         random_seed: Some(42),
         http_address: String::from("127.0.0.2"),
-        http_port: pick_unused_port().unwrap(),
+        http_port: ask_free_udp_port(),
         http_max_connections: 1,
     };
     run_background_server(server_params, stop).join().unwrap();
@@ -44,7 +44,7 @@ fn server_should_provide_player_id() {
     init_logger();
     let server_params = ServerParams {
         address: String::from("127.0.0.3"),
-        port: pick_unused_port().unwrap(),
+        port: ask_free_udp_port(),
         max_sessions: 1,
         max_players: 1,
         udp_session_timeout: 4.0,
@@ -52,7 +52,7 @@ fn server_should_provide_player_id() {
         update_frequency: 60.0,
         random_seed: Some(42),
         http_address: String::from("127.0.0.3"),
-        http_port: pick_unused_port().unwrap(),
+        http_port: ask_free_tcp_port(),
         http_max_connections: 1,
     };
     with_background_server_and_client(
@@ -81,7 +81,7 @@ fn server_should_move_player() {
     init_logger();
     let server_params = ServerParams {
         address: String::from("127.0.0.4"),
-        port: pick_unused_port().unwrap(),
+        port: ask_free_udp_port(),
         max_sessions: 1,
         max_players: 1,
         udp_session_timeout: 4.0,
@@ -89,7 +89,7 @@ fn server_should_move_player() {
         update_frequency: 60.0,
         random_seed: Some(42),
         http_address: String::from("127.0.0.4"),
-        http_port: pick_unused_port().unwrap(),
+        http_port: ask_free_tcp_port(),
         http_max_connections: 1,
     };
     with_background_server_and_client(
@@ -143,7 +143,7 @@ fn server_should_limit_number_of_sessions() {
     init_logger();
     let server_params = ServerParams {
         address: String::from("127.0.0.5"),
-        port: pick_unused_port().unwrap(),
+        port: ask_free_udp_port(),
         max_sessions: 1,
         max_players: 1,
         udp_session_timeout: 11.0,
@@ -151,7 +151,7 @@ fn server_should_limit_number_of_sessions() {
         update_frequency: 60.0,
         random_seed: Some(42),
         http_address: String::from("127.0.0.5"),
-        http_port: pick_unused_port().unwrap(),
+        http_port: ask_free_tcp_port(),
         http_max_connections: 1,
     };
     let mut game_client_settings = GameClientSettings {
@@ -217,7 +217,7 @@ fn server_should_limit_number_of_players() {
     init_logger();
     let server_params = ServerParams {
         address: String::from("127.0.0.6"),
-        port: pick_unused_port().unwrap(),
+        port: ask_free_udp_port(),
         max_sessions: 2,
         max_players: 1,
         udp_session_timeout: 11.0,
@@ -225,7 +225,7 @@ fn server_should_limit_number_of_players() {
         update_frequency: 60.0,
         random_seed: Some(42),
         http_address: String::from("127.0.0.6"),
-        http_port: pick_unused_port().unwrap(),
+        http_port: ask_free_tcp_port(),
         http_max_connections: 1,
     };
     let mut game_client_settings = GameClientSettings {
@@ -292,7 +292,7 @@ fn server_should_support_multiple_players() {
     let players_number = 3;
     let server_params = ServerParams {
         address: String::from("127.0.0.7"),
-        port: pick_unused_port().unwrap(),
+        port: ask_free_udp_port(),
         max_sessions: players_number,
         max_players: players_number,
         udp_session_timeout: 11.0,
@@ -300,7 +300,7 @@ fn server_should_support_multiple_players() {
         update_frequency: 60.0,
         random_seed: Some(42),
         http_address: String::from("127.0.0.7"),
-        http_port: pick_unused_port().unwrap(),
+        http_port: ask_free_tcp_port(),
         http_max_connections: 1,
     };
     let game_client_settings = GameClientSettings {
@@ -357,7 +357,7 @@ fn server_should_send_world_update_after_ack() {
     init_logger();
     let server_params = ServerParams {
         address: String::from("127.0.0.8"),
-        port: pick_unused_port().unwrap(),
+        port: ask_free_udp_port(),
         max_sessions: 1,
         max_players: 1,
         udp_session_timeout: 4.0,
@@ -365,7 +365,7 @@ fn server_should_send_world_update_after_ack() {
         update_frequency: 60.0,
         random_seed: Some(42),
         http_address: String::from("127.0.0.8"),
-        http_port: pick_unused_port().unwrap(),
+        http_port: ask_free_tcp_port(),
         http_max_connections: 1,
     };
     with_background_server_and_client(
@@ -418,7 +418,7 @@ fn server_should_response_to_http_ping() {
     init_logger();
     let server_params = ServerParams {
         address: String::from("127.0.0.9"),
-        port: pick_unused_port().unwrap(),
+        port: ask_free_udp_port(),
         max_sessions: 1,
         max_players: 1,
         udp_session_timeout: 4.0,
@@ -426,7 +426,7 @@ fn server_should_response_to_http_ping() {
         update_frequency: 1.0,
         random_seed: Some(42),
         http_address: String::from("127.0.0.9"),
-        http_port: pick_unused_port().unwrap(),
+        http_port: ask_free_tcp_port(),
         http_max_connections: 1,
     };
     with_background_server(server_params, |http_client| {
@@ -439,7 +439,7 @@ fn server_should_response_to_http_status() {
     init_logger();
     let server_params = ServerParams {
         address: String::from("127.0.0.10"),
-        port: pick_unused_port().unwrap(),
+        port: ask_free_udp_port(),
         max_sessions: 1,
         max_players: 1,
         udp_session_timeout: 4.0,
@@ -447,7 +447,7 @@ fn server_should_response_to_http_status() {
         update_frequency: 1.0,
         random_seed: Some(42),
         http_address: String::from("127.0.0.10"),
-        http_port: pick_unused_port().unwrap(),
+        http_port: ask_free_tcp_port(),
         http_max_connections: 1,
     };
     with_background_server(server_params, |http_client| {
@@ -470,7 +470,7 @@ fn server_should_response_to_http_sessions() {
     init_logger();
     let server_params = ServerParams {
         address: String::from("127.0.0.11"),
-        port: pick_unused_port().unwrap(),
+        port: ask_free_udp_port(),
         max_sessions: 1,
         max_players: 1,
         udp_session_timeout: 4.0,
@@ -478,7 +478,7 @@ fn server_should_response_to_http_sessions() {
         update_frequency: 1.0,
         random_seed: Some(42),
         http_address: String::from("127.0.0.11"),
-        http_port: pick_unused_port().unwrap(),
+        http_port: ask_free_tcp_port(),
         http_max_connections: 1,
     };
     with_background_server(server_params, |http_client| {
@@ -496,7 +496,7 @@ fn server_should_response_to_http_remove_session() {
     init_logger();
     let server_params = ServerParams {
         address: String::from("127.0.0.12"),
-        port: pick_unused_port().unwrap(),
+        port: ask_free_udp_port(),
         max_sessions: 1,
         max_players: 1,
         udp_session_timeout: 4.0,
@@ -504,7 +504,7 @@ fn server_should_response_to_http_remove_session() {
         update_frequency: 1.0,
         random_seed: Some(42),
         http_address: String::from("127.0.0.12"),
-        http_port: pick_unused_port().unwrap(),
+        http_port: ask_free_tcp_port(),
         http_max_connections: 1,
     };
     with_background_server(server_params, |http_client| {
@@ -522,7 +522,7 @@ fn server_should_response_to_http_world() {
     init_logger();
     let server_params = ServerParams {
         address: String::from("127.0.0.12"),
-        port: pick_unused_port().unwrap(),
+        port: ask_free_udp_port(),
         max_sessions: 1,
         max_players: 1,
         udp_session_timeout: 4.0,
@@ -530,7 +530,7 @@ fn server_should_response_to_http_world() {
         update_frequency: 1.0,
         random_seed: Some(42),
         http_address: String::from("127.0.0.12"),
-        http_port: pick_unused_port().unwrap(),
+        http_port: ask_free_tcp_port(),
         http_max_connections: 1,
     };
     with_background_server(server_params, |http_client| {
@@ -544,7 +544,7 @@ fn server_should_response_to_http_stop() {
     init_logger();
     let server_params = ServerParams {
         address: String::from("127.0.0.13"),
-        port: pick_unused_port().unwrap(),
+        port: ask_free_udp_port(),
         max_sessions: 1,
         max_players: 1,
         udp_session_timeout: 4.0,
@@ -552,7 +552,7 @@ fn server_should_response_to_http_stop() {
         update_frequency: 1.0,
         random_seed: Some(42),
         http_address: String::from("127.0.0.13"),
-        http_port: pick_unused_port().unwrap(),
+        http_port: ask_free_tcp_port(),
         http_max_connections: 1,
     };
     with_background_server(server_params, |http_client| {
@@ -565,7 +565,7 @@ fn server_should_add_spell_on_client_request() {
     init_logger();
     let server_params = ServerParams {
         address: String::from("127.0.0.14"),
-        port: pick_unused_port().unwrap(),
+        port: ask_free_udp_port(),
         max_sessions: 1,
         max_players: 1,
         udp_session_timeout: 4.0,
@@ -573,7 +573,7 @@ fn server_should_add_spell_on_client_request() {
         update_frequency: 60.0,
         random_seed: Some(42),
         http_address: String::from("127.0.0.14"),
-        http_port: pick_unused_port().unwrap(),
+        http_port: ask_free_tcp_port(),
         http_max_connections: 1,
     };
     with_background_server_and_client(
@@ -798,4 +798,20 @@ fn find_player_actor(player_id: PlayerId, world: &World) -> Option<&Actor> {
         .find(|v| v.id == player_id)
         .and_then(|v| v.actor_id)
         .and_then(|actor_id| world.actors.iter().find(|v| v.id == actor_id))
+}
+
+fn ask_free_tcp_port() -> u16 {
+    UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+fn ask_free_udp_port() -> u16 {
+    TcpListener::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
 }
