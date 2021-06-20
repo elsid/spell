@@ -8,10 +8,10 @@ use clap::Clap;
 use egui::{Color32, CtxRef};
 use macroquad::prelude::{
     clear_background, draw_line, draw_poly, draw_rectangle, draw_rectangle_lines, draw_text_ex,
-    get_internal_gl, is_key_pressed, is_mouse_button_down, load_ttf_font, measure_text,
-    mouse_position_local, mouse_wheel, next_frame, screen_height, screen_width, set_camera,
-    set_default_camera, vec2, Camera2D, Color, DrawMode, Font, KeyCode, Mat4, MouseButton, Quat,
-    TextParams, Vec3, Vertex, BLACK, WHITE,
+    get_internal_gl, is_key_down, is_key_pressed, is_mouse_button_down, load_ttf_font,
+    measure_text, mouse_position_local, mouse_wheel, next_frame, screen_height, screen_width,
+    set_camera, set_default_camera, vec2, Camera2D, Color, DrawMode, Font, KeyCode, Mat4,
+    MouseButton, Quat, TextParams, Vec3, Vertex, BLACK, WHITE,
 };
 use rand::prelude::SmallRng;
 use rand::Rng;
@@ -95,6 +95,8 @@ struct GameState {
     control_hud_font: Font,
     show_control_hud: bool,
     message_font: Font,
+    show_player_list: bool,
+    player_list_font: Font,
 }
 
 enum Menu {
@@ -175,6 +177,8 @@ pub async fn run_game(settings: GameSettings) {
         control_hud_font: ubuntu_mono,
         show_control_hud: true,
         message_font: ubuntu_mono,
+        show_player_list: false,
+        player_list_font: ubuntu_mono,
     };
     let mut frame_type = FrameType::Initial;
     while !matches!(frame_type, FrameType::None) {
@@ -257,6 +261,7 @@ fn handle_input(game_state: &mut GameState, frame_type: &mut FrameType) {
     if is_key_pressed(KeyCode::F2) {
         game_state.show_debug_hud = !game_state.show_debug_hud;
     }
+    game_state.show_player_list = is_key_down(KeyCode::Tab);
 }
 
 fn handle_scene_input<F>(
@@ -861,6 +866,10 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
             }
         }
     }
+
+    if game_state.show_player_list {
+        draw_player_list(&scene.world.players, game_state.player_list_font);
+    }
 }
 
 fn draw_debug_hud(game_state: &GameState, frame_type: &FrameType) {
@@ -1289,6 +1298,7 @@ fn draw_control_hud(spell_elements: &[Element], font: Font) {
     }
     const CONTROL_KEYS: &[(&str, &str, f64)] = &[
         ("L.Shift", "Area of effect", 2.0),
+        ("Tab", "Player's list", 1.5),
         ("F2", "Debug HUD", 1.0),
         ("F1", "Control HUD", 1.0),
         ("Esc", "Main menu", 1.0),
@@ -1583,4 +1593,75 @@ fn draw_spawn_message(time_left: f64, font: Font) {
             color: WHITE,
         },
     );
+}
+
+fn draw_player_list(players: &[Player], font: Font) {
+    const MAX_ROW_HEIGHT: f32 = 48.0;
+    const FONT_SCALE: f32 = 1.0;
+    const NAME: &str = "name";
+    const DEATHS: &str = "deaths";
+    set_default_camera();
+    let mut order: Vec<usize> = (0..players.len()).collect();
+    order.sort_by_key(|v| (players[*v].deaths, &players[*v].name));
+    let x = screen_width() / 4.0;
+    let y = screen_height() / 4.0;
+    let width = screen_width() / 2.0;
+    let height = screen_height() / 2.0;
+    let row_size = (height / players.len() as f32).min(MAX_ROW_HEIGHT);
+    let font_size = (row_size * 2.0 / 3.0).round() as u16;
+    let text_params = TextParams {
+        font,
+        font_size,
+        font_scale: FONT_SCALE,
+        color: WHITE,
+    };
+    draw_rectangle(x, y, width, height, Color::new(0.0, 0.0, 0.0, 0.25));
+    draw_text_ex(
+        NAME,
+        x + (width / 2.0 - measure_text(NAME, Some(font), font_size, 1.0).width) / 2.0,
+        y + row_size,
+        text_params,
+    );
+    draw_text_ex(
+        DEATHS,
+        x + width / 2.0
+            + (width / 2.0 - measure_text(DEATHS, Some(font), font_size, 1.0).width) / 2.0,
+        y + row_size,
+        text_params,
+    );
+    let line_y = y + 1.25 * row_size;
+    draw_line(
+        x + row_size,
+        line_y,
+        x + width / 2.0 - row_size,
+        line_y,
+        2.0,
+        WHITE,
+    );
+    draw_line(
+        x + width / 2.0 + row_size,
+        line_y,
+        x + width - row_size,
+        line_y,
+        2.0,
+        WHITE,
+    );
+    for i in order {
+        draw_text_ex(
+            &players[i].name,
+            x + (width / 2.0 - measure_text(&players[i].name, Some(font), font_size, 1.0).width)
+                / 2.0,
+            y + (i + 2) as f32 * row_size,
+            text_params,
+        );
+        let deaths_text = format!("{}", players[i].deaths);
+        draw_text_ex(
+            &deaths_text,
+            x + width / 2.0
+                + (width / 2.0 - measure_text(&deaths_text, Some(font), font_size, 1.0).width)
+                    / 2.0,
+            y + (i + 2) as f32 * row_size,
+            text_params,
+        );
+    }
 }
