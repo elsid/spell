@@ -46,7 +46,7 @@ pub enum ClientMessageData {
     Join(String),
     Quit,
     Heartbeat,
-    PlayerUpdate(PlayerUpdate),
+    PlayerControl(PlayerControl),
 }
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
@@ -126,7 +126,7 @@ pub struct TempAreaUpdate {
 }
 
 #[derive(Default, Debug, Deserialize, Serialize)]
-pub struct PlayerUpdate {
+pub struct PlayerControl {
     pub ack_world_frame: u64,
     pub cast_action_world_frame: u64,
     pub actor_action: ActorAction,
@@ -217,7 +217,7 @@ pub fn get_client_message_data_type(value: &ClientMessageData) -> &'static str {
         ClientMessageData::Join(..) => "Join",
         ClientMessageData::Quit => "Quit",
         ClientMessageData::Heartbeat => "Heartbeat",
-        ClientMessageData::PlayerUpdate(..) => "PlayerUpdate",
+        ClientMessageData::PlayerControl(..) => "PlayerControl",
     }
 }
 
@@ -1088,9 +1088,9 @@ mod tests {
     }
 
     #[test]
-    fn serialized_default_player_update_size() {
+    fn serialized_default_player_control_size() {
         assert_eq!(
-            bincode::serialize(&PlayerUpdate::default()).unwrap().len(),
+            bincode::serialize(&PlayerControl::default()).unwrap().len(),
             34
         );
     }

@@ -12,7 +12,7 @@ use reqwest::blocking::{RequestBuilder, Response};
 
 use spell::client::{Client, GameClientSettings, UdpClientSettings};
 use spell::protocol::{
-    apply_world_update, ActorAction, CastAction, GameUpdate, HttpMessage, PlayerUpdate,
+    apply_world_update, ActorAction, CastAction, GameUpdate, HttpMessage, PlayerControl,
     ServerStatus,
 };
 use spell::server::{run_server, ServerParams};
@@ -100,11 +100,11 @@ fn server_should_move_player() {
             retry_period: Duration::from_secs_f64(0.25),
             player_name: String::from("test"),
         },
-        |player_update_sender, game_update_receiver| {
+        |player_control_sender, game_update_receiver| {
             let actor_id = recv_actor_id(game_update_receiver);
             let start = Instant::now();
-            player_update_sender
-                .send(PlayerUpdate {
+            player_control_sender
+                .send(PlayerControl {
                     ack_world_frame: 0,
                     cast_action_world_frame: 0,
                     actor_action: ActorAction {
@@ -376,7 +376,7 @@ fn server_should_send_world_update_after_ack() {
             retry_period: Duration::from_secs_f64(0.25),
             player_name: String::from("test"),
         },
-        |player_update_sender, game_update_receiver| {
+        |player_control_sender, game_update_receiver| {
             let mut last_server_message = game_update_receiver
                 .recv_timeout(Duration::from_secs(3))
                 .unwrap();
@@ -393,8 +393,8 @@ fn server_should_send_world_update_after_ack() {
                 match &last_server_message {
                     GameUpdate::WorldUpdate { .. } => break,
                     GameUpdate::WorldSnapshot { world, .. } => {
-                        player_update_sender
-                            .send(PlayerUpdate {
+                        player_control_sender
+                            .send(PlayerControl {
                                 ack_world_frame: world.frame,
                                 cast_action_world_frame: 0,
                                 actor_action: ActorAction::default(),
@@ -584,7 +584,7 @@ fn server_should_add_spell_on_client_request() {
             retry_period: Duration::from_secs_f64(0.25),
             player_name: String::from("test"),
         },
-        |player_update_sender, game_update_receiver| {
+        |player_control_sender, game_update_receiver| {
             let actor_id = recv_actor_id(game_update_receiver);
             let start = Instant::now();
             let mut world = World::default();
@@ -609,8 +609,8 @@ fn server_should_add_spell_on_client_request() {
                 } else {
                     Some(CastAction::AddSpellElement(Element::Earth))
                 };
-                player_update_sender
-                    .send(PlayerUpdate {
+                player_control_sender
+                    .send(PlayerControl {
                         ack_world_frame: world.frame,
                         cast_action_world_frame,
                         actor_action: ActorAction {
@@ -636,7 +636,7 @@ fn with_background_server_and_client<F>(
     game_client_settings: GameClientSettings,
     f: F,
 ) where
-    F: FnOnce(&Sender<PlayerUpdate>, &Receiver<GameUpdate>),
+    F: FnOnce(&Sender<PlayerControl>, &Receiver<GameUpdate>),
 {
     let upd_client_settings = UdpClientSettings {
         id: game_client_settings.id,
@@ -656,7 +656,7 @@ fn with_background_client<F>(
     udp_client_settings: UdpClientSettings,
     f: F,
 ) where
-    F: FnOnce(&Sender<PlayerUpdate>, &Receiver<GameUpdate>),
+    F: FnOnce(&Sender<PlayerControl>, &Receiver<GameUpdate>),
 {
     let client = Client::new(game_client_settings, udp_client_settings);
     f(client.sender(), client.receiver());

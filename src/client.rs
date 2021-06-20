@@ -10,7 +10,7 @@ use tokio::runtime::Builder;
 
 use crate::protocol::{
     deserialize_server_message, deserialize_server_message_data, get_server_message_data_type,
-    ClientMessage, ClientMessageData, GameUpdate, PlayerUpdate, ServerMessageData,
+    ClientMessage, ClientMessageData, GameUpdate, PlayerControl, ServerMessageData,
     HEARTBEAT_PERIOD,
 };
 
@@ -71,7 +71,7 @@ impl Client {
         Err(error)
     }
 
-    pub fn sender(&self) -> &Sender<PlayerUpdate> {
+    pub fn sender(&self) -> &Sender<PlayerControl> {
         self.game_client.as_ref().unwrap().sender()
     }
 
@@ -82,7 +82,7 @@ impl Client {
 
 pub struct GameClient {
     id: u64,
-    player_update_sender: Option<Sender<PlayerUpdate>>,
+    player_control_sender: Option<Sender<PlayerControl>>,
     game_update_receiver: Option<Receiver<GameUpdate>>,
     handle: Option<JoinHandle<Result<(), String>>>,
     stop: Arc<AtomicBool>,
@@ -96,17 +96,17 @@ impl GameClient {
         server_receiver: Receiver<ServerMessageData>,
     ) -> Self {
         let (game_update_sender, game_update_receiver) = channel();
-        let (player_update_sender, player_update_receiver) = channel();
+        let (player_control_sender, player_control_receiver) = channel();
         let stop = Arc::new(AtomicBool::new(false));
         let done = Arc::new(AtomicBool::new(false));
         Self {
             id: settings.id,
-            player_update_sender: Some(player_update_sender),
+            player_control_sender: Some(player_control_sender),
             game_update_receiver: Some(game_update_receiver),
             handle: Some(run_background_game_client(
                 settings,
                 game_update_sender,
-                player_update_receiver,
+                player_control_receiver,
                 client_sender,
                 server_receiver,
                 stop.clone(),
@@ -138,8 +138,8 @@ impl GameClient {
         }
     }
 
-    pub fn sender(&self) -> &Sender<PlayerUpdate> {
-        self.player_update_sender.as_ref().unwrap()
+    pub fn sender(&self) -> &Sender<PlayerControl> {
+        self.player_control_sender.as_ref().unwrap()
     }
 
     pub fn receiver(&self) -> &Receiver<GameUpdate> {
@@ -223,7 +223,7 @@ impl Drop for UdpClient {
 pub fn run_background_game_client(
     settings: GameClientSettings,
     update_sender: Sender<GameUpdate>,
-    action_receiver: Receiver<PlayerUpdate>,
+    player_control_receiver: Receiver<PlayerControl>,
     client_sender: Sender<ClientMessageData>,
     server_receiver: Receiver<ServerMessageData>,
     stop: Arc<AtomicBool>,
@@ -231,7 +231,7 @@ pub fn run_background_game_client(
 ) -> JoinHandle<Result<(), String>> {
     let game_channel = GameChannel {
         sender: update_sender,
-        receiver: action_receiver,
+        receiver: player_control_receiver,
     };
     let server_channel = ServerChannel {
         sender: client_sender,
@@ -459,7 +459,7 @@ pub struct GameClientSettings {
 
 pub struct GameChannel {
     pub sender: Sender<GameUpdate>,
-    pub receiver: Receiver<PlayerUpdate>,
+    pub receiver: Receiver<PlayerControl>,
 }
 
 pub struct ServerChannel {
@@ -590,14 +590,14 @@ fn try_join_server(
 fn run_server_sender(
     client_id: u64,
     sender: Sender<ClientMessageData>,
-    receiver: Receiver<PlayerUpdate>,
+    receiver: Receiver<PlayerControl>,
     stop: Arc<AtomicBool>,
 ) {
     info!("[{}] Run server sender", client_id);
     while !stop.load(Ordering::Acquire) {
         match receiver.recv_timeout(HEARTBEAT_PERIOD) {
-            Ok(player_update) => {
-                if let Err(e) = sender.send(ClientMessageData::PlayerUpdate(player_update)) {
+            Ok(player_control) => {
+                if let Err(e) = sender.send(ClientMessageData::PlayerControl(player_control)) {
                     error!(
                         "[{}] Server sender has failed to send player action: {}",
                         client_id, e

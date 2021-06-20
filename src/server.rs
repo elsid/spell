@@ -802,22 +802,22 @@ fn handle_session_message(
                 },
             })
             .unwrap(),
-        ClientMessageData::PlayerUpdate(mut player_update) => {
-            session.ack_world_frame = player_update
+        ClientMessageData::PlayerControl(mut player_control) => {
+            session.ack_world_frame = player_control
                 .ack_world_frame
                 .max(session.ack_world_frame)
                 .min(world.frame);
             if let Some(actor_index) = session.actor_index {
-                sanitize_actor_action(&mut player_update.actor_action, actor_index, world);
-                if player_update.actor_action.cast_action.is_some()
-                    && session.ack_cast_action_frame < player_update.cast_action_world_frame
-                    && player_update.cast_action_world_frame <= session.ack_world_frame
+                sanitize_actor_action(&mut player_control.actor_action, actor_index, world);
+                if player_control.actor_action.cast_action.is_some()
+                    && session.ack_cast_action_frame < player_control.cast_action_world_frame
+                    && player_control.cast_action_world_frame <= session.ack_world_frame
                 {
                     session.ack_cast_action_frame = session.ack_world_frame;
                 } else {
-                    player_update.actor_action.cast_action = None;
+                    player_control.actor_action.cast_action = None;
                 }
-                apply_actor_action(player_update.actor_action, actor_index, world);
+                apply_actor_action(player_control.actor_action, actor_index, world);
             } else {
                 debug!(
                     "Player actor is not found for game session: {}",

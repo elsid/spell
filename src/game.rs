@@ -24,7 +24,7 @@ use crate::engine::{get_next_id, normalize_angle, Engine};
 use crate::generators::{generate_player_actor, generate_world, make_rng};
 use crate::meters::{measure, DurationMovingAverage, FpsMovingAverage};
 use crate::protocol::{
-    apply_world_update, is_valid_player_name, ActorAction, CastAction, GameUpdate, PlayerUpdate,
+    apply_world_update, is_valid_player_name, ActorAction, CastAction, GameUpdate, PlayerControl,
     WorldUpdate, MAX_PLAYER_NAME_LEN, MIN_PLAYER_NAME_LEN,
 };
 use crate::rect::Rectf;
@@ -593,7 +593,7 @@ fn update_multiplayer(game_state: &mut GameState, data: &mut Multiplayer) -> Opt
     }
     data.client
         .sender()
-        .send(PlayerUpdate {
+        .send(PlayerControl {
             actor_action: data.actor_action.clone(),
             cast_action_world_frame: data.ack_cast_action_world_frame + 1,
             ack_world_frame: data.scene.world.frame,
