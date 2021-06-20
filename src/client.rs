@@ -13,6 +13,7 @@ use crate::protocol::{
     ClientMessage, ClientMessageData, GameUpdate, PlayerControl, ServerMessageData,
     HEARTBEAT_PERIOD,
 };
+use crate::world::PlayerId;
 
 pub struct Client {
     game_client: Option<GameClient>,
@@ -474,11 +475,14 @@ pub fn run_game_client(
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
     info!("[{}] Run game client", settings.id);
-    let actor_id = match try_join_server(&settings, &server, &stop) {
+    let player_id = match try_join_server(&settings, &server, &stop) {
         Ok(v) => v,
         Err(e) => return Err(format!("Failed to join the server: {}", e)),
     };
-    info!("[{}] Joined to server as actor {}", settings.id, actor_id);
+    info!(
+        "[{}] Joined to server as player {:?}",
+        settings.id, player_id.0
+    );
     let ServerChannel {
         sender: server_sender,
         receiver: server_receiver,
@@ -487,8 +491,8 @@ pub fn run_game_client(
         sender: game_sender,
         receiver: game_receiver,
     } = game;
-    if let Err(..) = game_sender.send(GameUpdate::SetActorId(actor_id)) {
-        return Err(String::from("Failed to request actor id."));
+    if let Err(..) = game_sender.send(GameUpdate::SetPlayerId(player_id)) {
+        return Err(String::from("Failed to request player id."));
     }
     let client_id = settings.id;
     let stop_receiver = Arc::new(AtomicBool::new(false));
@@ -517,7 +521,7 @@ fn try_join_server(
     settings: &GameClientSettings,
     server: &ServerChannel,
     stop: &Arc<AtomicBool>,
-) -> Result<u64, String> {
+) -> Result<PlayerId, String> {
     let now = Instant::now();
     let connect_deadline = now + settings.connect_timeout;
     let mut last_send = now - settings.retry_period;
@@ -568,8 +572,8 @@ fn try_join_server(
                     );
                 }
                 match data {
-                    ServerMessageData::NewPlayer { actor_id, .. } => {
-                        break Ok(actor_id);
+                    ServerMessageData::NewPlayer { player_id, .. } => {
+                        break Ok(player_id);
                     }
                     ServerMessageData::Error(err) => return Err(err),
                     v => warn!(

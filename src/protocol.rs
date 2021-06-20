@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::vec2::Vec2f;
 use crate::world::{
-    Actor, Aura, Beam, BoundedArea, DelayedMagick, DynamicObject, Effect, Element, Field,
-    StaticArea, StaticObject, TempArea, World,
+    Actor, Aura, Beam, BoundedArea, DelayedMagick, DynamicObject, Effect, Element, Field, Player,
+    PlayerId, StaticArea, StaticObject, TempArea, World,
 };
 
 pub const HEARTBEAT_PERIOD: Duration = Duration::from_secs(1);
@@ -35,7 +35,7 @@ pub struct ClientMessage {
 pub enum ServerMessageData {
     NewPlayer {
         update_period: Duration,
-        actor_id: u64,
+        player_id: PlayerId,
     },
     Error(String),
     GameUpdate(GameUpdate),
@@ -51,7 +51,7 @@ pub enum ClientMessageData {
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 pub enum GameUpdate {
-    SetActorId(u64),
+    SetPlayerId(PlayerId),
     WorldSnapshot {
         ack_actor_action_world_frame: u64,
         ack_cast_action_world_frame: u64,
@@ -70,6 +70,7 @@ pub struct WorldUpdate {
     pub before_frame: u64,
     pub after_frame: u64,
     pub time: f64,
+    pub players: Option<Difference<Player, PlayerUpdate>>,
     pub actors: Option<Difference<Actor, ActorUpdate>>,
     pub dynamic_objects: Option<Difference<DynamicObject, DynamicObjectUpdate>>,
     pub static_objects: Option<Difference<StaticObject, StaticObjectUpdate>>,
@@ -78,6 +79,14 @@ pub struct WorldUpdate {
     pub temp_areas: Option<Difference<TempArea, TempAreaUpdate>>,
     pub bounded_areas: Option<ExistenceDifference<BoundedArea>>,
     pub fields: Option<ExistenceDifference<Field>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
+pub struct PlayerUpdate {
+    pub id: PlayerId,
+    pub actor_id: Option<Option<u64>>,
+    pub spawn_time: Option<f64>,
+    pub deaths: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
@@ -170,8 +179,7 @@ pub struct Session {
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct GameSessionInfo {
     pub session_id: u64,
-    pub actor_id: u64,
-    pub actor_index: Option<usize>,
+    pub player_id: u64,
     pub last_message_time: f64,
     pub last_message_number: u64,
     pub messages_per_frame: u8,
@@ -226,6 +234,7 @@ pub fn make_world_update(before: &World, after: &World) -> WorldUpdate {
         before_frame: before.frame,
         after_frame: after.frame,
         time: after.time,
+        players: get_players_difference(&before.players, &after.players),
         actors: get_actors_difference(&before.actors, &after.actors),
         dynamic_objects: get_dynamic_objects_difference(
             &before.dynamic_objects,
@@ -241,6 +250,13 @@ pub fn make_world_update(before: &World, after: &World) -> WorldUpdate {
         bounded_areas: get_bounded_areas_difference(&before.bounded_areas, &after.bounded_areas),
         fields: get_fields_difference(&before.fields, &after.fields),
     }
+}
+
+fn get_players_difference(
+    before: &[Player],
+    after: &[Player],
+) -> Option<Difference<Player, PlayerUpdate>> {
+    get_difference(before, after, |v| v.id.0, make_player_update)
 }
 
 fn get_actors_difference(
@@ -291,6 +307,20 @@ fn get_bounded_areas_difference(
 
 fn get_fields_difference(before: &[Field], after: &[Field]) -> Option<ExistenceDifference<Field>> {
     get_existence_difference(before, after, |v| v.id)
+}
+
+fn make_player_update(b: &Player, a: &Player) -> Option<PlayerUpdate> {
+    let mut r = PlayerUpdate::default();
+    let mut d = false;
+    d = clone_if_different(&b.actor_id, &a.actor_id, &mut r.actor_id) || d;
+    d = clone_if_different(&b.spawn_time, &a.spawn_time, &mut r.spawn_time) || d;
+    d = clone_if_different(&b.deaths, &a.deaths, &mut r.deaths) || d;
+    if d {
+        r.id = a.id;
+        Some(r)
+    } else {
+        None
+    }
 }
 
 fn make_actor_update(b: &Actor, a: &Actor) -> Option<ActorUpdate> {
@@ -512,6 +542,13 @@ pub fn apply_world_update(update: WorldUpdate, world: &mut World) {
     world.frame = update.after_frame;
     world.time = update.time;
     apply_difference(
+        update.players,
+        &|v| v.id.0,
+        &|a, b| a.id == b.id,
+        apply_player_update,
+        &mut world.players,
+    );
+    apply_difference(
         update.actors,
         &|v| v.id,
         &|a, b| a.id == b.id,
@@ -619,6 +656,12 @@ where
     if let Some(removed) = ids {
         values.retain(|v| !removed.contains(&get_id(v)));
     }
+}
+
+fn apply_player_update(src: &PlayerUpdate, dst: &mut Player) {
+    clone_if_some(&src.actor_id, &mut dst.actor_id);
+    clone_if_some(&src.spawn_time, &mut dst.spawn_time);
+    clone_if_some(&src.deaths, &mut dst.deaths);
 }
 
 fn apply_actor_update(src: &ActorUpdate, dst: &mut Actor) {
@@ -926,7 +969,7 @@ mod tests {
     fn serialized_default_world_update_size() {
         assert_eq!(
             bincode::serialize(&WorldUpdate::default()).unwrap().len(),
-            32
+            33
         );
     }
 

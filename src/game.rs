@@ -21,7 +21,7 @@ use yata::prelude::Method;
 use crate::client::{Client, GameClientSettings, UdpClientSettings};
 use crate::control::{apply_actor_action, apply_cast_action};
 use crate::engine::{get_next_id, normalize_angle, Engine};
-use crate::generators::{generate_player_actor, generate_world, make_rng};
+use crate::generators::{generate_world, make_rng};
 use crate::meters::{measure, DurationMovingAverage, FpsMovingAverage};
 use crate::protocol::{
     apply_world_update, is_valid_player_name, ActorAction, CastAction, GameUpdate, PlayerControl,
@@ -29,7 +29,9 @@ use crate::protocol::{
 };
 use crate::rect::Rectf;
 use crate::vec2::Vec2f;
-use crate::world::{Aura, Disk, Element, Material, RingSector, StaticShape, World};
+use crate::world::{
+    Aura, Disk, Element, Material, Player, PlayerId, RingSector, StaticShape, World,
+};
 
 const NAME_FONT_SIZE: u16 = 36;
 const NAME_FONT_SCALE: f32 = 0.03;
@@ -42,6 +44,7 @@ const HUD_ELEMENT_WIDTH: f64 = HUD_ELEMENT_RADIUS * 2.2;
 const HUD_ELEMENT_BORDER_WIDTH: f64 = HUD_ELEMENT_RADIUS * (1.0 - BORDER_FACTOR);
 const HUD_MARGIN: f64 = 12.0;
 const HUD_FONT_SIZE: u16 = 24;
+const MESSAGE_FONT_SIZE: u16 = 48;
 
 #[derive(Clap, Debug)]
 pub struct GameSettings {
@@ -91,6 +94,7 @@ struct GameState {
     world_updates_delay: usize,
     control_hud_font: Font,
     show_control_hud: bool,
+    message_font: Font,
 }
 
 enum Menu {
@@ -111,9 +115,10 @@ enum FrameType {
 struct Scene {
     time_step: f64,
     world: Box<World>,
-    actor_id: Option<u64>,
     engine: Engine,
-    last_actor_index: Option<usize>,
+    player_id: Option<PlayerId>,
+    actor_id: Option<u64>,
+    actor_index: Option<usize>,
     camera_zoom: f64,
     camera_target: Vec2f,
     pointer: Vec2f,
@@ -169,6 +174,7 @@ pub async fn run_game(settings: GameSettings) {
         world_updates_delay: settings.world_updates_delay,
         control_hud_font: ubuntu_mono,
         show_control_hud: true,
+        message_font: ubuntu_mono,
     };
     let mut frame_type = FrameType::Initial;
     while !matches!(frame_type, FrameType::None) {
@@ -225,7 +231,7 @@ fn handle_input(game_state: &mut GameState, frame_type: &mut FrameType) {
             let mut actor_action = ActorAction::default();
             let mut cast_actions = Vec::new();
             handle_scene_input(game_state, v, &mut actor_action, |v| cast_actions.push(v));
-            if let Some(actor_index) = v.last_actor_index {
+            if let Some(actor_index) = v.actor_index {
                 apply_actor_action(actor_action, actor_index, &mut v.world);
                 for cast_action in cast_actions {
                     apply_cast_action(cast_action, actor_index, &mut v.world);
@@ -432,7 +438,7 @@ fn error_menu(ctx: &CtxRef, message: String, game_state: &mut GameState) {
 fn update(game_state: &mut GameState, frame_type: &mut FrameType) {
     let new_frame_type = match frame_type {
         FrameType::SinglePlayer(v) => {
-            update_single_player(v);
+            update_single_player(v, &mut game_state.rng);
             None
         }
         FrameType::Multiplayer(v) => update_multiplayer(game_state, v),
@@ -453,19 +459,22 @@ fn draw(game_state: &GameState, frame_type: &mut FrameType) {
 
 fn make_single_player_scene<R: Rng>(rng: &mut R) -> Scene {
     let mut world = generate_world(Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)), rng);
-    let actor_id = get_next_id(&mut world.id_counter);
-    world.actors.push(generate_player_actor(
-        actor_id,
-        &world.bounds,
-        String::from("Player"),
-        rng,
-    ));
+    let player_id = PlayerId(get_next_id(&mut world.id_counter));
+    world.players.push(Player {
+        id: player_id,
+        active: true,
+        name: "Player".to_string(),
+        actor_id: None,
+        spawn_time: world.time,
+        deaths: 0,
+    });
     Scene {
         time_step: 1.0 / 60.0,
-        actor_id: Some(actor_id),
         engine: Engine::default(),
+        player_id: Some(player_id),
+        actor_id: None,
+        actor_index: None,
         camera_zoom: 0.05,
-        last_actor_index: Some(world.actors.len() - 1),
         camera_target: Vec2f::ZERO,
         pointer: Vec2f::ZERO,
         world: Box::new(world),
@@ -475,21 +484,20 @@ fn make_single_player_scene<R: Rng>(rng: &mut R) -> Scene {
 fn make_empty_scene() -> Scene {
     Scene {
         time_step: 1.0 / 60.0,
-        actor_id: None,
         engine: Engine::default(),
+        player_id: None,
+        actor_id: None,
+        actor_index: None,
         camera_zoom: 0.05,
-        last_actor_index: None,
         camera_target: Vec2f::ZERO,
         pointer: Vec2f::ZERO,
         world: Box::new(World::default()),
     }
 }
 
-fn update_single_player(scene: &mut Scene) {
-    scene.engine.update(scene.time_step, &mut scene.world);
-    if let Some(actor_id) = scene.actor_id {
-        scene.last_actor_index = scene.world.actors.iter().position(|v| v.id == actor_id);
-    }
+fn update_single_player<R: Rng>(scene: &mut Scene, rng: &mut R) {
+    scene.engine.update(scene.time_step, &mut scene.world, rng);
+    update_scene_actor_index(scene);
 }
 
 fn update_multiplayer(game_state: &mut GameState, data: &mut Multiplayer) -> Option<FrameType> {
@@ -498,12 +506,12 @@ fn update_multiplayer(game_state: &mut GameState, data: &mut Multiplayer) -> Opt
     while let Some(update) = data.client.receiver().try_recv().ok() {
         match update {
             GameUpdate::GameOver(message) => {
-                data.scene.actor_id = None;
+                data.scene.player_id = None;
                 game_state.menu = Menu::Error(format!("Disconnected from server: {}", message));
                 return Some(FrameType::Initial);
             }
-            GameUpdate::SetActorId(v) => {
-                data.scene.actor_id = Some(v);
+            GameUpdate::SetPlayerId(v) => {
+                data.scene.player_id = Some(v);
                 apply_all_updates = true;
             }
             GameUpdate::WorldSnapshot {
@@ -516,14 +524,7 @@ fn update_multiplayer(game_state: &mut GameState, data: &mut Multiplayer) -> Opt
                 }
                 data.world_updates.clear();
                 data.scene.world = world;
-                if let Some(actor_id) = data.scene.actor_id {
-                    data.scene.last_actor_index = data
-                        .scene
-                        .world
-                        .actors
-                        .iter()
-                        .position(|v| v.id == actor_id);
-                }
+                update_scene_actor_index(&mut data.scene);
                 ack_actor_action(
                     ack_actor_action_world_frame,
                     ack_cast_action_world_frame,
@@ -578,14 +579,7 @@ fn update_multiplayer(game_state: &mut GameState, data: &mut Multiplayer) -> Opt
             }
             if let Some(world_update) = data.world_updates.pop_front() {
                 apply_world_update(*world_update, &mut data.scene.world);
-                if let Some(actor_id) = data.scene.actor_id {
-                    data.scene.last_actor_index = data
-                        .scene
-                        .world
-                        .actors
-                        .iter()
-                        .position(|v| v.id == actor_id);
-                }
+                update_scene_actor_index(&mut data.scene);
             } else {
                 break;
             }
@@ -625,7 +619,7 @@ fn ack_actor_action(
 }
 
 fn draw_scene(game_state: &GameState, scene: &mut Scene) {
-    if let Some(actor_index) = scene.last_actor_index {
+    if let Some(actor_index) = scene.actor_index {
         scene.camera_target = scene.world.actors[actor_index].position;
     }
 
@@ -673,7 +667,7 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
         );
     }
 
-    if let Some(actor_index) = scene.last_actor_index {
+    if let Some(actor_index) = scene.actor_index {
         let actor = &scene.world.actors[actor_index];
         draw_line(
             actor.position.x as f32,
@@ -848,12 +842,23 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
         Color::new(1.0, 0.0, 0.0, 0.5),
     );
 
-    if let Some(actor_index) = scene.last_actor_index {
-        if game_state.show_control_hud {
-            draw_control_hud(
-                &scene.world.actors[actor_index].spell_elements,
-                game_state.control_hud_font,
-            );
+    if game_state.show_control_hud {
+        let spell_elements = if let Some(actor_index) = scene.actor_index {
+            scene.world.actors[actor_index].spell_elements.as_slice()
+        } else {
+            &[]
+        };
+        draw_control_hud(spell_elements, game_state.control_hud_font);
+    }
+
+    if scene.actor_index.is_none() {
+        if let Some(player_id) = scene.player_id {
+            if let Some(player) = scene.world.players.iter().find(|v| v.id == player_id) {
+                draw_spawn_message(
+                    player.spawn_time - scene.world.time,
+                    game_state.message_font,
+                );
+            }
         }
     }
 }
@@ -977,9 +982,10 @@ fn draw_debug_scene_text(counter: &mut usize, scene: &Scene, font: Font) {
             String::from("Scene:"),
             format!("World frame: {}", scene.world.frame),
             format!("World time: {:.3}", scene.world.time),
+            format!("Player: id={:?}", scene.player_id.map(|v| v.0)),
             format!(
                 "Actor: id={:?} index={:?}",
-                scene.actor_id, scene.last_actor_index
+                scene.actor_id, scene.actor_index
             ),
             format!("Camera zoom: {}", scene.camera_zoom),
             format!(
@@ -1543,4 +1549,38 @@ impl<T> std::ops::DerefMut for AsyncDrop<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.value.as_mut().unwrap()
     }
+}
+
+fn update_scene_actor_index(scene: &mut Scene) {
+    if let Some(player_id) = scene.player_id {
+        scene.actor_id = scene
+            .world
+            .players
+            .iter()
+            .find(|v| v.id == player_id)
+            .and_then(|v| v.actor_id);
+        scene.actor_index = scene
+            .actor_id
+            .and_then(|actor_id| scene.world.actors.iter().position(|v| v.id == actor_id));
+    } else {
+        scene.actor_id = None;
+        scene.actor_index = None;
+    }
+}
+
+fn draw_spawn_message(time_left: f64, font: Font) {
+    set_default_camera();
+    let text = format!("Spawn in {}s", time_left.ceil());
+    let text_dimensions = measure_text(&text, Some(font), MESSAGE_FONT_SIZE, 1.0);
+    draw_text_ex(
+        &text,
+        (screen_width() - text_dimensions.width) / 2.0,
+        screen_height() / 2.0,
+        TextParams {
+            font,
+            font_size: MESSAGE_FONT_SIZE,
+            font_scale: 1.0,
+            color: WHITE,
+        },
+    );
 }

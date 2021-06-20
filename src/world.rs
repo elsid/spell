@@ -10,6 +10,7 @@ pub struct World {
     pub bounds: Rectf,
     pub time: f64,
     pub id_counter: u64,
+    pub players: Vec<Player>,
     pub actors: Vec<Actor>,
     pub dynamic_objects: Vec<DynamicObject>,
     pub static_objects: Vec<StaticObject>,
@@ -41,6 +42,8 @@ pub struct WorldSettings {
     pub area_of_effect_magick_duration: f64,
     pub border_width: f64,
     pub min_move_distance: f64,
+    pub initial_player_actor_spawn_delay: f64,
+    pub player_actor_respawn_delay: f64,
 }
 
 impl Default for WorldSettings {
@@ -65,8 +68,23 @@ impl Default for WorldSettings {
             area_of_effect_magick_duration: 0.5,
             border_width: 0.1,
             min_move_distance: 1e-3,
+            initial_player_actor_spawn_delay: 1.0,
+            player_actor_respawn_delay: 5.0,
         }
     }
+}
+
+#[derive(Default, Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
+pub struct PlayerId(pub u64);
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct Player {
+    pub id: PlayerId,
+    pub active: bool,
+    pub name: String,
+    pub actor_id: Option<u64>,
+    pub spawn_time: f64,
+    pub deaths: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -271,7 +289,7 @@ mod tests {
 
     #[test]
     fn serialized_default_world_size() {
-        assert_eq!(bincode::serialize(&World::default()).unwrap().len(), 258);
+        assert_eq!(bincode::serialize(&World::default()).unwrap().len(), 282);
     }
 
     #[test]

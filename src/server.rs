@@ -8,14 +8,15 @@ use std::time::{Duration, Instant};
 
 use actix_web::{web, HttpResponse};
 use clap::Clap;
+use rand::prelude::SmallRng;
 use rand::rngs::StdRng;
-use rand::{CryptoRng, Rng, SeedableRng};
+use rand::{Rng, SeedableRng};
 use serde::Deserialize;
 use tokio::net::UdpSocket;
 
 use crate::control::apply_actor_action;
-use crate::engine::{get_next_id, remove_actor, Engine};
-use crate::generators::{generate_player_actor, generate_world, make_rng};
+use crate::engine::{get_next_id, remove_player, Engine};
+use crate::generators::{generate_world, make_rng};
 use crate::meters::{measure, DurationMovingAverage, FpsMovingAverage};
 use crate::protocol::{
     add_all_removed, deserialize_client_message, get_client_message_data_type,
@@ -26,7 +27,7 @@ use crate::protocol::{
 };
 use crate::rect::Rectf;
 use crate::vec2::Vec2f;
-use crate::world::World;
+use crate::world::{Player, PlayerId, World};
 
 const MAX_SESSION_MESSAGES_PER_FRAME: u8 = 3;
 const MAX_DELAYED_MESSAGES_PER_SESSION: usize = 10;
@@ -92,11 +93,14 @@ pub fn run_server(params: ServerParams, stop: Arc<AtomicBool>) {
         udp_admin_receiver,
         stop_udp_server.clone(),
     );
+    let mut world_rng = make_rng(params.random_seed);
+    let world = generate_world(
+        Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)),
+        &mut world_rng,
+    );
     run_game_server(
-        generate_world(
-            Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)),
-            &mut make_rng(params.random_seed),
-        ),
+        world,
+        world_rng,
         GameServerSettings {
             max_players: params.max_players,
             update_period,
@@ -448,6 +452,7 @@ pub struct GameServerSettings {
 
 pub fn run_game_server(
     mut world: World,
+    mut rng: SmallRng,
     settings: GameServerSettings,
     sender: Sender<InternalServerMessage>,
     client_receiver: Receiver<ClientMessage>,
@@ -464,7 +469,6 @@ pub fn run_game_server(
     let time_step = settings.update_period.as_secs_f64();
     let mut frame_rate_limiter = FrameRateLimiter::new(settings.update_period, Instant::now());
     let mut sessions: Vec<GameSession> = Vec::new();
-    let mut rng = StdRng::from_entropy();
     let mut engine = Engine::default();
     let mut world_history = VecDeque::with_capacity(MAX_WORLD_HISTORY_SIZE);
     let mut world_updates_history = VecDeque::with_capacity(MAX_WORLD_HISTORY_SIZE - 1);
@@ -491,15 +495,13 @@ pub fn run_game_server(
                 &sender,
                 &client_receiver,
                 &mut sessions,
-                &mut rng,
                 &mut world,
             );
             close_timed_out_sessions(settings.session_timeout, &sender, &mut sessions);
             handle_dropped_messages(&mut sessions);
             remove_inactive_actors(&mut sessions, &mut world);
-            engine.update(time_step, &mut world);
+            engine.update(time_step, &mut world, &mut rng);
             sessions.retain(|v| v.active);
-            update_actor_index(&world, &mut sessions);
             if world_history.len() >= MAX_WORLD_HISTORY_SIZE {
                 world_history.pop_front();
                 world_updates_history.pop_front();
@@ -539,8 +541,7 @@ struct Meters {
 struct GameSession {
     session_id: u64,
     active: bool,
-    actor_id: u64,
-    actor_index: Option<usize>,
+    player_id: PlayerId,
     last_message_time: Instant,
     last_message_number: u64,
     messages_per_frame: u8,
@@ -574,8 +575,7 @@ fn handle_admin_messages(
                             .iter()
                             .map(|v| GameSessionInfo {
                                 session_id: v.session_id,
-                                actor_id: v.actor_id,
-                                actor_index: v.actor_index,
+                                player_id: v.player_id.0,
                                 last_message_time: v.last_message_time.elapsed().as_secs_f64(),
                                 last_message_number: v.last_message_number,
                                 messages_per_frame: v.messages_per_frame,
@@ -596,10 +596,7 @@ fn handle_admin_messages(
                 response,
             } => {
                 if let Some(session) = sessions.iter_mut().find(|v| v.session_id == session_id) {
-                    if let Some(actor_index) = session.actor_index {
-                        remove_actor(actor_index, world);
-                        session.actor_index = None;
-                    }
+                    remove_player(session.player_id, world);
                     sender
                         .send(InternalServerMessage::Unicast {
                             session_id: session.session_id,
@@ -708,12 +705,11 @@ fn handle_session_delayed_message(
     true
 }
 
-fn handle_new_client_messages<R: Rng + CryptoRng>(
+fn handle_new_client_messages(
     settings: &GameServerSettings,
     sender: &Sender<InternalServerMessage>,
     receiver: &Receiver<ClientMessage>,
     sessions: &mut Vec<GameSession>,
-    rng: &mut R,
     world: &mut World,
 ) {
     let mut messages_per_frame: usize = 0;
@@ -725,11 +721,11 @@ fn handle_new_client_messages<R: Rng + CryptoRng>(
             handle_session_new_message(message, settings, sender, session, world);
         } else if sessions.len() < settings.max_players {
             if let Some(session) =
-                create_new_session(settings.update_period, sender, message, world, rng)
+                create_new_session(settings.update_period, sender, message, world)
             {
                 info!(
-                    "New player has joined: session_id={} actor_id={}",
-                    session.session_id, session.actor_id
+                    "New player has joined: session_id={} player_id={}",
+                    session.session_id, session.player_id.0
                 );
                 sessions.push(session);
             }
@@ -785,10 +781,7 @@ fn handle_session_message(
     session.messages_per_frame += 1;
     match message.data {
         ClientMessageData::Quit => {
-            if let Some(actor_index) = session.actor_index {
-                remove_actor(actor_index, world);
-                session.actor_index = None;
-            }
+            remove_player(session.player_id, world);
             session.active = false;
             info!("Game session {} is done", session.session_id);
         }
@@ -798,7 +791,7 @@ fn handle_session_message(
                 session_id: session.session_id,
                 data: ServerMessageData::NewPlayer {
                     update_period: settings.update_period,
-                    actor_id: session.actor_id,
+                    player_id: session.player_id,
                 },
             })
             .unwrap(),
@@ -807,7 +800,13 @@ fn handle_session_message(
                 .ack_world_frame
                 .max(session.ack_world_frame)
                 .min(world.frame);
-            if let Some(actor_index) = session.actor_index {
+            if let Some(actor_index) = world
+                .players
+                .iter()
+                .find(|v| v.id == session.player_id)
+                .and_then(|v| v.actor_id)
+                .and_then(|actor_id| world.actors.iter().position(|v| v.id == actor_id))
+            {
                 sanitize_actor_action(&mut player_control.actor_action, actor_index, world);
                 if player_control.actor_action.cast_action.is_some()
                     && session.ack_cast_action_frame < player_control.cast_action_world_frame
@@ -818,11 +817,6 @@ fn handle_session_message(
                     player_control.actor_action.cast_action = None;
                 }
                 apply_actor_action(player_control.actor_action, actor_index, world);
-            } else {
-                debug!(
-                    "Player actor is not found for game session: {}",
-                    session.session_id
-                );
             }
         }
     }
@@ -843,26 +837,16 @@ fn handle_dropped_messages(sessions: &mut [GameSession]) {
 fn remove_inactive_actors(sessions: &mut [GameSession], world: &mut World) {
     for session in sessions.iter_mut() {
         if !session.active {
-            if let Some(actor_index) = session.actor_index {
-                remove_actor(actor_index, world);
-                session.actor_index = None;
-            }
+            remove_player(session.player_id, world);
         }
     }
 }
 
-fn update_actor_index(world: &World, sessions: &mut [GameSession]) {
-    for session in sessions.iter_mut() {
-        session.actor_index = world.actors.iter().position(|v| v.id == session.actor_id);
-    }
-}
-
-fn create_new_session<R: CryptoRng + Rng>(
+fn create_new_session(
     update_period: Duration,
     sender: &Sender<InternalServerMessage>,
     message: ClientMessage,
     world: &mut World,
-    rng: &mut R,
 ) -> Option<GameSession> {
     match message.data {
         ClientMessageData::Join(name) => {
@@ -875,21 +859,20 @@ fn create_new_session<R: CryptoRng + Rng>(
                     .unwrap();
                 return None;
             }
-            if let Some(actor_id) = try_add_player_actor(name, world, rng) {
+            if let Some(player_id) = try_add_player(name, world) {
                 sender
                     .send(InternalServerMessage::Unicast {
                         session_id: message.session_id,
                         data: ServerMessageData::NewPlayer {
                             update_period,
-                            actor_id,
+                            player_id,
                         },
                     })
                     .unwrap();
                 Some(GameSession {
                     session_id: message.session_id,
                     active: true,
-                    actor_id,
-                    actor_index: None,
+                    player_id,
                     last_message_time: Instant::now(),
                     last_message_number: message.number,
                     messages_per_frame: 1,
@@ -956,15 +939,20 @@ impl FrameRateLimiter {
     }
 }
 
-fn try_add_player_actor<R: Rng>(name: String, world: &mut World, rng: &mut R) -> Option<u64> {
-    if world.actors.iter().any(|v| v.name == name) {
+fn try_add_player(name: String, world: &mut World) -> Option<PlayerId> {
+    if world.players.iter().any(|v| v.name == name) || world.actors.iter().any(|v| v.name == name) {
         return None;
     }
-    let actor_id = get_next_id(&mut world.id_counter);
-    world
-        .actors
-        .push(generate_player_actor(actor_id, &world.bounds, name, rng));
-    Some(actor_id)
+    let player_id = PlayerId(get_next_id(&mut world.id_counter));
+    world.players.push(Player {
+        id: player_id,
+        active: true,
+        name,
+        actor_id: None,
+        spawn_time: world.time + world.settings.initial_player_actor_spawn_delay,
+        deaths: 0,
+    });
+    Some(player_id)
 }
 
 fn sanitize_actor_action(actor_action: &mut ActorAction, actor_index: usize, world: &World) {

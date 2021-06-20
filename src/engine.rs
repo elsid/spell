@@ -5,9 +5,13 @@ use parry2d_f64::na::{Point2, Vector2};
 use parry2d_f64::query;
 use parry2d_f64::query::{Contact, Ray, TOI};
 use parry2d_f64::shape::{Ball, Cuboid, Polyline, Shape, Triangle};
+use rand::Rng;
 
+use crate::generators::generate_player_actor;
 use crate::rect::Rectf;
 use crate::vec2::{Square, Vec2f};
+#[cfg(feature = "server")]
+use crate::world::PlayerId;
 use crate::world::{
     Actor, Aura, Beam, Body, BoundedArea, CircleArc, DelayedMagick, Disk, DynamicObject, Effect,
     Element, Field, Magick, Material, RingSector, StaticArea, StaticObject, StaticShape, TempArea,
@@ -172,7 +176,7 @@ impl Engine {
         &self.beam_collider.reflected_beams
     }
 
-    pub fn update(&mut self, duration: f64, world: &mut World) {
+    pub fn update<R: Rng>(&mut self, duration: f64, world: &mut World, rng: &mut R) {
         world.frame += 1;
         world.time += duration;
         world
@@ -182,6 +186,7 @@ impl Engine {
         world.bounded_areas.retain(|v| v.deadline >= now);
         world.fields.retain(|v| v.deadline >= now);
         world.beams.retain(|v| v.deadline >= now);
+        spawn_player_actors(world, rng);
         intersect_objects_with_areas(world, &self.shape_cache);
         intersect_objects_with_all_fields(world);
         update_temp_areas(world.time, duration, &world.settings, &mut world.temp_areas);
@@ -223,6 +228,7 @@ impl Engine {
                 })
         });
         handle_completed_magicks(world);
+        update_player_spawn_time(world);
     }
 
     #[cfg(feature = "client")]
@@ -242,8 +248,10 @@ pub fn get_next_id(counter: &mut u64) -> u64 {
 }
 
 #[cfg(feature = "server")]
-pub fn remove_actor(actor_index: usize, world: &mut World) {
-    world.actors[actor_index].active = false;
+pub fn remove_player(player_id: PlayerId, world: &mut World) {
+    if let Some(player) = world.players.iter_mut().find(|v| v.id == player_id) {
+        player.active = false;
+    }
 }
 
 pub fn add_actor_spell_element(actor_index: usize, element: Element, world: &mut World) {
@@ -1928,6 +1936,33 @@ fn make_circle_arc_polyline(arc: &CircleArcKey) -> Polyline {
         vertices.push(Point2::new(position.x, position.y));
     }
     Polyline::new(vertices, None)
+}
+
+fn spawn_player_actors<R: Rng>(world: &mut World, rng: &mut R) {
+    for player in world.players.iter_mut() {
+        if player.active && player.actor_id.is_none() && player.spawn_time <= world.time {
+            let actor_id = get_next_id(&mut world.id_counter);
+            world.actors.push(generate_player_actor(
+                actor_id,
+                &world.bounds,
+                player.name.clone(),
+                rng,
+            ));
+            player.actor_id = Some(actor_id);
+        }
+    }
+}
+
+fn update_player_spawn_time(world: &mut World) {
+    for player in world.players.iter_mut() {
+        if let Some(actor_id) = player.actor_id {
+            if !world.actors.iter().any(|v| v.id == actor_id) {
+                player.actor_id = None;
+                player.spawn_time = world.time + world.settings.player_actor_respawn_delay;
+                player.deaths += 1;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
