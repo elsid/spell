@@ -801,11 +801,9 @@ fn handle_session_message(
                 .max(session.ack_world_frame)
                 .min(world.frame);
             if let Some(actor_index) = world
-                .players
+                .actors
                 .iter()
-                .find(|v| v.id == session.player_id)
-                .and_then(|v| v.actor_id)
-                .and_then(|actor_id| world.actors.iter().position(|v| v.id == actor_id))
+                .position(|v| v.player_id == session.player_id)
             {
                 sanitize_actor_action(&mut player_control.actor_action, actor_index, world);
                 if player_control.actor_action.cast_action.is_some()

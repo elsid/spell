@@ -90,6 +90,7 @@ pub struct Player {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Actor {
     pub id: u64,
+    pub player_id: PlayerId,
     pub active: bool,
     pub name: String,
     pub body: Body<Disk>,
@@ -282,7 +283,7 @@ mod tests {
     use rand::SeedableRng;
 
     use crate::generators::{
-        generate_actor, generate_dynamic_object, generate_static_area, generate_static_object,
+        generate_dynamic_object, generate_static_area, generate_static_object,
     };
 
     use super::*;
@@ -295,15 +296,32 @@ mod tests {
     #[test]
     fn serialized_actor_size() {
         assert_eq!(
-            bincode::serialize(&generate_actor(
-                Material::Flesh,
-                1,
-                &Rectf::new(Vec2f::ZERO, Vec2f::new(1.0, 1.0)),
-                &mut SmallRng::seed_from_u64(42),
-            ))
+            bincode::serialize(&Actor {
+                id: 1,
+                player_id: PlayerId(0),
+                active: true,
+                name: String::from("actor"),
+                body: Body {
+                    shape: Disk { radius: 1.0 },
+                    material: Material::Flesh,
+                },
+                position: Vec2f::ZERO,
+                health: 1.0,
+                effect: Effect::default(),
+                aura: Aura::default(),
+                velocity: Vec2f::ZERO,
+                dynamic_force: Vec2f::ZERO,
+                current_direction: Vec2f::ZERO,
+                target_direction: Vec2f::ZERO,
+                spell_elements: Vec::new(),
+                moving: false,
+                delayed_magick: None,
+                position_z: 0.0,
+                velocity_z: 0.0,
+            })
             .unwrap()
             .len(),
-            359
+            367
         );
     }
 

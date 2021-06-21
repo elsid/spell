@@ -792,10 +792,5 @@ fn recv_player_id(game_update_receiver: &Receiver<GameUpdate>) -> PlayerId {
 }
 
 fn find_player_actor(player_id: PlayerId, world: &World) -> Option<&Actor> {
-    world
-        .players
-        .iter()
-        .find(|v| v.id == player_id)
-        .and_then(|v| v.actor_id)
-        .and_then(|actor_id| world.actors.iter().find(|v| v.id == actor_id))
+    world.actors.iter().find(|v| v.player_id == player_id)
 }

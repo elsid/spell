@@ -1944,8 +1944,9 @@ fn spawn_player_actors<R: Rng>(world: &mut World, rng: &mut R) {
             let actor_id = get_next_id(&mut world.id_counter);
             world.actors.push(generate_player_actor(
                 actor_id,
-                &world.bounds,
+                player.id,
                 player.name.clone(),
+                &world.bounds,
                 rng,
             ));
             player.actor_id = Some(actor_id);
