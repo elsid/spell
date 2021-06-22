@@ -30,8 +30,8 @@ use crate::protocol::{
 use crate::rect::Rectf;
 use crate::vec2::Vec2f;
 use crate::world::{
-    Aura, DelayedMagickStatus, Disk, Element, Material, Player, PlayerId, RingSector, StaticShape,
-    World,
+    ActorId, Aura, DelayedMagickStatus, Disk, Element, Material, Player, PlayerId, RingSector,
+    StaticShape, World,
 };
 
 const NAME_FONT_SIZE: u16 = 36;
@@ -120,7 +120,7 @@ struct Scene {
     world: Box<World>,
     engine: Engine,
     player_id: Option<PlayerId>,
-    actor_id: Option<u64>,
+    actor_id: Option<ActorId>,
     actor_index: Option<usize>,
     camera_zoom: f64,
     camera_target: Vec2f,

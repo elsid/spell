@@ -5,8 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::vec2::Vec2f;
 use crate::world::{
-    Actor, ActorOccupation, Aura, Beam, BoundedArea, DelayedMagick, DynamicObject, Effect, Element,
-    Field, Gun, GunId, Player, PlayerId, StaticArea, StaticObject, TempArea, World,
+    Actor, ActorId, ActorOccupation, Aura, Beam, BoundedArea, DelayedMagick, DynamicObject,
+    DynamicObjectId, Effect, Element, Field, Gun, GunId, Player, PlayerId, StaticArea,
+    StaticObject, StaticObjectId, TempArea, TempAreaId, World,
 };
 
 pub const HEARTBEAT_PERIOD: Duration = Duration::from_secs(1);
@@ -85,14 +86,14 @@ pub struct WorldUpdate {
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
 pub struct PlayerUpdate {
     pub id: PlayerId,
-    pub actor_id: Option<Option<u64>>,
+    pub actor_id: Option<Option<ActorId>>,
     pub spawn_time: Option<f64>,
     pub deaths: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
 pub struct ActorUpdate {
-    pub id: u64,
+    pub id: ActorId,
     pub position: Option<Vec2f>,
     pub health: Option<f64>,
     pub effect: Option<Effect>,
@@ -111,7 +112,7 @@ pub struct ActorUpdate {
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
 pub struct DynamicObjectUpdate {
-    pub id: u64,
+    pub id: DynamicObjectId,
     pub position: Option<Vec2f>,
     pub health: Option<f64>,
     pub effect: Option<Effect>,
@@ -124,7 +125,7 @@ pub struct DynamicObjectUpdate {
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
 pub struct StaticObjectUpdate {
-    pub id: u64,
+    pub id: StaticObjectId,
     pub health: Option<f64>,
     pub effect: Option<Effect>,
     pub aura: Option<Aura>,
@@ -132,7 +133,7 @@ pub struct StaticObjectUpdate {
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
 pub struct TempAreaUpdate {
-    pub id: u64,
+    pub id: TempAreaId,
     pub effect: Option<Effect>,
 }
 
@@ -273,50 +274,50 @@ fn get_actors_difference(
     before: &[Actor],
     after: &[Actor],
 ) -> Option<Difference<Actor, ActorUpdate>> {
-    get_difference(before, after, |v| v.id, make_actor_update)
+    get_difference(before, after, |v| v.id.0, make_actor_update)
 }
 
 fn get_dynamic_objects_difference(
     before: &[DynamicObject],
     after: &[DynamicObject],
 ) -> Option<Difference<DynamicObject, DynamicObjectUpdate>> {
-    get_difference(before, after, |v| v.id, make_dynamic_object_update)
+    get_difference(before, after, |v| v.id.0, make_dynamic_object_update)
 }
 
 fn get_static_objects_difference(
     before: &[StaticObject],
     after: &[StaticObject],
 ) -> Option<Difference<StaticObject, StaticObjectUpdate>> {
-    get_difference(before, after, |v| v.id, make_static_object_update)
+    get_difference(before, after, |v| v.id.0, make_static_object_update)
 }
 
 fn get_beams_difference(before: &[Beam], after: &[Beam]) -> Option<ExistenceDifference<Beam>> {
-    get_existence_difference(before, after, |v| v.id)
+    get_existence_difference(before, after, |v| v.id.0)
 }
 
 fn get_static_areas_difference(
     before: &[StaticArea],
     after: &[StaticArea],
 ) -> Option<ExistenceDifference<StaticArea>> {
-    get_existence_difference(before, after, |v| v.id)
+    get_existence_difference(before, after, |v| v.id.0)
 }
 
 fn get_temp_areas_difference(
     before: &[TempArea],
     after: &[TempArea],
 ) -> Option<Difference<TempArea, TempAreaUpdate>> {
-    get_difference(before, after, |v| v.id, make_temp_area_update)
+    get_difference(before, after, |v| v.id.0, make_temp_area_update)
 }
 
 fn get_bounded_areas_difference(
     before: &[BoundedArea],
     after: &[BoundedArea],
 ) -> Option<ExistenceDifference<BoundedArea>> {
-    get_existence_difference(before, after, |v| v.id)
+    get_existence_difference(before, after, |v| v.id.0)
 }
 
 fn get_fields_difference(before: &[Field], after: &[Field]) -> Option<ExistenceDifference<Field>> {
-    get_existence_difference(before, after, |v| v.id)
+    get_existence_difference(before, after, |v| v.id.0)
 }
 
 fn get_guns_difference(before: &[Gun], after: &[Gun]) -> Option<Difference<Gun, GunUpdate>> {
@@ -578,36 +579,36 @@ pub fn apply_world_update(update: WorldUpdate, world: &mut World) {
     );
     apply_difference(
         update.actors,
-        &|v| v.id,
+        &|v| v.id.0,
         &|a, b| a.id == b.id,
         apply_actor_update,
         &mut world.actors,
     );
     apply_difference(
         update.dynamic_objects,
-        &|v| v.id,
+        &|v| v.id.0,
         &|a, b| a.id == b.id,
         apply_dynamic_object_update,
         &mut world.dynamic_objects,
     );
     apply_difference(
         update.static_objects,
-        &|v| v.id,
+        &|v| v.id.0,
         &|a, b| a.id == b.id,
         apply_static_object_update,
         &mut world.static_objects,
     );
-    apply_existence_difference(update.beams, &|v| v.id, &mut world.beams);
-    apply_existence_difference(update.static_areas, &|v| v.id, &mut world.static_areas);
+    apply_existence_difference(update.beams, &|v| v.id.0, &mut world.beams);
+    apply_existence_difference(update.static_areas, &|v| v.id.0, &mut world.static_areas);
     apply_difference(
         update.temp_areas,
-        &|v| v.id,
+        &|v| v.id.0,
         &|a, b| a.id == b.id,
         apply_temp_area_update,
         &mut world.temp_areas,
     );
-    apply_existence_difference(update.bounded_areas, &|v| v.id, &mut world.bounded_areas);
-    apply_existence_difference(update.fields, &|v| v.id, &mut world.fields);
+    apply_existence_difference(update.bounded_areas, &|v| v.id.0, &mut world.bounded_areas);
+    apply_existence_difference(update.fields, &|v| v.id.0, &mut world.fields);
     apply_difference(
         update.guns,
         &|v| v.id.0,

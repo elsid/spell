@@ -5,8 +5,9 @@ use crate::engine::get_next_id;
 use crate::rect::Rectf;
 use crate::vec2::Vec2f;
 use crate::world::{
-    Actor, ActorOccupation, Aura, Body, Disk, DynamicObject, Effect, Element, Magick, Material,
-    PlayerId, StaticArea, StaticObject, StaticShape, World, WorldSettings,
+    Actor, ActorId, ActorOccupation, Aura, Body, Disk, DynamicObject, DynamicObjectId, Effect,
+    Element, Magick, Material, PlayerId, StaticArea, StaticAreaId, StaticObject, StaticObjectId,
+    StaticShape, World, WorldSettings,
 };
 
 pub fn make_rng(random_seed: Option<u64>) -> SmallRng {
@@ -50,7 +51,7 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
         );
     }
     let mut static_areas = vec![StaticArea {
-        id: get_next_id(&mut id_counter),
+        id: StaticAreaId(get_next_id(&mut id_counter)),
         body: Body {
             shape: Disk {
                 radius: bounds.min.distance(bounds.max) * 0.5,
@@ -103,7 +104,7 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
 }
 
 pub fn generate_player_actor<R: Rng>(
-    id: u64,
+    id: ActorId,
     player_id: PlayerId,
     name: String,
     bounds: &Rectf,
@@ -153,20 +154,25 @@ pub fn generate_actors<R: Rng>(
     for _ in 0..number {
         actors.push(generate_actor(
             material,
-            get_next_id(id_counter),
+            ActorId(get_next_id(id_counter)),
             bounds,
             rng,
         ));
     }
 }
 
-pub fn generate_actor<R: Rng>(material: Material, id: u64, bounds: &Rectf, rng: &mut R) -> Actor {
+pub fn generate_actor<R: Rng>(
+    material: Material,
+    id: ActorId,
+    bounds: &Rectf,
+    rng: &mut R,
+) -> Actor {
     let radius = 1.0;
     Actor {
         id,
         player_id: PlayerId(0),
         active: true,
-        name: format!("bot {}", id),
+        name: format!("bot {}", id.0),
         body: Body {
             shape: Disk { radius },
             material,
@@ -204,7 +210,7 @@ pub fn generate_dynamic_objects<R: Rng>(
     for _ in 0..number {
         dynamic_objects.push(generate_dynamic_object(
             material,
-            get_next_id(id_counter),
+            DynamicObjectId(get_next_id(id_counter)),
             bounds,
             rng,
         ));
@@ -213,7 +219,7 @@ pub fn generate_dynamic_objects<R: Rng>(
 
 pub fn generate_dynamic_object<R: Rng>(
     material: Material,
-    id: u64,
+    id: DynamicObjectId,
     bounds: &Rectf,
     rng: &mut R,
 ) -> DynamicObject {
@@ -249,7 +255,7 @@ pub fn generate_static_objects<R: Rng>(
     for _ in 0..number {
         static_objects.push(generate_static_object(
             material,
-            get_next_id(id_counter),
+            StaticObjectId(get_next_id(id_counter)),
             bounds,
             rng,
         ));
@@ -258,7 +264,7 @@ pub fn generate_static_objects<R: Rng>(
 
 pub fn generate_static_object<R: Rng>(
     material: Material,
-    id: u64,
+    id: StaticObjectId,
     bounds: &Rectf,
     rng: &mut R,
 ) -> StaticObject {
@@ -293,7 +299,7 @@ pub fn generate_static_areas<R: Rng>(
         static_areas.push(generate_static_area(
             material,
             magick.clone(),
-            get_next_id(id_counter),
+            StaticAreaId(get_next_id(id_counter)),
             bounds,
             rng,
         ));
@@ -303,7 +309,7 @@ pub fn generate_static_areas<R: Rng>(
 pub fn generate_static_area<R: Rng>(
     material: Material,
     magick: Magick,
-    id: u64,
+    id: StaticAreaId,
     bounds: &Rectf,
     rng: &mut R,
 ) -> StaticArea {

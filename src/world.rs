@@ -89,14 +89,17 @@ pub struct Player {
     pub id: PlayerId,
     pub active: bool,
     pub name: String,
-    pub actor_id: Option<u64>,
+    pub actor_id: Option<ActorId>,
     pub spawn_time: f64,
     pub deaths: u64,
 }
 
+#[derive(Default, Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
+pub struct ActorId(pub u64);
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Actor {
-    pub id: u64,
+    pub id: ActorId,
     pub player_id: PlayerId,
     pub active: bool,
     pub name: String,
@@ -117,9 +120,12 @@ pub struct Actor {
     pub occupation: ActorOccupation,
 }
 
+#[derive(Default, Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
+pub struct DynamicObjectId(pub u64);
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct DynamicObject {
-    pub id: u64,
+    pub id: DynamicObjectId,
     pub body: Body<Disk>,
     pub position: Vec2f,
     pub health: f64,
@@ -131,9 +137,12 @@ pub struct DynamicObject {
     pub velocity_z: f64,
 }
 
+#[derive(Default, Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
+pub struct StaticObjectId(pub u64);
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct StaticObject {
-    pub id: u64,
+    pub id: StaticObjectId,
     pub body: Body<StaticShape>,
     pub position: Vec2f,
     pub health: f64,
@@ -141,43 +150,58 @@ pub struct StaticObject {
     pub aura: Aura,
 }
 
+#[derive(Default, Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
+pub struct BeamId(pub u64);
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
 pub struct Beam {
-    pub id: u64,
-    pub actor_id: u64,
+    pub id: BeamId,
+    pub actor_id: ActorId,
     pub magick: Magick,
     pub deadline: f64,
 }
 
+#[derive(Default, Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
+pub struct StaticAreaId(pub u64);
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct StaticArea {
-    pub id: u64,
+    pub id: StaticAreaId,
     pub body: Body<Disk>,
     pub position: Vec2f,
     pub magick: Magick,
 }
 
+#[derive(Default, Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
+pub struct TempAreaId(pub u64);
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct TempArea {
-    pub id: u64,
+    pub id: TempAreaId,
     pub body: Body<Disk>,
     pub position: Vec2f,
     pub effect: Effect,
 }
 
+#[derive(Default, Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
+pub struct BoundedAreaId(pub u64);
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct BoundedArea {
-    pub id: u64,
-    pub actor_id: u64,
+    pub id: BoundedAreaId,
+    pub actor_id: ActorId,
     pub body: RingSector,
     pub effect: Effect,
     pub deadline: f64,
 }
 
+#[derive(Default, Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
+pub struct FieldId(pub u64);
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Field {
-    pub id: u64,
-    pub actor_id: u64,
+    pub id: FieldId,
+    pub actor_id: ActorId,
     pub body: RingSector,
     pub force: f64,
     pub deadline: f64,
@@ -189,7 +213,7 @@ pub struct GunId(pub u64);
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Gun {
     pub id: GunId,
-    pub actor_id: u64,
+    pub actor_id: ActorId,
     pub shots_left: u64,
     pub shot_period: f64,
     pub bullet_force_factor: f64,
@@ -332,7 +356,7 @@ mod tests {
     fn serialized_actor_size() {
         assert_eq!(
             bincode::serialize(&Actor {
-                id: 1,
+                id: ActorId(1),
                 player_id: PlayerId(0),
                 active: true,
                 name: String::from("actor"),
@@ -366,7 +390,7 @@ mod tests {
         assert_eq!(
             bincode::serialize(&generate_dynamic_object(
                 Material::Flesh,
-                1,
+                DynamicObjectId(1),
                 &Rectf::new(Vec2f::ZERO, Vec2f::new(1.0, 1.0)),
                 &mut SmallRng::seed_from_u64(42),
             ))
@@ -381,7 +405,7 @@ mod tests {
         assert_eq!(
             bincode::serialize(&generate_static_object(
                 Material::Flesh,
-                1,
+                StaticObjectId(1),
                 &Rectf::new(Vec2f::ZERO, Vec2f::new(1.0, 1.0)),
                 &mut SmallRng::seed_from_u64(42),
             ))
@@ -402,7 +426,7 @@ mod tests {
             bincode::serialize(&generate_static_area(
                 Material::Flesh,
                 Magick::default(),
-                1,
+                StaticAreaId(1),
                 &Rectf::new(Vec2f::ZERO, Vec2f::new(1.0, 1.0)),
                 &mut SmallRng::seed_from_u64(42),
             ))

@@ -13,9 +13,10 @@ use crate::vec2::{Square, Vec2f};
 #[cfg(feature = "server")]
 use crate::world::PlayerId;
 use crate::world::{
-    Actor, ActorOccupation, Aura, Beam, Body, BoundedArea, CircleArc, DelayedMagick,
-    DelayedMagickStatus, Disk, DynamicObject, Effect, Element, Field, Gun, GunId, Magick, Material,
-    RingSector, StaticArea, StaticObject, StaticShape, TempArea, World, WorldSettings,
+    Actor, ActorId, ActorOccupation, Aura, Beam, BeamId, Body, BoundedArea, BoundedAreaId,
+    CircleArc, DelayedMagick, DelayedMagickStatus, Disk, DynamicObject, DynamicObjectId, Effect,
+    Element, Field, FieldId, Gun, GunId, Magick, Material, RingSector, StaticArea, StaticObject,
+    StaticObjectId, StaticShape, TempArea, TempAreaId, World, WorldSettings,
 };
 
 const RESOLUTION_FACTOR: f64 = 4.0;
@@ -370,7 +371,7 @@ fn cast_earth_based_shield(magick: Magick, actor_index: usize, world: &mut World
     let distance = 5.0;
     for i in -2..=2 {
         world.static_objects.push(StaticObject {
-            id: get_next_id(&mut world.id_counter),
+            id: StaticObjectId(get_next_id(&mut world.id_counter)),
             body: Body {
                 shape: StaticShape::Disk(Disk {
                     radius: distance * std::f64::consts::PI / (2 * 5 * 2) as f64,
@@ -394,7 +395,7 @@ fn cast_spray_based_shield(magick: Magick, actor_index: usize, world: &mut World
     let distance = 5.0;
     for i in -2..=2 {
         world.temp_areas.push(TempArea {
-            id: get_next_id(&mut world.id_counter),
+            id: TempAreaId(get_next_id(&mut world.id_counter)),
             body: Body {
                 shape: Disk {
                     radius: distance * std::f64::consts::PI / (2 * 5 * 2) as f64,
@@ -417,7 +418,7 @@ fn cast_reflecting_shield(length: f64, actor_index: usize, world: &mut World) {
     let mut elements = [false; 11];
     elements[Element::Shield as usize] = true;
     world.static_objects.push(StaticObject {
-        id: get_next_id(&mut world.id_counter),
+        id: StaticObjectId(get_next_id(&mut world.id_counter)),
         body: Body {
             shape: StaticShape::CircleArc(CircleArc {
                 radius,
@@ -448,7 +449,7 @@ fn add_delayed_magick(magick: Magick, actor_index: usize, world: &mut World) {
 
 fn add_beam(magick: Magick, actor_index: usize, world: &mut World) {
     world.beams.push(Beam {
-        id: get_next_id(&mut world.id_counter),
+        id: BeamId(get_next_id(&mut world.id_counter)),
         actor_id: world.actors[actor_index].id,
         magick,
         deadline: world.time + world.settings.directed_magick_duration,
@@ -525,7 +526,7 @@ fn cast_spray(angle: f64, duration: f64, magick: &Magick, actor_index: usize, wo
         <= f64::EPSILON
     {
         world.fields.push(Field {
-            id: get_next_id(&mut world.id_counter),
+            id: FieldId(get_next_id(&mut world.id_counter)),
             actor_id: actor.id,
             body: body.clone(),
             force: world.settings.spray_force_factor * effect.power[Element::Water as usize],
@@ -533,7 +534,7 @@ fn cast_spray(angle: f64, duration: f64, magick: &Magick, actor_index: usize, wo
         });
     }
     world.bounded_areas.push(BoundedArea {
-        id: get_next_id(&mut world.id_counter),
+        id: BoundedAreaId(get_next_id(&mut world.id_counter)),
         actor_id: actor.id,
         body,
         effect,
@@ -1872,7 +1873,7 @@ fn handle_completed_magicks(world: &mut World) {
                     / world.settings.max_magic_power;
                 let material = Material::Stone;
                 world.dynamic_objects.push(DynamicObject {
-                    id: get_next_id(&mut world.id_counter),
+                    id: DynamicObjectId(get_next_id(&mut world.id_counter)),
                     body: Body {
                         shape: Disk { radius },
                         material,
@@ -1990,7 +1991,7 @@ fn make_circle_arc_polyline(arc: &CircleArcKey) -> Polyline {
 fn spawn_player_actors<R: Rng>(world: &mut World, rng: &mut R) {
     for player in world.players.iter_mut() {
         if player.active && player.actor_id.is_none() && player.spawn_time <= world.time {
-            let actor_id = get_next_id(&mut world.id_counter);
+            let actor_id = ActorId(get_next_id(&mut world.id_counter));
             world.actors.push(generate_player_actor(
                 actor_id,
                 player.id,
@@ -2025,7 +2026,7 @@ fn shoot_from_guns<R: Rng>(world: &mut World, rng: &mut R) {
             gun.shots_left -= 1;
             let radius = world.settings.gun_bullet_radius;
             world.dynamic_objects.push(DynamicObject {
-                id: get_next_id(&mut world.id_counter),
+                id: DynamicObjectId(get_next_id(&mut world.id_counter)),
                 body: Body {
                     shape: Disk { radius },
                     material: Material::Ice,
@@ -2108,7 +2109,7 @@ mod tests {
         let duration = 10.0;
         let shape_cache = ShapeCache::default();
         let static_object = StaticObject {
-            id: 1,
+            id: StaticObjectId(1),
             body: Body {
                 shape: StaticShape::CircleArc(CircleArc {
                     radius: 5.0,
@@ -2123,7 +2124,7 @@ mod tests {
             aura: Aura::default(),
         };
         let dynamic_object = DynamicObject {
-            id: 2,
+            id: DynamicObjectId(2),
             body: Body {
                 shape: Disk { radius: 0.2 },
                 material: Material::Stone,
