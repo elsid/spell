@@ -1066,7 +1066,8 @@ fn update_actor_current_direction(duration: f64, max_rotation_speed: f64, actor:
 }
 
 fn update_actor_dynamic_force(move_force: f64, actor: &mut Actor) {
-    actor.dynamic_force += actor.current_direction * move_force * actor.moving as i32 as f64;
+    let moving = actor.moving && actor.delayed_magick.is_none();
+    actor.dynamic_force += actor.current_direction * move_force * moving as i32 as f64;
 }
 
 fn add_dry_friction_force(
