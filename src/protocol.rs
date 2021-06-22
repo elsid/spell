@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::vec2::Vec2f;
 use crate::world::{
-    Actor, Aura, Beam, BoundedArea, DelayedMagick, DynamicObject, Effect, Element, Field, Player,
-    PlayerId, StaticArea, StaticObject, TempArea, World,
+    Actor, ActorOccupation, Aura, Beam, BoundedArea, DelayedMagick, DynamicObject, Effect, Element,
+    Field, Gun, GunId, Player, PlayerId, StaticArea, StaticObject, TempArea, World,
 };
 
 pub const HEARTBEAT_PERIOD: Duration = Duration::from_secs(1);
@@ -79,6 +79,7 @@ pub struct WorldUpdate {
     pub temp_areas: Option<Difference<TempArea, TempAreaUpdate>>,
     pub bounded_areas: Option<ExistenceDifference<BoundedArea>>,
     pub fields: Option<ExistenceDifference<Field>>,
+    pub guns: Option<Difference<Gun, GunUpdate>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
@@ -105,6 +106,7 @@ pub struct ActorUpdate {
     pub delayed_magick: Option<Option<DelayedMagick>>,
     pub position_z: Option<f64>,
     pub velocity_z: Option<f64>,
+    pub occupation: Option<ActorOccupation>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
@@ -132,6 +134,13 @@ pub struct StaticObjectUpdate {
 pub struct TempAreaUpdate {
     pub id: u64,
     pub effect: Option<Effect>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
+pub struct GunUpdate {
+    pub id: GunId,
+    pub shots_left: Option<u64>,
+    pub last_shot: Option<f64>,
 }
 
 #[derive(Default, Debug, Deserialize, Serialize)]
@@ -249,6 +258,7 @@ pub fn make_world_update(before: &World, after: &World) -> WorldUpdate {
         temp_areas: get_temp_areas_difference(&before.temp_areas, &after.temp_areas),
         bounded_areas: get_bounded_areas_difference(&before.bounded_areas, &after.bounded_areas),
         fields: get_fields_difference(&before.fields, &after.fields),
+        guns: get_guns_difference(&before.guns, &after.guns),
     }
 }
 
@@ -309,6 +319,10 @@ fn get_fields_difference(before: &[Field], after: &[Field]) -> Option<ExistenceD
     get_existence_difference(before, after, |v| v.id)
 }
 
+fn get_guns_difference(before: &[Gun], after: &[Gun]) -> Option<Difference<Gun, GunUpdate>> {
+    get_difference(before, after, |v| v.id.0, make_gun_update)
+}
+
 fn make_player_update(b: &Player, a: &Player) -> Option<PlayerUpdate> {
     let mut r = PlayerUpdate::default();
     let mut d = false;
@@ -347,6 +361,7 @@ fn make_actor_update(b: &Actor, a: &Actor) -> Option<ActorUpdate> {
     d = clone_if_different(&b.delayed_magick, &a.delayed_magick, &mut r.delayed_magick) || d;
     d = clone_if_different(&b.position_z, &a.position_z, &mut r.position_z) || d;
     d = clone_if_different(&b.velocity_z, &a.velocity_z, &mut r.velocity_z) || d;
+    d = clone_if_different(&b.occupation, &a.occupation, &mut r.occupation) || d;
     if d {
         r.id = a.id;
         Some(r)
@@ -392,6 +407,19 @@ fn make_temp_area_update(b: &TempArea, a: &TempArea) -> Option<TempAreaUpdate> {
     let mut r = TempAreaUpdate::default();
     let mut d = false;
     d = clone_if_different(&b.effect, &a.effect, &mut r.effect) || d;
+    if d {
+        r.id = a.id;
+        Some(r)
+    } else {
+        None
+    }
+}
+
+fn make_gun_update(b: &Gun, a: &Gun) -> Option<GunUpdate> {
+    let mut r = GunUpdate::default();
+    let mut d = false;
+    d = clone_if_different(&b.shots_left, &a.shots_left, &mut r.shots_left) || d;
+    d = clone_if_different(&b.last_shot, &a.last_shot, &mut r.last_shot) || d;
     if d {
         r.id = a.id;
         Some(r)
@@ -580,6 +608,13 @@ pub fn apply_world_update(update: WorldUpdate, world: &mut World) {
     );
     apply_existence_difference(update.bounded_areas, &|v| v.id, &mut world.bounded_areas);
     apply_existence_difference(update.fields, &|v| v.id, &mut world.fields);
+    apply_difference(
+        update.guns,
+        &|v| v.id.0,
+        &|a, b| a.id == b.id,
+        apply_gun_update,
+        &mut world.guns,
+    );
 }
 
 fn apply_difference<T, U, GetId, EqualById, ApplyUpdate>(
@@ -678,6 +713,7 @@ fn apply_actor_update(src: &ActorUpdate, dst: &mut Actor) {
     clone_if_some(&src.delayed_magick, &mut dst.delayed_magick);
     clone_if_some(&src.position_z, &mut dst.position_z);
     clone_if_some(&src.velocity_z, &mut dst.velocity_z);
+    clone_if_some(&src.occupation, &mut dst.occupation);
 }
 
 fn apply_dynamic_object_update(src: &DynamicObjectUpdate, dst: &mut DynamicObject) {
@@ -701,6 +737,11 @@ fn apply_temp_area_update(src: &TempAreaUpdate, dst: &mut TempArea) {
     clone_if_some(&src.effect, &mut dst.effect);
 }
 
+fn apply_gun_update(src: &GunUpdate, dst: &mut Gun) {
+    clone_if_some(&src.shots_left, &mut dst.shots_left);
+    clone_if_some(&src.last_shot, &mut dst.last_shot);
+}
+
 fn clone_if_some<T: Clone>(src: &Option<T>, dst: &mut T) {
     if let Some(value) = src.as_ref() {
         *dst = value.clone();
@@ -719,6 +760,7 @@ where
     let mut sort_temp_areas = false;
     let mut sort_bounded_areas = false;
     let mut sort_fields = false;
+    let mut sort_guns = false;
     for v in src {
         add_removed_difference(&v.actors, &mut dst.actors, &mut sort_actors);
         add_removed_difference(
@@ -744,6 +786,7 @@ where
             &mut sort_bounded_areas,
         );
         add_removed_existence_difference(&v.fields, &mut dst.fields, &mut sort_fields);
+        add_removed_difference(&v.guns, &mut dst.guns, &mut sort_guns);
     }
     sort_and_dedup(sort_actors, dst.actors.as_mut().map(|v| v.removed.as_mut()));
     sort_and_dedup(
@@ -768,6 +811,7 @@ where
         dst.bounded_areas.as_mut().map(|v| v.removed.as_mut()),
     );
     sort_and_dedup(sort_fields, dst.fields.as_mut().map(|v| v.removed.as_mut()));
+    sort_and_dedup(sort_guns, dst.guns.as_mut().map(|v| v.removed.as_mut()));
 }
 
 fn add_removed_difference<T, U>(
@@ -969,7 +1013,7 @@ mod tests {
     fn serialized_default_world_update_size() {
         assert_eq!(
             bincode::serialize(&WorldUpdate::default()).unwrap().len(),
-            33
+            34
         );
     }
 
@@ -977,7 +1021,7 @@ mod tests {
     fn serialized_default_actor_update_size() {
         assert_eq!(
             bincode::serialize(&ActorUpdate::default()).unwrap().len(),
-            21
+            22
         );
     }
 

@@ -19,6 +19,7 @@ pub struct World {
     pub temp_areas: Vec<TempArea>,
     pub bounded_areas: Vec<BoundedArea>,
     pub fields: Vec<Field>,
+    pub guns: Vec<Gun>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -44,6 +45,9 @@ pub struct WorldSettings {
     pub min_move_distance: f64,
     pub initial_player_actor_spawn_delay: f64,
     pub player_actor_respawn_delay: f64,
+    pub base_gun_fire_period: f64,
+    pub gun_bullet_radius: f64,
+    pub gun_half_grouping_angle: f64,
 }
 
 impl Default for WorldSettings {
@@ -70,6 +74,9 @@ impl Default for WorldSettings {
             min_move_distance: 1e-3,
             initial_player_actor_spawn_delay: 1.0,
             player_actor_respawn_delay: 5.0,
+            base_gun_fire_period: 0.3,
+            gun_bullet_radius: 0.2,
+            gun_half_grouping_angle: std::f64::consts::PI / 12.0,
         }
     }
 }
@@ -107,6 +114,7 @@ pub struct Actor {
     pub delayed_magick: Option<DelayedMagick>,
     pub position_z: f64,
     pub velocity_z: f64,
+    pub occupation: ActorOccupation,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -175,6 +183,20 @@ pub struct Field {
     pub deadline: f64,
 }
 
+#[derive(Default, Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
+pub struct GunId(pub u64);
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct Gun {
+    pub id: GunId,
+    pub actor_id: u64,
+    pub shots_left: u64,
+    pub shot_period: f64,
+    pub bullet_force_factor: f64,
+    pub bullet_power: [f64; 11],
+    pub last_shot: f64,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Body<Shape> {
     pub shape: Shape,
@@ -227,10 +249,22 @@ pub struct Aura {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct DelayedMagick {
-    pub actor_id: u64,
     pub started: f64,
-    pub completed: bool,
+    pub status: DelayedMagickStatus,
     pub power: [f64; 11],
+}
+
+#[derive(Debug, Copy, Clone, Deserialize, Serialize, PartialEq)]
+pub enum DelayedMagickStatus {
+    Started,
+    Throw,
+    Shoot,
+}
+
+#[derive(Debug, Copy, Clone, Deserialize, Serialize, PartialEq)]
+pub enum ActorOccupation {
+    None,
+    Shooting(GunId),
 }
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Deserialize, Serialize)]
@@ -241,6 +275,7 @@ pub enum Material {
     Grass,
     Dirt,
     Water,
+    Ice,
 }
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Deserialize, Serialize)]
@@ -290,7 +325,7 @@ mod tests {
 
     #[test]
     fn serialized_default_world_size() {
-        assert_eq!(bincode::serialize(&World::default()).unwrap().len(), 282);
+        assert_eq!(bincode::serialize(&World::default()).unwrap().len(), 314);
     }
 
     #[test]
@@ -318,10 +353,11 @@ mod tests {
                 delayed_magick: None,
                 position_z: 0.0,
                 velocity_z: 0.0,
+                occupation: ActorOccupation::None,
             })
             .unwrap()
             .len(),
-            367
+            371
         );
     }
 

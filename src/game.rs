@@ -30,7 +30,8 @@ use crate::protocol::{
 use crate::rect::Rectf;
 use crate::vec2::Vec2f;
 use crate::world::{
-    Aura, Disk, Element, Material, Player, PlayerId, RingSector, StaticShape, World,
+    Aura, DelayedMagickStatus, Disk, Element, Material, Player, PlayerId, RingSector, StaticShape,
+    World,
 };
 
 const NAME_FONT_SIZE: u16 = 36;
@@ -786,13 +787,15 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
             v.position,
         );
         if let Some(delayed_magick) = v.delayed_magick.as_ref() {
-            draw_delayed_magic_power(
-                (scene.world.time - delayed_magick.started)
-                    .min(scene.world.settings.max_magic_power)
-                    / scene.world.settings.max_magic_power,
-                v.body.shape.radius,
-                v.position,
-            );
+            if matches!(delayed_magick.status, DelayedMagickStatus::Started) {
+                draw_delayed_magic_power(
+                    (scene.world.time - delayed_magick.started)
+                        .min(scene.world.settings.max_magic_power)
+                        / scene.world.settings.max_magic_power,
+                    v.body.shape.radius,
+                    v.position,
+                );
+            }
         }
     }
 
@@ -1010,6 +1013,7 @@ fn draw_debug_scene_text(counter: &mut usize, scene: &Scene, font: Font) {
             format!("Temp areas: {}", scene.world.temp_areas.len()),
             format!("Bounded areas: {}", scene.world.bounded_areas.len()),
             format!("Fields: {}", scene.world.fields.len()),
+            format!("Guns: {}", scene.world.guns.len()),
         ],
     );
 }
@@ -1186,6 +1190,7 @@ fn get_material_color(material: Material, alpha: f32) -> Color {
         Material::Dirt => Color::new(0.5, 0.38, 0.26, alpha),
         Material::Grass => Color::new(0.44, 0.69, 0.15, alpha),
         Material::Water => Color::new(0.1, 0.1, 0.9, alpha),
+        Material::Ice => Color::new(0.83, 0.94, 0.97, alpha),
     }
 }
 

@@ -5,8 +5,8 @@ use crate::engine::get_next_id;
 use crate::rect::Rectf;
 use crate::vec2::Vec2f;
 use crate::world::{
-    Actor, Aura, Body, Disk, DynamicObject, Effect, Element, Magick, Material, PlayerId,
-    StaticArea, StaticObject, StaticShape, World, WorldSettings,
+    Actor, ActorOccupation, Aura, Body, Disk, DynamicObject, Effect, Element, Magick, Material,
+    PlayerId, StaticArea, StaticObject, StaticShape, World, WorldSettings,
 };
 
 pub fn make_rng(random_seed: Option<u64>) -> SmallRng {
@@ -98,6 +98,7 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
         temp_areas: Vec::new(),
         bounded_areas: Vec::new(),
         fields: Vec::new(),
+        guns: Vec::new(),
     }
 }
 
@@ -137,6 +138,7 @@ pub fn generate_player_actor<R: Rng>(
         delayed_magick: None,
         position_z: radius,
         velocity_z: 0.0,
+        occupation: ActorOccupation::None,
     }
 }
 
@@ -187,6 +189,7 @@ pub fn generate_actor<R: Rng>(material: Material, id: u64, bounds: &Rectf, rng: 
         delayed_magick: None,
         position_z: radius,
         velocity_z: 0.0,
+        occupation: ActorOccupation::None,
     }
 }
 

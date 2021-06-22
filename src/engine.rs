@@ -13,9 +13,9 @@ use crate::vec2::{Square, Vec2f};
 #[cfg(feature = "server")]
 use crate::world::PlayerId;
 use crate::world::{
-    Actor, Aura, Beam, Body, BoundedArea, CircleArc, DelayedMagick, Disk, DynamicObject, Effect,
-    Element, Field, Magick, Material, RingSector, StaticArea, StaticObject, StaticShape, TempArea,
-    World, WorldSettings,
+    Actor, ActorOccupation, Aura, Beam, Body, BoundedArea, CircleArc, DelayedMagick,
+    DelayedMagickStatus, Disk, DynamicObject, Effect, Element, Field, Gun, GunId, Magick, Material,
+    RingSector, StaticArea, StaticObject, StaticShape, TempArea, World, WorldSettings,
 };
 
 const RESOLUTION_FACTOR: f64 = 4.0;
@@ -186,7 +186,10 @@ impl Engine {
         world.bounded_areas.retain(|v| v.deadline >= now);
         world.fields.retain(|v| v.deadline >= now);
         world.beams.retain(|v| v.deadline >= now);
+        world.guns.retain(|v| v.shots_left > 0);
+        update_actor_occupations(world);
         spawn_player_actors(world, rng);
+        shoot_from_guns(world, rng);
         intersect_objects_with_areas(world, &self.shape_cache);
         intersect_objects_with_all_fields(world);
         update_temp_areas(world.time, duration, &world.settings, &mut world.temp_areas);
@@ -271,10 +274,10 @@ pub fn start_directed_magick(actor_index: usize, world: &mut World) {
     .cast();
     if magick.power[Element::Shield as usize] > 0.0 {
         cast_shield(magick, actor_index, world);
-    } else if magick.power[Element::Earth as usize] > 0.0 {
+    } else if magick.power[Element::Earth as usize] > 0.0
+        || magick.power[Element::Ice as usize] > 0.0
+    {
         add_delayed_magick(magick, actor_index, world);
-    } else if magick.power[Element::Ice as usize] > 0.0 {
-        return;
     } else if magick.power[Element::Arcane as usize] > 0.0
         || magick.power[Element::Life as usize] > 0.0
     {
@@ -437,9 +440,8 @@ fn cast_reflecting_shield(length: f64, actor_index: usize, world: &mut World) {
 
 fn add_delayed_magick(magick: Magick, actor_index: usize, world: &mut World) {
     world.actors[actor_index].delayed_magick = Some(DelayedMagick {
-        actor_id: world.actors[actor_index].id,
         started: world.time,
-        completed: false,
+        status: DelayedMagickStatus::Started,
         power: magick.power,
     });
 }
@@ -463,7 +465,13 @@ pub fn complete_directed_magick(actor_index: usize, world: &mut World) {
         return;
     }
     if let Some(delayed_magick) = world.actors[actor_index].delayed_magick.as_mut() {
-        delayed_magick.completed = true;
+        delayed_magick.status = if delayed_magick.power[Element::Earth as usize] == 0.0
+            && delayed_magick.power[Element::Ice as usize] > 0.0
+        {
+            DelayedMagickStatus::Shoot
+        } else {
+            DelayedMagickStatus::Throw
+        };
     }
 }
 
@@ -598,6 +606,7 @@ impl Material {
             Material::Grass => 500.0,
             Material::Dirt => 1500.0,
             Material::Water => 1000.0,
+            Material::Ice => 900.0,
         }
     }
 
@@ -609,6 +618,7 @@ impl Material {
             Material::Grass => 0.01,
             Material::Dirt => 0.01,
             Material::Water => 0.0,
+            Material::Ice => 0.01,
         }
     }
 
@@ -620,6 +630,7 @@ impl Material {
             Material::Grass => 0.5,
             Material::Dirt => 1.0,
             Material::Water => 1.0,
+            Material::Ice => 0.05,
         }
     }
 }
@@ -1066,7 +1077,9 @@ fn update_actor_current_direction(duration: f64, max_rotation_speed: f64, actor:
 }
 
 fn update_actor_dynamic_force(move_force: f64, actor: &mut Actor) {
-    let moving = actor.moving && actor.delayed_magick.is_none();
+    let moving = actor.moving
+        && actor.delayed_magick.is_none()
+        && matches!(actor.occupation, ActorOccupation::None);
     actor.dynamic_force += actor.current_direction * move_force * moving as i32 as f64;
 }
 
@@ -1851,38 +1864,73 @@ fn is_active(bounds: &Rectf, shape: &dyn Shape, position: Vec2f, health: f64) ->
 
 fn handle_completed_magicks(world: &mut World) {
     for actor in world.actors.iter_mut() {
-        if actor
-            .delayed_magick
-            .as_ref()
-            .map(|v| v.completed)
-            .unwrap_or(false)
-        {
-            let delayed_magick = actor.delayed_magick.take().unwrap();
-            let radius = delayed_magick.power.iter().sum::<f64>() * actor.body.shape.radius
-                / world.settings.max_magic_power;
-            let material = Material::Stone;
-            world.dynamic_objects.push(DynamicObject {
-                id: get_next_id(&mut world.id_counter),
-                body: Body {
-                    shape: Disk { radius },
-                    material,
-                },
-                position: actor.position
-                    + actor.current_direction
-                        * (actor.body.shape.radius + radius + world.settings.margin),
-                health: 1.0,
-                effect: Effect {
-                    applied: [world.time; 11],
-                    power: delayed_magick.power,
-                },
-                aura: Default::default(),
-                velocity: actor.velocity,
-                dynamic_force: actor.current_direction
-                    * ((world.time - delayed_magick.started).min(world.settings.max_magic_power)
-                        * world.settings.magic_force_multiplier),
-                position_z: 1.5 * actor.body.shape.radius,
-                velocity_z: 0.0,
-            });
+        match actor.delayed_magick.as_ref().map(|v| v.status) {
+            Some(DelayedMagickStatus::Started) => (),
+            Some(DelayedMagickStatus::Throw) => {
+                let delayed_magick = actor.delayed_magick.take().unwrap();
+                let radius = delayed_magick.power.iter().sum::<f64>() * actor.body.shape.radius
+                    / world.settings.max_magic_power;
+                let material = Material::Stone;
+                world.dynamic_objects.push(DynamicObject {
+                    id: get_next_id(&mut world.id_counter),
+                    body: Body {
+                        shape: Disk { radius },
+                        material,
+                    },
+                    position: actor.position
+                        + actor.current_direction
+                            * (actor.body.shape.radius + radius + world.settings.margin),
+                    health: 1.0,
+                    effect: Effect {
+                        applied: [world.time; 11],
+                        power: delayed_magick.power,
+                    },
+                    aura: Default::default(),
+                    velocity: actor.velocity,
+                    dynamic_force: actor.current_direction
+                        * ((world.time - delayed_magick.started)
+                            .min(world.settings.max_magic_power)
+                            * world.settings.magic_force_multiplier),
+                    position_z: 1.5 * actor.body.shape.radius,
+                    velocity_z: 0.0,
+                });
+                actor.delayed_magick = None;
+            }
+            Some(DelayedMagickStatus::Shoot) => {
+                let delayed_magick = actor.delayed_magick.take().unwrap();
+                let gun_id = GunId(get_next_id(&mut world.id_counter));
+                let shots = (delayed_magick.power[Element::Ice as usize] + 2.0).round();
+                let mut bullet_power = delayed_magick.power;
+                bullet_power.iter_mut().for_each(|v| *v /= shots);
+                world.guns.push(Gun {
+                    id: gun_id,
+                    actor_id: actor.id,
+                    shots_left: shots as u64,
+                    shot_period: world.settings.base_gun_fire_period / shots,
+                    bullet_force_factor: ((world.time - delayed_magick.started)
+                        .min(world.settings.max_magic_power)
+                        * world.settings.magic_force_multiplier)
+                        / shots,
+                    bullet_power,
+                    last_shot: 0.0,
+                });
+                actor.delayed_magick = None;
+                actor.occupation = ActorOccupation::Shooting(gun_id);
+            }
+            None => (),
+        }
+    }
+}
+
+fn update_actor_occupations(world: &mut World) {
+    for actor in world.actors.iter_mut() {
+        match actor.occupation {
+            ActorOccupation::None => (),
+            ActorOccupation::Shooting(gun_id) => {
+                if !world.guns.iter().any(|v| v.id == gun_id) {
+                    actor.occupation = ActorOccupation::None;
+                }
+            }
         }
     }
 }
@@ -1963,6 +2011,46 @@ fn update_player_spawn_time(world: &mut World) {
                 player.spawn_time = world.time + world.settings.player_actor_respawn_delay;
                 player.deaths += 1;
             }
+        }
+    }
+}
+
+fn shoot_from_guns<R: Rng>(world: &mut World, rng: &mut R) {
+    for gun in world.guns.iter_mut() {
+        if gun.last_shot + gun.shot_period > world.time {
+            continue;
+        }
+        if let Some(actor) = world.actors.iter().find(|v| v.id == gun.actor_id) {
+            gun.last_shot = world.time;
+            gun.shots_left -= 1;
+            let radius = world.settings.gun_bullet_radius;
+            world.dynamic_objects.push(DynamicObject {
+                id: get_next_id(&mut world.id_counter),
+                body: Body {
+                    shape: Disk { radius },
+                    material: Material::Ice,
+                },
+                position: actor.position
+                    + actor.current_direction
+                        * (actor.body.shape.radius + radius + world.settings.margin),
+                health: 1.0,
+                effect: Effect {
+                    applied: [world.time; 11],
+                    power: gun.bullet_power,
+                },
+                aura: Aura::default(),
+                velocity: actor.velocity,
+                dynamic_force: (actor.current_direction * gun.bullet_force_factor).rotated(
+                    rng.gen_range(
+                        -world.settings.gun_half_grouping_angle
+                            ..world.settings.gun_half_grouping_angle,
+                    ),
+                ),
+                position_z: 1.5 * actor.body.shape.radius,
+                velocity_z: 0.0,
+            });
+        } else {
+            gun.shots_left = 0;
         }
     }
 }
