@@ -57,7 +57,7 @@ impl Default for WorldSettings {
             decay_factor: 1e-3,
             margin: 0.1,
             physical_damage_factor: 1e-3,
-            magical_damage_factor: 1e2,
+            magical_damage_factor: 1e3,
             max_beam_length: 1e3,
             max_rotation_speed: 2.0 * std::f64::consts::PI,
             move_force: 5e4,

@@ -193,7 +193,7 @@ impl Engine {
         shoot_from_guns(world, rng);
         intersect_objects_with_areas(world, &self.shape_cache);
         intersect_objects_with_all_fields(world);
-        update_temp_areas(world.time, duration, &world.settings, &mut world.temp_areas);
+        update_temp_areas(world.time, &mut world.temp_areas);
         update_actors(world.time, duration, &world.settings, &mut world.actors);
         update_dynamic_objects(
             world.time,
@@ -1023,14 +1023,9 @@ fn push_object(
     *dynamic_force += to_position * ((1.0 / to_position.norm() - 1.0 / max_distance) * force);
 }
 
-fn update_temp_areas(
-    now: f64,
-    duration: f64,
-    settings: &WorldSettings,
-    temp_area_objects: &mut Vec<TempArea>,
-) {
+fn update_temp_areas(now: f64, temp_area_objects: &mut Vec<TempArea>) {
     for object in temp_area_objects.iter_mut() {
-        decay_effect(now, duration, settings.decay_factor, &mut object.effect);
+        decay_effect(now, &mut object.effect);
     }
 }
 
@@ -1045,7 +1040,7 @@ fn update_actors(now: f64, duration: f64, settings: &WorldSettings, actors: &mut
             &actor.effect,
             &mut actor.health,
         );
-        decay_effect(now, duration, settings.decay_factor, &mut actor.effect);
+        decay_effect(now, &mut actor.effect);
         decay_aura(now, duration, settings.decay_factor, &mut actor.aura);
         update_velocity(
             duration,
@@ -1084,7 +1079,7 @@ fn update_dynamic_objects(
             &object.effect,
             &mut object.health,
         );
-        decay_effect(now, duration, settings.decay_factor, &mut object.effect);
+        decay_effect(now, &mut object.effect);
         decay_aura(now, duration, settings.decay_factor, &mut object.aura);
         update_velocity(
             duration,
@@ -1116,7 +1111,7 @@ fn update_static_objects(
     static_objects: &mut Vec<StaticObject>,
 ) {
     for object in static_objects.iter_mut() {
-        decay_effect(now, duration, settings.decay_factor, &mut object.effect);
+        decay_effect(now, &mut object.effect);
         decay_aura(now, duration, settings.decay_factor, &mut object.aura);
     }
 }
@@ -1155,15 +1150,27 @@ fn add_dry_friction_force(
     }
 }
 
-fn decay_effect(now: f64, duration: f64, decay_factor: f64, effect: &mut Effect) {
+fn decay_effect(now: f64, effect: &mut Effect) {
     for i in 0..effect.power.len() {
-        if is_instant_effect_element(Element::from(i)) {
+        if now - effect.applied[i] >= get_element_duration(Element::from(i)) {
             effect.power[i] = 0.0;
-        } else {
-            let passed = now - effect.applied[i];
-            let initial = effect.power[i] - decay_factor * (passed - duration).square();
-            effect.power[i] = (initial - decay_factor * passed.square()).max(0.0);
         }
+    }
+}
+
+fn get_element_duration(element: Element) -> f64 {
+    match element {
+        Element::Water => f64::MAX * f64::EPSILON,
+        Element::Lightning => 0.25,
+        Element::Life => 1.0,
+        Element::Arcane => 0.25,
+        Element::Shield => 5.0,
+        Element::Earth => 0.25,
+        Element::Cold => 5.0,
+        Element::Fire => 5.0,
+        Element::Steam => 0.25,
+        Element::Ice => 5.0,
+        Element::Poison => 5.0,
     }
 }
 
@@ -1229,8 +1236,7 @@ fn add_magick_power_to_effect(now: f64, target: &Effect, other: &[f64; 11]) -> E
     if target_power[Element::Water as usize] > 0.0 && target_power[Element::Fire as usize] > 0.0 {
         power[Element::Water as usize] = 0.0;
         power[Element::Fire as usize] = 0.0;
-        power[Element::Steam as usize] =
-            target_power[Element::Water as usize].max(target_power[Element::Fire as usize]);
+        power[Element::Steam as usize] = target_power[Element::Water as usize];
         applied[Element::Steam as usize] = now;
     }
     if target_power[Element::Poison as usize] > 0.0 && target_power[Element::Life as usize] > 0.0 {
@@ -1256,19 +1262,14 @@ fn add_magick_power_to_effect(now: f64, target: &Effect, other: &[f64; 11]) -> E
 }
 
 fn get_damage(power: &[f64; 11]) -> f64 {
-    power[Element::Lightning as usize] - power[Element::Life as usize]
-        + power[Element::Arcane as usize]
-        + power[Element::Cold as usize]
-        + power[Element::Fire as usize]
-        + power[Element::Steam as usize]
-        + power[Element::Poison as usize]
-}
-
-fn is_instant_effect_element(element: Element) -> bool {
-    matches!(
-        element,
-        Element::Lightning | Element::Arcane | Element::Earth | Element::Steam
-    )
+    (1.0 + power[Element::Water as usize]) * power[Element::Lightning as usize]
+        / get_element_duration(Element::Lightning)
+        - power[Element::Life as usize] / get_element_duration(Element::Life)
+        + power[Element::Arcane as usize] / get_element_duration(Element::Arcane)
+        + power[Element::Cold as usize] / get_element_duration(Element::Cold)
+        + power[Element::Fire as usize] / get_element_duration(Element::Fire)
+        + power[Element::Steam as usize] / get_element_duration(Element::Steam)
+        + power[Element::Poison as usize] / get_element_duration(Element::Poison)
 }
 
 fn can_absorb_physical_damage(elements: &[bool; 11]) -> bool {
