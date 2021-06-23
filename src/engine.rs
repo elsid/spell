@@ -264,6 +264,13 @@ pub fn add_actor_spell_element(actor_index: usize, element: Element, world: &mut
     if !matches!(world.actors[actor_index].occupation, ActorOccupation::None) {
         return;
     }
+    if matches!(element, Element::Lightning)
+        && world.actors[actor_index].effect.power[Element::Water as usize] > 0.0
+    {
+        world.actors[actor_index].effect.power[Element::Lightning as usize] =
+            world.actors[actor_index].effect.power[Element::Lightning as usize].min(1.0);
+        return;
+    }
     Spell::on(
         world.settings.max_spell_elements as usize,
         &mut world.actors[actor_index].spell_elements,
