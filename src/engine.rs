@@ -218,9 +218,11 @@ impl Engine {
             .iter_mut()
             .for_each(|v| v.dynamic_force = Vec2f::ZERO);
         let bounds = world.bounds.clone();
-        world.actors.retain(|v| {
-            v.active && is_active(&bounds, &v.body.shape.as_shape(), v.position, v.health)
+        world.actors.iter_mut().for_each(|v| {
+            v.active = is_active(&bounds, &v.body.shape.as_shape(), v.position, v.health)
         });
+        remove_inactive_actors_occupation_results(world);
+        world.actors.retain(|v| v.active);
         world.dynamic_objects.retain(|v| {
             (v.velocity_z > f64::EPSILON || v.velocity.norm() > f64::EPSILON)
                 && is_active(&bounds, &v.body.shape.as_shape(), v.position, v.health)
@@ -2107,6 +2109,26 @@ fn shoot_from_guns<R: Rng>(world: &mut World, rng: &mut R) {
 
 fn is_actor_immobilized(actor: &Actor) -> bool {
     actor.effect.power[Element::Ice as usize] > 0.0
+}
+
+fn remove_inactive_actors_occupation_results(world: &mut World) {
+    for actor in world.actors.iter() {
+        if actor.active {
+            continue;
+        }
+        match actor.occupation {
+            ActorOccupation::None => (),
+            ActorOccupation::Shooting(gun_id) => world.guns.retain(|v| v.id != gun_id),
+            ActorOccupation::Spraying {
+                bounded_area_id,
+                field_id,
+            } => {
+                world.bounded_areas.retain(|v| v.id != bounded_area_id);
+                world.fields.retain(|v| v.id != field_id);
+            }
+            ActorOccupation::Beaming(beam_id) => world.beams.retain(|v| v.id != beam_id),
+        }
+    }
 }
 
 #[cfg(test)]
