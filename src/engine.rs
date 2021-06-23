@@ -259,6 +259,9 @@ pub fn remove_player(player_id: PlayerId, world: &mut World) {
 }
 
 pub fn add_actor_spell_element(actor_index: usize, element: Element, world: &mut World) {
+    if !matches!(world.actors[actor_index].occupation, ActorOccupation::None) {
+        return;
+    }
     Spell::on(
         world.settings.max_spell_elements as usize,
         &mut world.actors[actor_index].spell_elements,
@@ -268,6 +271,9 @@ pub fn add_actor_spell_element(actor_index: usize, element: Element, world: &mut
 
 #[allow(clippy::needless_return)]
 pub fn start_directed_magick(actor_index: usize, world: &mut World) {
+    if !matches!(world.actors[actor_index].occupation, ActorOccupation::None) {
+        return;
+    }
     let magick = Spell::on(
         world.settings.max_spell_elements as usize,
         &mut world.actors[actor_index].spell_elements,
@@ -304,6 +310,9 @@ pub fn start_directed_magick(actor_index: usize, world: &mut World) {
 #[allow(clippy::needless_return)]
 #[allow(clippy::if_same_then_else)]
 pub fn start_area_of_effect_magick(actor_index: usize, world: &mut World) {
+    if !matches!(world.actors[actor_index].occupation, ActorOccupation::None) {
+        return;
+    }
     let magick = Spell::on(
         world.settings.max_spell_elements as usize,
         &mut world.actors[actor_index].spell_elements,
@@ -477,6 +486,9 @@ pub fn complete_directed_magick(actor_index: usize, world: &mut World) {
 }
 
 pub fn self_magick(actor_index: usize, world: &mut World) {
+    if !matches!(world.actors[actor_index].occupation, ActorOccupation::None) {
+        return;
+    }
     let magick = Spell::on(
         world.settings.max_spell_elements as usize,
         &mut world.actors[actor_index].spell_elements,
