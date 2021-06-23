@@ -1083,6 +1083,9 @@ fn update_static_objects(
 }
 
 fn update_actor_current_direction(duration: f64, max_rotation_speed: f64, actor: &mut Actor) {
+    if is_actor_immobilized(actor) {
+        return;
+    }
     actor.current_direction = get_current_direction(
         actor.current_direction,
         actor.target_direction,
@@ -1094,7 +1097,8 @@ fn update_actor_current_direction(duration: f64, max_rotation_speed: f64, actor:
 fn update_actor_dynamic_force(move_force: f64, actor: &mut Actor) {
     let moving = actor.moving
         && actor.delayed_magick.is_none()
-        && matches!(actor.occupation, ActorOccupation::None);
+        && matches!(actor.occupation, ActorOccupation::None)
+        && !is_actor_immobilized(actor);
     actor.dynamic_force += actor.current_direction * move_force * moving as i32 as f64;
 }
 
@@ -2075,6 +2079,10 @@ fn shoot_from_guns<R: Rng>(world: &mut World, rng: &mut R) {
             gun.shots_left = 0;
         }
     }
+}
+
+fn is_actor_immobilized(actor: &Actor) -> bool {
+    actor.effect.power[Element::Ice as usize] > 0.0
 }
 
 #[cfg(test)]
