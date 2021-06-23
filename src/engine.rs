@@ -1190,8 +1190,10 @@ fn add_magick_power_to_effect(now: f64, target: &Effect, other: &[f64; 11]) -> E
     }
     if target_power[Element::Water as usize] > 0.0 && target_power[Element::Cold as usize] > 0.0 {
         power[Element::Ice as usize] =
-            target_power[Element::Water as usize].max(target_power[Element::Water as usize]);
+            target_power[Element::Water as usize].max(target_power[Element::Cold as usize]);
         applied[Element::Ice as usize] = now;
+        power[Element::Water as usize] = 0.0;
+        power[Element::Cold as usize] = 0.0;
     }
     Effect { applied, power }
 }
