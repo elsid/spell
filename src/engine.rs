@@ -533,13 +533,15 @@ fn cast_spray(angle: f64, duration: f64, magick: &Magick, actor_index: usize, wo
             deadline: world.time + duration,
         });
     }
+    let bounded_area_id = BoundedAreaId(get_next_id(&mut world.id_counter));
     world.bounded_areas.push(BoundedArea {
-        id: BoundedAreaId(get_next_id(&mut world.id_counter)),
+        id: bounded_area_id,
         actor_id: actor.id,
         body,
         effect,
         deadline: world.time + duration,
     });
+    world.actors[actor_index].occupation = ActorOccupation::Spraying(bounded_area_id);
 }
 
 trait WithMass {
@@ -1931,6 +1933,11 @@ fn update_actor_occupations(world: &mut World) {
             ActorOccupation::None => (),
             ActorOccupation::Shooting(gun_id) => {
                 if !world.guns.iter().any(|v| v.id == gun_id) {
+                    actor.occupation = ActorOccupation::None;
+                }
+            }
+            ActorOccupation::Spraying(bounded_area_id) => {
+                if !world.bounded_areas.iter().any(|v| v.id == bounded_area_id) {
                     actor.occupation = ActorOccupation::None;
                 }
             }
