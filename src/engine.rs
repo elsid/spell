@@ -457,22 +457,44 @@ fn add_delayed_magick(magick: Magick, actor_index: usize, world: &mut World) {
 }
 
 fn add_beam(magick: Magick, actor_index: usize, world: &mut World) {
+    let beam_id = BeamId(get_next_id(&mut world.id_counter));
     world.beams.push(Beam {
-        id: BeamId(get_next_id(&mut world.id_counter)),
+        id: beam_id,
         actor_id: world.actors[actor_index].id,
         magick,
         deadline: world.time + world.settings.directed_magick_duration,
     });
+    world.actors[actor_index].occupation = ActorOccupation::Beaming(beam_id);
 }
 
 pub fn complete_directed_magick(actor_index: usize, world: &mut World) {
-    let actor_id = world.actors[actor_index].id;
-    if remove_count(&mut world.beams, |v| v.actor_id == actor_id) > 0 {
-        return;
-    }
-    if remove_count(&mut world.bounded_areas, |v| v.actor_id == actor_id) > 0 {
-        world.fields.retain(|v| v.actor_id != actor_id);
-        return;
+    match world.actors[actor_index].occupation {
+        ActorOccupation::None => (),
+        ActorOccupation::Beaming(beam_id) => {
+            if let Some(v) = world.beams.iter_mut().find(|v| v.id == beam_id) {
+                v.deadline = world.time;
+            }
+        }
+        ActorOccupation::Spraying {
+            bounded_area_id,
+            field_id,
+        } => {
+            if let Some(v) = world
+                .bounded_areas
+                .iter_mut()
+                .find(|v| v.id == bounded_area_id)
+            {
+                v.deadline = world.time;
+            }
+            if let Some(v) = world.fields.iter_mut().find(|v| v.id == field_id) {
+                v.deadline = world.time;
+            }
+        }
+        ActorOccupation::Shooting(gun_id) => {
+            if let Some(v) = world.guns.iter_mut().find(|v| v.id == gun_id) {
+                v.shots_left = 0;
+            }
+        }
     }
     if let Some(delayed_magick) = world.actors[actor_index].delayed_magick.as_mut() {
         delayed_magick.status = if delayed_magick.power[Element::Earth as usize] == 0.0
@@ -534,17 +556,22 @@ fn cast_spray(angle: f64, duration: f64, magick: &Magick, actor_index: usize, wo
             * world.settings.spray_distance_factor,
         angle,
     };
-    if (effect.power[Element::Water as usize] - effect.power.iter().sum::<f64>()).abs()
+    let field_id = if (effect.power[Element::Water as usize] - effect.power.iter().sum::<f64>())
+        .abs()
         <= f64::EPSILON
     {
+        let field_id = FieldId(get_next_id(&mut world.id_counter));
         world.fields.push(Field {
-            id: FieldId(get_next_id(&mut world.id_counter)),
+            id: field_id,
             actor_id: actor.id,
             body: body.clone(),
             force: world.settings.spray_force_factor * effect.power[Element::Water as usize],
             deadline: world.time + duration,
         });
-    }
+        field_id
+    } else {
+        FieldId(0)
+    };
     let bounded_area_id = BoundedAreaId(get_next_id(&mut world.id_counter));
     world.bounded_areas.push(BoundedArea {
         id: bounded_area_id,
@@ -553,7 +580,10 @@ fn cast_spray(angle: f64, duration: f64, magick: &Magick, actor_index: usize, wo
         effect,
         deadline: world.time + duration,
     });
-    world.actors[actor_index].occupation = ActorOccupation::Spraying(bounded_area_id);
+    world.actors[actor_index].occupation = ActorOccupation::Spraying {
+        bounded_area_id,
+        field_id,
+    };
 }
 
 trait WithMass {
@@ -1952,26 +1982,20 @@ fn update_actor_occupations(world: &mut World) {
                     actor.occupation = ActorOccupation::None;
                 }
             }
-            ActorOccupation::Spraying(bounded_area_id) => {
+            ActorOccupation::Spraying {
+                bounded_area_id, ..
+            } => {
                 if !world.bounded_areas.iter().any(|v| v.id == bounded_area_id) {
+                    actor.occupation = ActorOccupation::None;
+                }
+            }
+            ActorOccupation::Beaming(beam_id) => {
+                if !world.beams.iter().any(|v| v.id == beam_id) {
                     actor.occupation = ActorOccupation::None;
                 }
             }
         }
     }
-}
-
-fn remove_count<T, F>(vec: &mut Vec<T>, mut f: F) -> usize
-where
-    F: FnMut(&T) -> bool,
-{
-    let mut removed = 0;
-    vec.retain(|v| {
-        let retain = !f(v);
-        removed += !retain as usize;
-        retain
-    });
-    removed
 }
 
 fn intersection_test(
@@ -2092,23 +2116,6 @@ mod tests {
     use parry2d_f64::query::TOIStatus;
 
     use crate::engine::*;
-
-    #[test]
-    fn remove_count_should_return_number_of_removed_items() {
-        assert_eq!(remove_count(&mut vec![1, 2, 3, 2, 1], |v| *v == 2), 2);
-    }
-
-    #[test]
-    fn remove_count_should_return_zero_when_nothing_is_removed() {
-        assert_eq!(remove_count(&mut vec![1, 2, 3, 2, 1], |v| *v == 4), 0);
-    }
-
-    #[test]
-    fn remove_count_should_remove_items_matching_predicate_preserving_order() {
-        let mut values = vec![1, 2, 3, 2, 1];
-        remove_count(&mut values, |v| *v == 2);
-        assert_eq!(values, &[1, 3, 1]);
-    }
 
     #[test]
     fn make_circle_arc_polyline_should_generate_vertices_along_arc_circle() {

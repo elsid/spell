@@ -289,7 +289,11 @@ pub enum DelayedMagickStatus {
 pub enum ActorOccupation {
     None,
     Shooting(GunId),
-    Spraying(BoundedAreaId),
+    Spraying {
+        bounded_area_id: BoundedAreaId,
+        field_id: FieldId,
+    },
+    Beaming(BeamId),
 }
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Deserialize, Serialize)]
