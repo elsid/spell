@@ -149,7 +149,6 @@ pub struct StaticObject {
     pub position: Vec2f,
     pub health: f64,
     pub effect: Effect,
-    pub aura: Aura,
 }
 
 #[derive(Default, Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
@@ -436,7 +435,7 @@ mod tests {
             ))
             .unwrap()
             .len(),
-            259
+            224
         );
     }
 

@@ -212,12 +212,7 @@ impl Engine {
             &world.settings,
             &mut world.projectiles,
         );
-        update_static_objects(
-            world.time,
-            duration,
-            &world.settings,
-            &mut world.static_objects,
-        );
+        update_static_objects(world.time, &mut world.static_objects);
         update_shields(duration, &world.settings, &mut world.shields);
         self.update_beams(world);
         move_objects(duration, world, &self.shape_cache);
@@ -240,10 +235,9 @@ impl Engine {
                 && is_active(&bounds, &v.body.shape.as_shape(), v.position, v.health)
         });
         world.static_objects.retain(|v| {
-            v.aura.power > 0.0
-                || v.body.shape.with_shape(&self.shape_cache, |shape| {
-                    is_active(&bounds, shape, v.position, v.health)
-                })
+            v.body.shape.with_shape(&self.shape_cache, |shape| {
+                is_active(&bounds, shape, v.position, v.health)
+            })
         });
         world.shields.retain(|v| v.power > 0.0);
         handle_completed_magicks(world);
@@ -416,7 +410,6 @@ fn cast_earth_based_shield(magick: Magick, actor_index: usize, world: &mut World
                     * distance,
             health: 1.0,
             effect: add_magick_power_to_effect(world.time, &Effect::default(), &magick.power),
-            aura: Aura::default(),
         });
     }
 }
@@ -1119,15 +1112,9 @@ fn update_projectiles(
     }
 }
 
-fn update_static_objects(
-    now: f64,
-    duration: f64,
-    settings: &WorldSettings,
-    static_objects: &mut Vec<StaticObject>,
-) {
+fn update_static_objects(now: f64, static_objects: &mut Vec<StaticObject>) {
     for object in static_objects.iter_mut() {
         decay_effect(now, &mut object.effect);
-        decay_aura(now, duration, settings.decay_factor, &mut object.aura);
     }
 }
 
@@ -1371,7 +1358,7 @@ fn intersect_beam(
                     &world.static_objects[i].effect,
                     &magick.power,
                 );
-                can_reflect_beams(&world.static_objects[i].aura.elements)
+                false
             }
             Index::Shield(..) => true,
         };
@@ -2004,7 +1991,7 @@ impl CollidingObject for StaticObject {
     }
 
     fn aura(&self) -> &Aura {
-        &self.aura
+        &DEFAULT_AURA
     }
 
     fn is_static(&self) -> bool {

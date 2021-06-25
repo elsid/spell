@@ -748,12 +748,6 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
                     v.position,
                     arc.rotation,
                 );
-                draw_ring_sector_body_and_magick(
-                    &ring_sector,
-                    &v.aura.elements,
-                    v.position,
-                    arc.rotation,
-                );
             }
             StaticShape::Disk(shape) => {
                 draw_disk_body_and_magick(
@@ -781,10 +775,6 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
     }
 
     for v in scene.world.actors.iter() {
-        draw_aura(&v.aura, v.position);
-    }
-
-    for v in scene.world.static_objects.iter() {
         draw_aura(&v.aura, v.position);
     }
 
@@ -818,11 +808,6 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
             StaticShape::Disk(v) => v.radius,
         };
         draw_health(v.health, radius, v.position);
-        draw_aura_power(
-            v.aura.power / scene.world.settings.max_magic_power,
-            radius,
-            v.position,
-        );
     }
 
     for v in scene.world.shields.iter() {

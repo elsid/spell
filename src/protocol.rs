@@ -128,7 +128,6 @@ pub struct StaticObjectUpdate {
     pub id: StaticObjectId,
     pub health: Option<f64>,
     pub effect: Option<Effect>,
-    pub aura: Option<Aura>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
@@ -405,7 +404,6 @@ fn make_static_object_update(b: &StaticObject, a: &StaticObject) -> Option<Stati
     let mut d = false;
     d = clone_if_different(&b.health, &a.health, &mut r.health) || d;
     d = clone_if_different(&b.effect, &a.effect, &mut r.effect) || d;
-    d = clone_if_different(&b.aura, &a.aura, &mut r.aura) || d;
     if d {
         r.id = a.id;
         Some(r)
@@ -759,7 +757,6 @@ fn apply_projectile_update(src: &ProjectileUpdate, dst: &mut Projectile) {
 fn apply_static_object_update(src: &StaticObjectUpdate, dst: &mut StaticObject) {
     clone_if_some(&src.health, &mut dst.health);
     clone_if_some(&src.effect, &mut dst.effect);
-    clone_if_some(&src.aura, &mut dst.aura);
 }
 
 fn apply_temp_area_update(src: &TempAreaUpdate, dst: &mut TempArea) {
@@ -1076,7 +1073,7 @@ mod tests {
             bincode::serialize(&StaticObjectUpdate::default())
                 .unwrap()
                 .len(),
-            11
+            10
         );
     }
 

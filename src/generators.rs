@@ -228,7 +228,6 @@ pub fn generate_static_object<R: Rng>(
         ),
         health: 1.0,
         effect: Effect::default(),
-        aura: Aura::default(),
     }
 }
 
