@@ -16,7 +16,8 @@ use crate::world::{
     Actor, ActorId, ActorOccupation, Aura, Beam, BeamId, Body, BoundedArea, BoundedAreaId,
     CircleArc, DelayedMagick, DelayedMagickStatus, Disk, Effect, Element, Field, FieldId, Gun,
     GunId, Magick, Material, Projectile, ProjectileId, RingSector, Shield, ShieldId, StaticArea,
-    StaticObject, StaticObjectId, StaticShape, TempArea, TempAreaId, World, WorldSettings,
+    StaticObject, StaticShape, TempArea, TempAreaId, TempObstacle, TempObstacleId, World,
+    WorldSettings,
 };
 
 const RESOLUTION_FACTOR: f64 = 4.0;
@@ -37,6 +38,7 @@ pub enum Index {
     Projectile(usize),
     StaticObject(usize),
     Shield(usize),
+    TempObstacle(usize),
 }
 
 struct Spell<'a> {
@@ -199,6 +201,7 @@ impl Engine {
         world.fields.retain(|v| v.deadline >= now);
         world.beams.retain(|v| v.deadline >= now);
         world.guns.retain(|v| v.shots_left > 0);
+        world.temp_obstacles.retain(|v| v.deadline >= now);
         update_actor_occupations(world);
         spawn_player_actors(world, rng);
         shoot_from_guns(world, rng);
@@ -391,16 +394,19 @@ fn cast_shield(magick: Magick, actor_index: usize, world: &mut World) {
     }
 }
 
-fn cast_earth_based_shield(magick: Magick, actor_index: usize, world: &mut World) {
+fn cast_earth_based_shield(mut magick: Magick, actor_index: usize, world: &mut World) {
     let actor = &world.actors[actor_index];
     let distance = 5.0;
+    magick.power[Element::Shield as usize] = 0.0;
+    magick.power[Element::Earth as usize] = 0.0;
     for i in -2..=2 {
-        world.static_objects.push(StaticObject {
-            id: StaticObjectId(get_next_id(&mut world.id_counter)),
+        world.temp_obstacles.push(TempObstacle {
+            id: TempObstacleId(get_next_id(&mut world.id_counter)),
+            actor_id: actor.id,
             body: Body {
-                shape: StaticShape::Disk(Disk {
+                shape: Disk {
                     radius: distance * std::f64::consts::PI / (2 * 5 * 2) as f64,
-                }),
+                },
                 material: Material::Stone,
             },
             position: actor.position
@@ -409,7 +415,8 @@ fn cast_earth_based_shield(magick: Magick, actor_index: usize, world: &mut World
                     .rotated(i as f64 * std::f64::consts::PI / (2 * 5) as f64)
                     * distance,
             health: 1.0,
-            effect: add_magick_power_to_effect(world.time, &Effect::default(), &magick.power),
+            magick: magick.clone(),
+            deadline: world.time + world.settings.temp_obstacle_magick_duration,
         });
     }
 }
@@ -1334,6 +1341,15 @@ fn intersect_beam(
         find_beam_nearest_intersection(origin, direction, &world.shields, length, shape_cache)
             .map(|(i, n)| (Index::Shield(i), n))
             .or(nearest_hit);
+    nearest_hit = find_beam_nearest_intersection(
+        origin,
+        direction,
+        &world.temp_obstacles,
+        length,
+        shape_cache,
+    )
+    .map(|(i, n)| (Index::TempObstacle(i), n))
+    .or(nearest_hit);
     if let Some((index, mut normal)) = nearest_hit {
         let can_reflect = match index {
             Index::Actor(i) => {
@@ -1361,6 +1377,7 @@ fn intersect_beam(
                 false
             }
             Index::Shield(..) => true,
+            Index::TempObstacle(..) => false,
         };
         if depth < world.settings.max_beam_depth as usize && can_reflect {
             // RayCast::cast_ray_and_get_normal returns not normalized normal
@@ -1416,6 +1433,12 @@ impl WithIsometry for Shield {
     }
 }
 
+impl WithIsometry for TempObstacle {
+    fn get_isometry(&self) -> Isometry<Real> {
+        Isometry::translation(self.position.x, self.position.y)
+    }
+}
+
 trait WithShape {
     fn with_shape(&self, shape_cache: &ShapeCache, f: &mut dyn FnMut(&dyn Shape));
 }
@@ -1447,6 +1470,12 @@ impl WithShape for Shield {
             .shape
             .clone()
             .with_shape(shape_cache, |shape| (*f)(shape))
+    }
+}
+
+impl WithShape for TempObstacle {
+    fn with_shape(&self, _: &ShapeCache, f: &mut dyn FnMut(&dyn Shape)) {
+        (*f)(&self.body.shape.as_shape())
     }
 }
 
@@ -1538,6 +1567,31 @@ fn move_objects(duration: f64, world: &mut World, shape_cache: &ShapeCache) {
                 if let Some(toi) = time_of_impact(duration_left, shape_cache, shield, projectile) {
                     update_earliest_collision(
                         Index::Shield(i),
+                        Index::Projectile(j),
+                        toi,
+                        &mut earliest_collision,
+                    );
+                }
+            }
+        }
+        for (i, temp_obstacle) in world.temp_obstacles.iter().enumerate() {
+            for (j, actor) in world.actors.iter().enumerate() {
+                if let Some(toi) = time_of_impact(duration_left, shape_cache, temp_obstacle, actor)
+                {
+                    update_earliest_collision(
+                        Index::TempObstacle(i),
+                        Index::Actor(j),
+                        toi,
+                        &mut earliest_collision,
+                    );
+                }
+            }
+            for (j, projectile) in world.projectiles.iter().enumerate() {
+                if let Some(toi) =
+                    time_of_impact(duration_left, shape_cache, temp_obstacle, projectile)
+                {
+                    update_earliest_collision(
+                        Index::TempObstacle(i),
                         Index::Projectile(j),
                         toi,
                         &mut earliest_collision,
@@ -1703,6 +1757,12 @@ impl WithVelocity for Shield {
     }
 }
 
+impl WithVelocity for TempObstacle {
+    fn velocity(&self) -> Vec2f {
+        Vec2f::ZERO
+    }
+}
+
 struct Collision {
     lhs: Index,
     rhs: Index,
@@ -1753,6 +1813,7 @@ where
             Index::Projectile(rhs) => f(&mut world.actors[lhs], &mut world.projectiles[rhs]),
             Index::StaticObject(rhs) => f(&mut world.actors[lhs], &mut world.static_objects[rhs]),
             Index::Shield(rhs) => f(&mut world.actors[lhs], &mut world.shields[rhs]),
+            Index::TempObstacle(rhs) => f(&mut world.actors[lhs], &mut world.temp_obstacles[rhs]),
         },
         Index::Projectile(lhs) => match rhs {
             Index::Actor(rhs) => f(&mut world.projectiles[lhs], &mut world.actors[rhs]),
@@ -1764,6 +1825,9 @@ where
                 f(&mut world.projectiles[lhs], &mut world.static_objects[rhs])
             }
             Index::Shield(rhs) => f(&mut world.projectiles[lhs], &mut world.shields[rhs]),
+            Index::TempObstacle(rhs) => {
+                f(&mut world.projectiles[lhs], &mut world.temp_obstacles[rhs])
+            }
         },
         Index::StaticObject(lhs) => match rhs {
             Index::Actor(rhs) => f(&mut world.static_objects[lhs], &mut world.actors[rhs]),
@@ -1775,6 +1839,10 @@ where
                 f(&mut left[lhs], &mut right[0])
             }
             Index::Shield(rhs) => f(&mut world.static_objects[lhs], &mut world.shields[rhs]),
+            Index::TempObstacle(rhs) => f(
+                &mut world.static_objects[lhs],
+                &mut world.temp_obstacles[rhs],
+            ),
         },
         Index::Shield(lhs) => match rhs {
             Index::Actor(rhs) => f(&mut world.shields[lhs], &mut world.actors[rhs]),
@@ -1782,6 +1850,22 @@ where
             Index::StaticObject(rhs) => f(&mut world.shields[lhs], &mut world.static_objects[rhs]),
             Index::Shield(rhs) => {
                 let (left, right) = world.shields.split_at_mut(rhs);
+                f(&mut left[lhs], &mut right[0])
+            }
+            Index::TempObstacle(rhs) => f(&mut world.shields[lhs], &mut world.temp_obstacles[rhs]),
+        },
+        Index::TempObstacle(lhs) => match rhs {
+            Index::Actor(rhs) => f(&mut world.temp_obstacles[lhs], &mut world.actors[rhs]),
+            Index::Projectile(rhs) => {
+                f(&mut world.temp_obstacles[lhs], &mut world.projectiles[rhs])
+            }
+            Index::StaticObject(rhs) => f(
+                &mut world.temp_obstacles[lhs],
+                &mut world.static_objects[rhs],
+            ),
+            Index::Shield(rhs) => f(&mut world.temp_obstacles[lhs], &mut world.shields[rhs]),
+            Index::TempObstacle(rhs) => {
+                let (left, right) = world.temp_obstacles.split_at_mut(rhs);
                 f(&mut left[lhs], &mut right[0])
             }
         },
@@ -2027,6 +2111,46 @@ impl CollidingObject for Shield {
     }
 
     fn set_health(&mut self, _: f64) {}
+
+    fn aura(&self) -> &Aura {
+        &DEFAULT_AURA
+    }
+
+    fn is_static(&self) -> bool {
+        true
+    }
+}
+
+impl CollidingObject for TempObstacle {
+    fn material(&self) -> Material {
+        self.body.material
+    }
+
+    fn mass(&self) -> f64 {
+        self.body.mass()
+    }
+
+    fn position(&self) -> Vec2f {
+        self.position
+    }
+
+    fn set_position(&mut self, _: Vec2f) {}
+
+    fn set_velocity(&mut self, _: Vec2f) {}
+
+    fn effect(&self) -> &Effect {
+        &DEFAULT_EFFECT
+    }
+
+    fn set_effect(&mut self, _: Effect) {}
+
+    fn health(&self) -> f64 {
+        self.health
+    }
+
+    fn set_health(&mut self, value: f64) {
+        self.health = value;
+    }
 
     fn aura(&self) -> &Aura {
         &DEFAULT_AURA

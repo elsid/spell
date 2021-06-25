@@ -21,6 +21,7 @@ pub struct World {
     pub fields: Vec<Field>,
     pub guns: Vec<Gun>,
     pub shields: Vec<Shield>,
+    pub temp_obstacles: Vec<TempObstacle>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -50,6 +51,7 @@ pub struct WorldSettings {
     pub gun_bullet_radius: f64,
     pub gun_half_grouping_angle: f64,
     pub shield_decay_factor: f64,
+    pub temp_obstacle_magick_duration: f64,
 }
 
 impl Default for WorldSettings {
@@ -80,6 +82,7 @@ impl Default for WorldSettings {
             gun_bullet_radius: 0.2,
             gun_half_grouping_angle: std::f64::consts::PI / 12.0,
             shield_decay_factor: 1.0 / 3.0,
+            temp_obstacle_magick_duration: 20.0,
         }
     }
 }
@@ -232,6 +235,20 @@ pub struct Shield {
     pub body: Body<CircleArc>,
     pub position: Vec2f,
     pub power: f64,
+}
+
+#[derive(Default, Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
+pub struct TempObstacleId(pub u64);
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct TempObstacle {
+    pub id: TempObstacleId,
+    pub actor_id: ActorId,
+    pub body: Body<Disk>,
+    pub position: Vec2f,
+    pub health: f64,
+    pub magick: Magick,
+    pub deadline: f64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]

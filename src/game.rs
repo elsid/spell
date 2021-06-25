@@ -774,6 +774,16 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
         );
     }
 
+    for v in scene.world.temp_obstacles.iter() {
+        draw_disk_body_and_magick(
+            &v.body.shape,
+            v.body.material,
+            &v.magick.power,
+            scene.world.settings.border_width,
+            v.position,
+        );
+    }
+
     for v in scene.world.actors.iter() {
         draw_aura(&v.aura, v.position);
     }
@@ -816,6 +826,10 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
             v.body.shape.radius,
             v.position,
         );
+    }
+
+    for v in scene.world.temp_obstacles.iter() {
+        draw_health(v.health, v.body.shape.radius, v.position);
     }
 
     for v in scene.world.actors.iter() {
@@ -1012,6 +1026,7 @@ fn draw_debug_scene_text(counter: &mut usize, scene: &Scene, font: Font) {
             format!("Fields: {}", scene.world.fields.len()),
             format!("Guns: {}", scene.world.guns.len()),
             format!("Shields: {}", scene.world.shields.len()),
+            format!("Temp obstacles: {}", scene.world.temp_obstacles.len()),
         ],
     );
 }
@@ -1089,22 +1104,36 @@ fn draw_disk_body_and_magick(
     border_width: f64,
     position: Vec2f,
 ) {
-    let has_power = power.iter().sum::<f64>() > 0.0;
-    if has_power {
+    let power_color = if power.iter().sum::<f64>() > 0.0 {
+        Some(get_magick_power_color(power))
+    } else {
+        None
+    };
+    draw_disk_body(shape, material, power_color, border_width, position);
+}
+
+fn draw_disk_body(
+    shape: &Disk,
+    material: Material,
+    power_color: Option<Color>,
+    border_width: f64,
+    position: Vec2f,
+) {
+    if let Some(color) = power_color {
         draw_poly(
             position.x as f32,
             position.y as f32,
             75,
             shape.radius as f32,
             0.0,
-            get_magick_power_color(power),
+            color,
         );
     }
     draw_poly(
         position.x as f32,
         position.y as f32,
         75,
-        (shape.radius - border_width * has_power as i32 as f64) as f32,
+        (shape.radius - border_width * power_color.is_some() as i32 as f64) as f32,
         0.0,
         get_material_color(material, 1.0),
     );

@@ -7,7 +7,7 @@ use crate::vec2::Vec2f;
 use crate::world::{
     Actor, ActorId, ActorOccupation, Aura, Beam, BoundedArea, DelayedMagick, Effect, Element,
     Field, Gun, GunId, Player, PlayerId, Projectile, ProjectileId, Shield, ShieldId, StaticArea,
-    StaticObject, StaticObjectId, TempArea, TempAreaId, World,
+    StaticObject, StaticObjectId, TempArea, TempAreaId, TempObstacle, TempObstacleId, World,
 };
 
 pub const HEARTBEAT_PERIOD: Duration = Duration::from_secs(1);
@@ -82,6 +82,7 @@ pub struct WorldUpdate {
     pub fields: Option<ExistenceDifference<Field>>,
     pub guns: Option<Difference<Gun, GunUpdate>>,
     pub shields: Option<Difference<Shield, ShieldUpdate>>,
+    pub temp_obstacles: Option<Difference<TempObstacle, TempObstacleUpdate>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
@@ -147,6 +148,12 @@ pub struct GunUpdate {
 pub struct ShieldUpdate {
     pub id: ShieldId,
     pub power: Option<f64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
+pub struct TempObstacleUpdate {
+    pub id: TempObstacleId,
+    pub health: Option<f64>,
 }
 
 #[derive(Default, Debug, Deserialize, Serialize)]
@@ -263,6 +270,10 @@ pub fn make_world_update(before: &World, after: &World) -> WorldUpdate {
         fields: get_fields_difference(&before.fields, &after.fields),
         guns: get_guns_difference(&before.guns, &after.guns),
         shields: get_shields_difference(&before.shields, &after.shields),
+        temp_obstacles: get_temp_obstacles_difference(
+            &before.temp_obstacles,
+            &after.temp_obstacles,
+        ),
     }
 }
 
@@ -332,6 +343,13 @@ fn get_shields_difference(
     after: &[Shield],
 ) -> Option<Difference<Shield, ShieldUpdate>> {
     get_difference(before, after, |v| v.id.0, make_shield_update)
+}
+
+fn get_temp_obstacles_difference(
+    before: &[TempObstacle],
+    after: &[TempObstacle],
+) -> Option<Difference<TempObstacle, TempObstacleUpdate>> {
+    get_difference(before, after, |v| v.id.0, make_temp_obstacle_update)
 }
 
 fn make_player_update(b: &Player, a: &Player) -> Option<PlayerUpdate> {
@@ -441,6 +459,18 @@ fn make_shield_update(b: &Shield, a: &Shield) -> Option<ShieldUpdate> {
     let mut r = ShieldUpdate::default();
     let mut d = false;
     d = clone_if_different(&b.power, &a.power, &mut r.power) || d;
+    if d {
+        r.id = a.id;
+        Some(r)
+    } else {
+        None
+    }
+}
+
+fn make_temp_obstacle_update(b: &TempObstacle, a: &TempObstacle) -> Option<TempObstacleUpdate> {
+    let mut r = TempObstacleUpdate::default();
+    let mut d = false;
+    d = clone_if_different(&b.health, &a.health, &mut r.health) || d;
     if d {
         r.id = a.id;
         Some(r)
@@ -643,6 +673,13 @@ pub fn apply_world_update(update: WorldUpdate, world: &mut World) {
         apply_shield_update,
         &mut world.shields,
     );
+    apply_difference(
+        update.temp_obstacles,
+        &|v| v.id.0,
+        &|a, b| a.id == b.id,
+        apply_temp_obstacle_update,
+        &mut world.temp_obstacles,
+    );
 }
 
 fn apply_difference<T, U, GetId, EqualById, ApplyUpdate>(
@@ -772,6 +809,10 @@ fn apply_shield_update(src: &ShieldUpdate, dst: &mut Shield) {
     clone_if_some(&src.power, &mut dst.power);
 }
 
+fn apply_temp_obstacle_update(src: &TempObstacleUpdate, dst: &mut TempObstacle) {
+    clone_if_some(&src.health, &mut dst.health);
+}
+
 fn clone_if_some<T: Clone>(src: &Option<T>, dst: &mut T) {
     if let Some(value) = src.as_ref() {
         *dst = value.clone();
@@ -792,6 +833,7 @@ where
     let mut sort_fields = false;
     let mut sort_guns = false;
     let mut sort_shields = false;
+    let mut sort_temp_obstacles = false;
     for v in src {
         add_removed_difference(&v.actors, &mut dst.actors, &mut sort_actors);
         add_removed_difference(&v.projectiles, &mut dst.projectiles, &mut sort_projectiles);
@@ -815,6 +857,11 @@ where
         add_removed_existence_difference(&v.fields, &mut dst.fields, &mut sort_fields);
         add_removed_difference(&v.guns, &mut dst.guns, &mut sort_guns);
         add_removed_difference(&v.shields, &mut dst.shields, &mut sort_shields);
+        add_removed_difference(
+            &v.temp_obstacles,
+            &mut dst.temp_obstacles,
+            &mut sort_temp_obstacles,
+        );
     }
     sort_and_dedup(sort_actors, dst.actors.as_mut().map(|v| v.removed.as_mut()));
     sort_and_dedup(
@@ -843,6 +890,10 @@ where
     sort_and_dedup(
         sort_shields,
         dst.shields.as_mut().map(|v| v.removed.as_mut()),
+    );
+    sort_and_dedup(
+        sort_temp_obstacles,
+        dst.temp_obstacles.as_mut().map(|v| v.removed.as_mut()),
     );
 }
 
