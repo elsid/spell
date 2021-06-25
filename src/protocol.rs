@@ -7,7 +7,7 @@ use crate::vec2::Vec2f;
 use crate::world::{
     Actor, ActorId, ActorOccupation, Aura, Beam, BoundedArea, DelayedMagick, Effect, Element,
     Field, Gun, GunId, Player, PlayerId, Projectile, ProjectileId, Shield, ShieldId, StaticArea,
-    StaticObject, StaticObjectId, TempArea, TempAreaId, TempObstacle, TempObstacleId, World,
+    StaticObject, StaticObjectId, TempArea, TempObstacle, TempObstacleId, World,
 };
 
 pub const HEARTBEAT_PERIOD: Duration = Duration::from_secs(1);
@@ -77,7 +77,7 @@ pub struct WorldUpdate {
     pub static_objects: Option<Difference<StaticObject, StaticObjectUpdate>>,
     pub beams: Option<ExistenceDifference<Beam>>,
     pub static_areas: Option<ExistenceDifference<StaticArea>>,
-    pub temp_areas: Option<Difference<TempArea, TempAreaUpdate>>,
+    pub temp_areas: Option<ExistenceDifference<TempArea>>,
     pub bounded_areas: Option<ExistenceDifference<BoundedArea>>,
     pub fields: Option<ExistenceDifference<Field>>,
     pub guns: Option<Difference<Gun, GunUpdate>>,
@@ -117,7 +117,6 @@ pub struct ProjectileUpdate {
     pub id: ProjectileId,
     pub position: Option<Vec2f>,
     pub health: Option<f64>,
-    pub effect: Option<Effect>,
     pub velocity: Option<Vec2f>,
     pub dynamic_force: Option<Vec2f>,
     pub position_z: Option<f64>,
@@ -128,12 +127,6 @@ pub struct ProjectileUpdate {
 pub struct StaticObjectUpdate {
     pub id: StaticObjectId,
     pub health: Option<f64>,
-    pub effect: Option<Effect>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
-pub struct TempAreaUpdate {
-    pub id: TempAreaId,
     pub effect: Option<Effect>,
 }
 
@@ -154,6 +147,7 @@ pub struct ShieldUpdate {
 pub struct TempObstacleUpdate {
     pub id: TempObstacleId,
     pub health: Option<f64>,
+    pub effect: Option<Effect>,
 }
 
 #[derive(Default, Debug, Deserialize, Serialize)]
@@ -319,8 +313,8 @@ fn get_static_areas_difference(
 fn get_temp_areas_difference(
     before: &[TempArea],
     after: &[TempArea],
-) -> Option<Difference<TempArea, TempAreaUpdate>> {
-    get_difference(before, after, |v| v.id.0, make_temp_area_update)
+) -> Option<ExistenceDifference<TempArea>> {
+    get_existence_difference(before, after, |v| v.id.0)
 }
 
 fn get_bounded_areas_difference(
@@ -404,7 +398,6 @@ fn make_projectile_update(b: &Projectile, a: &Projectile) -> Option<ProjectileUp
     let mut d = false;
     d = clone_if_different(&b.position, &a.position, &mut r.position) || d;
     d = clone_if_different(&b.health, &a.health, &mut r.health) || d;
-    d = clone_if_different(&b.effect, &a.effect, &mut r.effect) || d;
     d = clone_if_different(&b.velocity, &a.velocity, &mut r.velocity) || d;
     d = clone_if_different(&b.dynamic_force, &a.dynamic_force, &mut r.dynamic_force) || d;
     d = clone_if_different(&b.position_z, &a.position_z, &mut r.position_z) || d;
@@ -421,18 +414,6 @@ fn make_static_object_update(b: &StaticObject, a: &StaticObject) -> Option<Stati
     let mut r = StaticObjectUpdate::default();
     let mut d = false;
     d = clone_if_different(&b.health, &a.health, &mut r.health) || d;
-    d = clone_if_different(&b.effect, &a.effect, &mut r.effect) || d;
-    if d {
-        r.id = a.id;
-        Some(r)
-    } else {
-        None
-    }
-}
-
-fn make_temp_area_update(b: &TempArea, a: &TempArea) -> Option<TempAreaUpdate> {
-    let mut r = TempAreaUpdate::default();
-    let mut d = false;
     d = clone_if_different(&b.effect, &a.effect, &mut r.effect) || d;
     if d {
         r.id = a.id;
@@ -471,6 +452,7 @@ fn make_temp_obstacle_update(b: &TempObstacle, a: &TempObstacle) -> Option<TempO
     let mut r = TempObstacleUpdate::default();
     let mut d = false;
     d = clone_if_different(&b.health, &a.health, &mut r.health) || d;
+    d = clone_if_different(&b.effect, &a.effect, &mut r.effect) || d;
     if d {
         r.id = a.id;
         Some(r)
@@ -650,13 +632,7 @@ pub fn apply_world_update(update: WorldUpdate, world: &mut World) {
     );
     apply_existence_difference(update.beams, &|v| v.id.0, &mut world.beams);
     apply_existence_difference(update.static_areas, &|v| v.id.0, &mut world.static_areas);
-    apply_difference(
-        update.temp_areas,
-        &|v| v.id.0,
-        &|a, b| a.id == b.id,
-        apply_temp_area_update,
-        &mut world.temp_areas,
-    );
+    apply_existence_difference(update.temp_areas, &|v| v.id.0, &mut world.temp_areas);
     apply_existence_difference(update.bounded_areas, &|v| v.id.0, &mut world.bounded_areas);
     apply_existence_difference(update.fields, &|v| v.id.0, &mut world.fields);
     apply_difference(
@@ -784,7 +760,6 @@ fn apply_actor_update(src: &ActorUpdate, dst: &mut Actor) {
 fn apply_projectile_update(src: &ProjectileUpdate, dst: &mut Projectile) {
     clone_if_some(&src.position, &mut dst.position);
     clone_if_some(&src.health, &mut dst.health);
-    clone_if_some(&src.effect, &mut dst.effect);
     clone_if_some(&src.velocity, &mut dst.velocity);
     clone_if_some(&src.dynamic_force, &mut dst.dynamic_force);
     clone_if_some(&src.position_z, &mut dst.position_z);
@@ -793,10 +768,6 @@ fn apply_projectile_update(src: &ProjectileUpdate, dst: &mut Projectile) {
 
 fn apply_static_object_update(src: &StaticObjectUpdate, dst: &mut StaticObject) {
     clone_if_some(&src.health, &mut dst.health);
-    clone_if_some(&src.effect, &mut dst.effect);
-}
-
-fn apply_temp_area_update(src: &TempAreaUpdate, dst: &mut TempArea) {
     clone_if_some(&src.effect, &mut dst.effect);
 }
 
@@ -811,6 +782,7 @@ fn apply_shield_update(src: &ShieldUpdate, dst: &mut Shield) {
 
 fn apply_temp_obstacle_update(src: &TempObstacleUpdate, dst: &mut TempObstacle) {
     clone_if_some(&src.health, &mut dst.health);
+    clone_if_some(&src.effect, &mut dst.effect);
 }
 
 fn clone_if_some<T: Clone>(src: &Option<T>, dst: &mut T) {
@@ -848,7 +820,7 @@ where
             &mut dst.static_areas,
             &mut sort_static_areas,
         );
-        add_removed_difference(&v.temp_areas, &mut dst.temp_areas, &mut sort_temp_areas);
+        add_removed_existence_difference(&v.temp_areas, &mut dst.temp_areas, &mut sort_temp_areas);
         add_removed_existence_difference(
             &v.bounded_areas,
             &mut dst.bounded_areas,
@@ -1096,7 +1068,7 @@ mod tests {
     fn serialized_default_world_update_size() {
         assert_eq!(
             bincode::serialize(&WorldUpdate::default()).unwrap().len(),
-            35
+            36
         );
     }
 
@@ -1114,7 +1086,7 @@ mod tests {
             bincode::serialize(&ProjectileUpdate::default())
                 .unwrap()
                 .len(),
-            15
+            14
         );
     }
 
@@ -1125,16 +1097,6 @@ mod tests {
                 .unwrap()
                 .len(),
             10
-        );
-    }
-
-    #[test]
-    fn serialized_default_temp_area_update_size() {
-        assert_eq!(
-            bincode::serialize(&TempAreaUpdate::default())
-                .unwrap()
-                .len(),
-            9
         );
     }
 

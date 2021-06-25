@@ -652,7 +652,7 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
         draw_disk_body_and_magick(
             &v.body.shape,
             v.body.material,
-            &v.effect.power,
+            &v.magick.power,
             scene.world.settings.border_width,
             v.position,
         );
@@ -667,7 +667,7 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
             .unwrap();
         draw_ring_sector_body_and_magick(
             &area.body,
-            &area.effect.power,
+            &area.magick.power,
             owner.position,
             normalize_angle(owner.current_direction.angle()),
         );
@@ -728,7 +728,7 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
         draw_disk_body_and_magick(
             &v.body.shape,
             v.body.material,
-            &v.effect.power,
+            &v.magick.power,
             scene.world.settings.border_width,
             v.position,
         );

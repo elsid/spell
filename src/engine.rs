@@ -31,6 +31,7 @@ const DEFAULT_EFFECT: Effect = Effect {
     applied: [0.0; 11],
     power: [0.0; 11],
 };
+const DEFAULT_MAGICK: Magick = Magick { power: [0.0; 11] };
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub enum Index {
@@ -193,13 +194,11 @@ impl Engine {
     pub fn update<R: Rng>(&mut self, duration: f64, world: &mut World, rng: &mut R) {
         world.frame += 1;
         world.time += duration;
-        world
-            .temp_areas
-            .retain(|v| v.effect.power.iter().sum::<f64>() > 0.0);
         let now = world.time;
         world.bounded_areas.retain(|v| v.deadline >= now);
         world.fields.retain(|v| v.deadline >= now);
         world.beams.retain(|v| v.deadline >= now);
+        world.temp_areas.retain(|v| v.deadline >= now);
         world.guns.retain(|v| v.shots_left > 0);
         world.temp_obstacles.retain(|v| v.deadline >= now);
         update_actor_occupations(world);
@@ -207,16 +206,16 @@ impl Engine {
         shoot_from_guns(world, rng);
         intersect_objects_with_areas(world, &self.shape_cache);
         intersect_objects_with_all_fields(world);
-        update_temp_areas(world.time, &mut world.temp_areas);
         update_actors(world.time, duration, &world.settings, &mut world.actors);
-        update_projectiles(
+        update_projectiles(duration, &world.settings, &mut world.projectiles);
+        update_static_objects(
             world.time,
             duration,
             &world.settings,
-            &mut world.projectiles,
+            &mut world.static_objects,
         );
-        update_static_objects(world.time, &mut world.static_objects);
         update_shields(duration, &world.settings, &mut world.shields);
+        update_temp_obstacles(duration, &world.settings, &mut world.temp_obstacles);
         self.update_beams(world);
         move_objects(duration, world, &self.shape_cache);
         world
@@ -243,6 +242,7 @@ impl Engine {
             })
         });
         world.shields.retain(|v| v.power > 0.0);
+        world.temp_obstacles.retain(|v| v.health > 0.0);
         handle_completed_magicks(world);
         update_player_spawn_time(world);
     }
@@ -319,7 +319,7 @@ pub fn start_directed_magick(actor_index: usize, world: &mut World) {
         cast_spray(
             world.settings.spray_angle,
             world.settings.directed_magick_duration,
-            &magick,
+            magick,
             actor_index,
             world,
         );
@@ -349,7 +349,7 @@ pub fn start_area_of_effect_magick(actor_index: usize, world: &mut World) {
         cast_spray(
             std::f64::consts::TAU,
             world.settings.area_of_effect_magick_duration,
-            &magick,
+            magick,
             actor_index,
             world,
         );
@@ -364,7 +364,7 @@ pub fn start_area_of_effect_magick(actor_index: usize, world: &mut World) {
         cast_spray(
             std::f64::consts::TAU,
             world.settings.area_of_effect_magick_duration,
-            &magick,
+            magick,
             actor_index,
             world,
         );
@@ -416,6 +416,7 @@ fn cast_earth_based_shield(mut magick: Magick, actor_index: usize, world: &mut W
                     * distance,
             health: 1.0,
             magick: magick.clone(),
+            effect: Effect::default(),
             deadline: world.time + world.settings.temp_obstacle_magick_duration,
         });
     }
@@ -438,7 +439,8 @@ fn cast_spray_based_shield(magick: Magick, actor_index: usize, world: &mut World
                     .current_direction
                     .rotated(i as f64 * std::f64::consts::PI / (2 * 5) as f64)
                     * distance,
-            effect: add_magick_power_to_effect(world.time, &Effect::default(), &magick.power),
+            magick: magick.clone(),
+            deadline: world.time + world.settings.temp_area_duration,
         });
     }
 }
@@ -559,26 +561,23 @@ pub fn self_magick(actor_index: usize, world: &mut World) {
     }
 }
 
-fn cast_spray(angle: f64, duration: f64, magick: &Magick, actor_index: usize, world: &mut World) {
+fn cast_spray(angle: f64, duration: f64, magick: Magick, actor_index: usize, world: &mut World) {
     let actor = &world.actors[actor_index];
-    let effect = add_magick_power_to_effect(world.time, &Effect::default(), &magick.power);
+    let total_power = magick.power.iter().sum::<f64>();
     let body = RingSector {
         min_radius: actor.body.shape.radius + world.settings.margin,
         max_radius: actor.body.shape.radius
-            * (1.0 + effect.power.iter().sum::<f64>())
+            * (1.0 + total_power)
             * world.settings.spray_distance_factor,
         angle,
     };
-    let field_id = if (effect.power[Element::Water as usize] - effect.power.iter().sum::<f64>())
-        .abs()
-        <= f64::EPSILON
-    {
+    let field_id = if (magick.power[Element::Water as usize] - total_power).abs() <= f64::EPSILON {
         let field_id = FieldId(get_next_id(&mut world.id_counter));
         world.fields.push(Field {
             id: field_id,
             actor_id: actor.id,
             body: body.clone(),
-            force: world.settings.spray_force_factor * effect.power[Element::Water as usize],
+            force: world.settings.spray_force_factor * magick.power[Element::Water as usize],
             deadline: world.time + duration,
         });
         field_id
@@ -590,7 +589,7 @@ fn cast_spray(angle: f64, duration: f64, magick: &Magick, actor_index: usize, wo
         id: bounded_area_id,
         actor_id: actor.id,
         body,
-        effect,
+        magick,
         deadline: world.time + duration,
     });
     world.actors[actor_index].occupation = ActorOccupation::Spraying {
@@ -762,6 +761,7 @@ fn intersect_objects_with_areas(world: &mut World, shape_cache: &ShapeCache) {
         );
     }
     for v in world.projectiles.iter_mut() {
+        let mut effect = Effect::default();
         intersect_static_object_with_all_bounded_areas(
             world.time,
             &world.bounded_areas,
@@ -769,7 +769,7 @@ fn intersect_objects_with_areas(world: &mut World, shape_cache: &ShapeCache) {
             &mut IntersectingStaticObject {
                 shape: &Ball::new(v.body.shape.radius),
                 isometry: Isometry::translation(v.position.x, v.position.y),
-                effect: &mut v.effect,
+                effect: &mut effect,
             },
         );
         intersect_with_temp_and_static_areas(
@@ -784,7 +784,7 @@ fn intersect_objects_with_areas(world: &mut World, shape_cache: &ShapeCache) {
                 levitating: (v.position_z - v.body.shape.radius) > f64::EPSILON,
                 mass: v.body.mass(),
                 dynamic_force: &mut v.dynamic_force,
-                effect: &mut v.effect,
+                effect: &mut effect,
             },
         );
     }
@@ -806,6 +806,18 @@ fn intersect_objects_with_areas(world: &mut World, shape_cache: &ShapeCache) {
                     },
                 );
             });
+    }
+    for temp_obstacle in world.temp_obstacles.iter_mut() {
+        intersect_static_object_with_all_bounded_areas(
+            world.time,
+            &world.bounded_areas,
+            &world.actors,
+            &mut IntersectingStaticObject {
+                shape: &Ball::new(temp_obstacle.body.shape.radius),
+                isometry: Isometry::translation(temp_obstacle.position.x, temp_obstacle.position.y),
+                effect: &mut temp_obstacle.effect,
+            },
+        );
     }
 }
 
@@ -848,7 +860,7 @@ fn intersect_with_temp_areas(
         .unwrap()
         {
             *object.effect =
-                add_magick_power_to_effect(now, object.effect, &temp_area.effect.power);
+                add_magick_power_to_effect(now, object.effect, &temp_area.magick.power);
         }
     }
 }
@@ -946,7 +958,7 @@ fn intersect_static_object_with_bounded_area(
         &area.body,
         owner.current_direction,
     ) {
-        *object.effect = add_magick_power_to_effect(now, object.effect, &area.effect.power);
+        *object.effect = add_magick_power_to_effect(now, object.effect, &area.magick.power);
     }
 }
 
@@ -1039,12 +1051,6 @@ fn push_object(
     *dynamic_force += to_position * ((1.0 / to_position.norm() - 1.0 / max_distance) * force);
 }
 
-fn update_temp_areas(now: f64, temp_area_objects: &mut Vec<TempArea>) {
-    for object in temp_area_objects.iter_mut() {
-        decay_effect(now, &mut object.effect);
-    }
-}
-
 fn update_actors(now: f64, duration: f64, settings: &WorldSettings, actors: &mut Vec<Actor>) {
     for actor in actors.iter_mut() {
         update_actor_current_direction(duration, settings.max_rotation_speed, actor);
@@ -1053,7 +1059,7 @@ fn update_actors(now: f64, duration: f64, settings: &WorldSettings, actors: &mut
             duration,
             settings.magical_damage_factor,
             actor.body.mass(),
-            &actor.effect,
+            &actor.effect.power,
             &mut actor.health,
         );
         decay_effect(now, &mut actor.effect);
@@ -1081,21 +1087,8 @@ fn update_actors(now: f64, duration: f64, settings: &WorldSettings, actors: &mut
     }
 }
 
-fn update_projectiles(
-    now: f64,
-    duration: f64,
-    settings: &WorldSettings,
-    projectiles: &mut Vec<Projectile>,
-) {
+fn update_projectiles(duration: f64, settings: &WorldSettings, projectiles: &mut Vec<Projectile>) {
     for projectile in projectiles.iter_mut() {
-        damage_health(
-            duration,
-            settings.magical_damage_factor,
-            projectile.body.mass(),
-            &projectile.effect,
-            &mut projectile.health,
-        );
-        decay_effect(now, &mut projectile.effect);
         update_velocity(
             duration,
             projectile.body.mass(),
@@ -1119,15 +1112,43 @@ fn update_projectiles(
     }
 }
 
-fn update_static_objects(now: f64, static_objects: &mut Vec<StaticObject>) {
+fn update_static_objects(
+    now: f64,
+    duration: f64,
+    settings: &WorldSettings,
+    static_objects: &mut Vec<StaticObject>,
+) {
     for object in static_objects.iter_mut() {
         decay_effect(now, &mut object.effect);
+        damage_health(
+            duration,
+            settings.magical_damage_factor,
+            object.body.mass(),
+            &object.effect.power,
+            &mut object.health,
+        );
     }
 }
 
 fn update_shields(duration: f64, settings: &WorldSettings, shields: &mut Vec<Shield>) {
     for shield in shields.iter_mut() {
         shield.power -= duration * settings.shield_decay_factor;
+    }
+}
+
+fn update_temp_obstacles(
+    duration: f64,
+    settings: &WorldSettings,
+    temp_obstacles: &mut Vec<TempObstacle>,
+) {
+    for temp_obstacle in temp_obstacles.iter_mut() {
+        damage_health(
+            duration,
+            settings.magical_damage_factor,
+            temp_obstacle.mass(),
+            &temp_obstacle.effect.power,
+            &mut temp_obstacle.health,
+        );
     }
 }
 
@@ -1199,8 +1220,14 @@ fn decay_aura(now: f64, duration: f64, decay_factor: f64, aura: &mut Aura) {
     }
 }
 
-fn damage_health(duration: f64, damage_factor: f64, mass: f64, effect: &Effect, health: &mut f64) {
-    *health = (*health - get_damage(&effect.power) * damage_factor * duration / mass).min(1.0);
+fn damage_health(
+    duration: f64,
+    damage_factor: f64,
+    mass: f64,
+    power: &[f64; 11],
+    health: &mut f64,
+) {
+    *health = (*health - get_damage(power) * damage_factor * duration / mass).min(1.0);
 }
 
 fn update_position(duration: f64, velocity: Vec2f, position: &mut Vec2f) {
@@ -1353,21 +1380,11 @@ fn intersect_beam(
     if let Some((index, mut normal)) = nearest_hit {
         let can_reflect = match index {
             Index::Actor(i) => {
-                world.actors[i].effect = add_magick_power_to_effect(
-                    world.time,
-                    &world.actors[i].effect,
-                    &magick.power,
-                );
+                world.actors[i].effect =
+                    add_magick_power_to_effect(world.time, &world.actors[i].effect, &magick.power);
                 can_reflect_beams(&world.actors[i].aura.elements)
             }
-            Index::Projectile(i) => {
-                world.projectiles[i].effect = add_magick_power_to_effect(
-                    world.time,
-                    &world.projectiles[i].effect,
-                    &magick.power,
-                );
-                false
-            }
+            Index::Projectile(..) => false,
             Index::StaticObject(i) => {
                 world.static_objects[i].effect = add_magick_power_to_effect(
                     world.time,
@@ -1781,6 +1798,7 @@ trait CollidingObject: WithVelocity + WithShape + WithIsometry {
     fn position(&self) -> Vec2f;
     fn set_position(&mut self, value: Vec2f);
     fn set_velocity(&mut self, value: Vec2f);
+    fn magick(&self) -> &Magick;
     fn effect(&self) -> &Effect;
     fn set_effect(&mut self, value: Effect);
     fn health(&self) -> f64;
@@ -1920,8 +1938,8 @@ fn apply_impact(
             );
         }
     }
-    let new_lhs_effect = add_magick_power_to_effect(now, lhs.effect(), &rhs.effect().power);
-    let new_rhs_effect = add_magick_power_to_effect(now, rhs.effect(), &lhs.effect().power);
+    let new_lhs_effect = add_magick_power_to_effect(now, lhs.effect(), &rhs.magick().power);
+    let new_rhs_effect = add_magick_power_to_effect(now, rhs.effect(), &lhs.magick().power);
     lhs.set_effect(new_lhs_effect);
     rhs.set_effect(new_rhs_effect);
     handle_collision_damage(lhs_kinetic_energy, damage_factor, lhs_velocity, lhs);
@@ -1970,6 +1988,10 @@ impl CollidingObject for Actor {
         self.velocity = value;
     }
 
+    fn magick(&self) -> &Magick {
+        &DEFAULT_MAGICK
+    }
+
     fn effect(&self) -> &Effect {
         &self.effect
     }
@@ -2016,13 +2038,15 @@ impl CollidingObject for Projectile {
         self.velocity = value;
     }
 
-    fn effect(&self) -> &Effect {
-        &self.effect
+    fn magick(&self) -> &Magick {
+        &self.magick
     }
 
-    fn set_effect(&mut self, value: Effect) {
-        self.effect = value;
+    fn effect(&self) -> &Effect {
+        &DEFAULT_EFFECT
     }
+
+    fn set_effect(&mut self, _: Effect) {}
 
     fn health(&self) -> f64 {
         self.health
@@ -2057,6 +2081,10 @@ impl CollidingObject for StaticObject {
     fn set_position(&mut self, _: Vec2f) {}
 
     fn set_velocity(&mut self, _: Vec2f) {}
+
+    fn magick(&self) -> &Magick {
+        &DEFAULT_MAGICK
+    }
 
     fn effect(&self) -> &Effect {
         &self.effect
@@ -2100,6 +2128,10 @@ impl CollidingObject for Shield {
 
     fn set_velocity(&mut self, _: Vec2f) {}
 
+    fn magick(&self) -> &Magick {
+        &DEFAULT_MAGICK
+    }
+
     fn effect(&self) -> &Effect {
         &DEFAULT_EFFECT
     }
@@ -2138,11 +2170,17 @@ impl CollidingObject for TempObstacle {
 
     fn set_velocity(&mut self, _: Vec2f) {}
 
-    fn effect(&self) -> &Effect {
-        &DEFAULT_EFFECT
+    fn magick(&self) -> &Magick {
+        &self.magick
     }
 
-    fn set_effect(&mut self, _: Effect) {}
+    fn effect(&self) -> &Effect {
+        &self.effect
+    }
+
+    fn set_effect(&mut self, value: Effect) {
+        self.effect = value;
+    }
 
     fn health(&self) -> f64 {
         self.health
@@ -2205,6 +2243,8 @@ fn handle_completed_magicks(world: &mut World) {
                 let radius = delayed_magick.power.iter().sum::<f64>() * actor.body.shape.radius
                     / world.settings.max_magic_power;
                 let material = Material::Stone;
+                let mut power = delayed_magick.power;
+                power[Element::Earth as usize] = 0.0;
                 world.projectiles.push(Projectile {
                     id: ProjectileId(get_next_id(&mut world.id_counter)),
                     body: Body {
@@ -2215,10 +2255,7 @@ fn handle_completed_magicks(world: &mut World) {
                         + actor.current_direction
                             * (actor.body.shape.radius + radius + world.settings.margin),
                     health: 1.0,
-                    effect: Effect {
-                        applied: [world.time; 11],
-                        power: delayed_magick.power,
-                    },
+                    magick: Magick { power },
                     velocity: actor.velocity,
                     dynamic_force: actor.current_direction
                         * ((world.time - delayed_magick.started)
@@ -2366,8 +2403,7 @@ fn shoot_from_guns<R: Rng>(world: &mut World, rng: &mut R) {
                     + actor.current_direction
                         * (actor.body.shape.radius + radius + world.settings.margin),
                 health: 1.0,
-                effect: Effect {
-                    applied: [world.time; 11],
+                magick: Magick {
                     power: gun.bullet_power,
                 },
                 velocity: actor.velocity,
@@ -2467,7 +2503,7 @@ mod tests {
             },
             position: Vec2f::new(-34.41147614376544, -32.89358428062188),
             health: 1.0,
-            effect: Effect::default(),
+            magick: Magick::default(),
             velocity: Vec2f::new(-737.9674461149048, -343.18066550098706),
             dynamic_force: Vec2f::ZERO,
             position_z: 1.5,

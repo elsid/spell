@@ -52,6 +52,7 @@ pub struct WorldSettings {
     pub gun_half_grouping_angle: f64,
     pub shield_decay_factor: f64,
     pub temp_obstacle_magick_duration: f64,
+    pub temp_area_duration: f64,
 }
 
 impl Default for WorldSettings {
@@ -83,6 +84,7 @@ impl Default for WorldSettings {
             gun_half_grouping_angle: std::f64::consts::PI / 12.0,
             shield_decay_factor: 1.0 / 3.0,
             temp_obstacle_magick_duration: 20.0,
+            temp_area_duration: 5.0,
         }
     }
 }
@@ -135,7 +137,7 @@ pub struct Projectile {
     pub body: Body<Disk>,
     pub position: Vec2f,
     pub health: f64,
-    pub effect: Effect,
+    pub magick: Magick,
     pub velocity: Vec2f,
     pub dynamic_force: Vec2f,
     pub position_z: f64,
@@ -184,7 +186,8 @@ pub struct TempArea {
     pub id: TempAreaId,
     pub body: Body<Disk>,
     pub position: Vec2f,
-    pub effect: Effect,
+    pub magick: Magick,
+    pub deadline: f64,
 }
 
 #[derive(Default, Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
@@ -195,7 +198,7 @@ pub struct BoundedArea {
     pub id: BoundedAreaId,
     pub actor_id: ActorId,
     pub body: RingSector,
-    pub effect: Effect,
+    pub magick: Magick,
     pub deadline: f64,
 }
 
@@ -248,6 +251,7 @@ pub struct TempObstacle {
     pub position: Vec2f,
     pub health: f64,
     pub magick: Magick,
+    pub effect: Effect,
     pub deadline: f64,
 }
 
@@ -382,7 +386,7 @@ mod tests {
 
     #[test]
     fn serialized_default_world_size() {
-        assert_eq!(bincode::serialize(&World::default()).unwrap().len(), 330);
+        assert_eq!(bincode::serialize(&World::default()).unwrap().len(), 354);
     }
 
     #[test]
@@ -429,7 +433,7 @@ mod tests {
                 },
                 position: Vec2f::ZERO,
                 health: 1.0,
-                effect: Effect::default(),
+                magick: Magick::default(),
                 velocity: Vec2f::ZERO,
                 dynamic_force: Vec2f::ZERO,
                 position_z: 1.0,
@@ -437,7 +441,7 @@ mod tests {
             })
             .unwrap()
             .len(),
-            268
+            180
         );
     }
 
