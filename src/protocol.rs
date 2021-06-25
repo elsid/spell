@@ -1161,8 +1161,6 @@ mod tests {
         world_after.actors[4].position =
             Vec2f::new(rng.gen_range(-1e1..1e1), rng.gen_range(-1e1..1e1));
         world_after.actors[3].health *= 0.8;
-        world_after.dynamic_objects.remove(4);
-        world_after.dynamic_objects.remove(0);
         world_after.static_objects.remove(3);
         world_after.static_objects.remove(0);
         world_after.static_areas.remove(2);

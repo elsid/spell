@@ -5,9 +5,8 @@ use crate::engine::get_next_id;
 use crate::rect::Rectf;
 use crate::vec2::Vec2f;
 use crate::world::{
-    Actor, ActorId, ActorOccupation, Aura, Body, Disk, DynamicObject, DynamicObjectId, Effect,
-    Element, Magick, Material, PlayerId, StaticArea, StaticAreaId, StaticObject, StaticObjectId,
-    StaticShape, World, WorldSettings,
+    Actor, ActorId, ActorOccupation, Aura, Body, Disk, Effect, Element, Magick, Material, PlayerId,
+    StaticArea, StaticAreaId, StaticObject, StaticObjectId, StaticShape, World, WorldSettings,
 };
 
 pub fn make_rng(random_seed: Option<u64>) -> SmallRng {
@@ -30,17 +29,8 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
         &mut actors,
         rng,
     );
-    let mut dynamic_objects = Vec::new();
     let mut static_objects = Vec::new();
-    for material in &[Material::Flesh, Material::Stone] {
-        generate_dynamic_objects(
-            *material,
-            rng.gen_range(8..12),
-            &bounds,
-            &mut id_counter,
-            &mut dynamic_objects,
-            rng,
-        );
+    for material in &[Material::Ice, Material::Stone] {
         generate_static_objects(
             *material,
             rng.gen_range(8..12),
@@ -92,7 +82,7 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
         id_counter,
         players: Vec::new(),
         actors,
-        dynamic_objects,
+        dynamic_objects: Vec::new(),
         static_objects,
         beams: Vec::new(),
         static_areas,
@@ -196,50 +186,6 @@ pub fn generate_actor<R: Rng>(
         position_z: radius,
         velocity_z: 0.0,
         occupation: ActorOccupation::None,
-    }
-}
-
-pub fn generate_dynamic_objects<R: Rng>(
-    material: Material,
-    number: usize,
-    bounds: &Rectf,
-    id_counter: &mut u64,
-    dynamic_objects: &mut Vec<DynamicObject>,
-    rng: &mut R,
-) {
-    for _ in 0..number {
-        dynamic_objects.push(generate_dynamic_object(
-            material,
-            DynamicObjectId(get_next_id(id_counter)),
-            bounds,
-            rng,
-        ));
-    }
-}
-
-pub fn generate_dynamic_object<R: Rng>(
-    material: Material,
-    id: DynamicObjectId,
-    bounds: &Rectf,
-    rng: &mut R,
-) -> DynamicObject {
-    let radius = rng.gen_range(0.8..1.2);
-    DynamicObject {
-        id,
-        body: Body {
-            shape: Disk { radius },
-            material,
-        },
-        position: Vec2f::new(
-            rng.gen_range(bounds.min.x..bounds.max.x),
-            rng.gen_range(bounds.min.y..bounds.max.y),
-        ),
-        health: 1.0,
-        effect: Effect::default(),
-        velocity: Vec2f::ZERO,
-        dynamic_force: Vec2f::ZERO,
-        position_z: radius,
-        velocity_z: 0.0,
     }
 }
 

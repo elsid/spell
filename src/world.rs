@@ -345,9 +345,7 @@ mod tests {
     use rand::rngs::SmallRng;
     use rand::SeedableRng;
 
-    use crate::generators::{
-        generate_dynamic_object, generate_static_area, generate_static_object,
-    };
+    use crate::generators::{generate_static_area, generate_static_object};
 
     use super::*;
 
@@ -392,12 +390,20 @@ mod tests {
     #[test]
     fn serialized_dynamic_object_size() {
         assert_eq!(
-            bincode::serialize(&generate_dynamic_object(
-                Material::Flesh,
-                DynamicObjectId(1),
-                &Rectf::new(Vec2f::ZERO, Vec2f::new(1.0, 1.0)),
-                &mut SmallRng::seed_from_u64(42),
-            ))
+            bincode::serialize(&DynamicObject {
+                id: DynamicObjectId(1),
+                body: Body {
+                    shape: Disk { radius: 1.0 },
+                    material: Material::Stone,
+                },
+                position: Vec2f::ZERO,
+                health: 1.0,
+                effect: Effect::default(),
+                velocity: Vec2f::ZERO,
+                dynamic_force: Vec2f::ZERO,
+                position_z: 1.0,
+                velocity_z: 0.0,
+            })
             .unwrap()
             .len(),
             268
