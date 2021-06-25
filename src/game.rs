@@ -767,6 +767,19 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
         }
     }
 
+    for v in scene.world.shields.iter() {
+        draw_ring_sector_body(
+            &RingSector {
+                min_radius: v.body.shape.radius - scene.world.settings.border_width,
+                max_radius: v.body.shape.radius + scene.world.settings.border_width,
+                angle: v.body.shape.length,
+            },
+            Color::from(get_element_color(Element::Shield)),
+            v.position,
+            v.body.shape.rotation,
+        );
+    }
+
     for v in scene.world.actors.iter() {
         draw_aura(&v.aura, v.position);
     }
@@ -808,6 +821,14 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
         draw_aura_power(
             v.aura.power / scene.world.settings.max_magic_power,
             radius,
+            v.position,
+        );
+    }
+
+    for v in scene.world.shields.iter() {
+        draw_aura_power(
+            v.power / scene.world.settings.max_magic_power,
+            v.body.shape.radius,
             v.position,
         );
     }
@@ -1005,6 +1026,7 @@ fn draw_debug_scene_text(counter: &mut usize, scene: &Scene, font: Font) {
             format!("Bounded areas: {}", scene.world.bounded_areas.len()),
             format!("Fields: {}", scene.world.fields.len()),
             format!("Guns: {}", scene.world.guns.len()),
+            format!("Shields: {}", scene.world.shields.len()),
         ],
     );
 }
@@ -1111,8 +1133,11 @@ fn draw_ring_sector_body_and_magick<T>(
 ) where
     T: Default + PartialEq,
 {
+    draw_ring_sector_body(body, get_magick_power_color(power), position, rotation);
+}
+
+fn draw_ring_sector_body(body: &RingSector, color: Color, position: Vec2f, rotation: f64) {
     const BASE_RESOLUTION: f64 = HUD_MARGIN;
-    let color = get_magick_power_color(power);
     let resolution = (body.angle * BASE_RESOLUTION).round() as usize;
     let min_angle_step = body.angle / (resolution - 1) as f64;
     let max_angle_step = body.angle / resolution as f64;

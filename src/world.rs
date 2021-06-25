@@ -20,6 +20,7 @@ pub struct World {
     pub bounded_areas: Vec<BoundedArea>,
     pub fields: Vec<Field>,
     pub guns: Vec<Gun>,
+    pub shields: Vec<Shield>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -48,6 +49,7 @@ pub struct WorldSettings {
     pub base_gun_fire_period: f64,
     pub gun_bullet_radius: f64,
     pub gun_half_grouping_angle: f64,
+    pub shield_decay_factor: f64,
 }
 
 impl Default for WorldSettings {
@@ -77,6 +79,7 @@ impl Default for WorldSettings {
             base_gun_fire_period: 0.3,
             gun_bullet_radius: 0.2,
             gun_half_grouping_angle: std::f64::consts::PI / 12.0,
+            shield_decay_factor: 1.0 / 3.0,
         }
     }
 }
@@ -220,6 +223,18 @@ pub struct Gun {
     pub last_shot: f64,
 }
 
+#[derive(Default, Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
+pub struct ShieldId(pub u64);
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct Shield {
+    pub id: ShieldId,
+    pub actor_id: ActorId,
+    pub body: Body<CircleArc>,
+    pub position: Vec2f,
+    pub power: f64,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Body<Shape> {
     pub shape: Shape,
@@ -351,7 +366,7 @@ mod tests {
 
     #[test]
     fn serialized_default_world_size() {
-        assert_eq!(bincode::serialize(&World::default()).unwrap().len(), 314);
+        assert_eq!(bincode::serialize(&World::default()).unwrap().len(), 330);
     }
 
     #[test]

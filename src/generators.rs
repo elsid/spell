@@ -90,6 +90,7 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
         bounded_areas: Vec::new(),
         fields: Vec::new(),
         guns: Vec::new(),
+        shields: Vec::new(),
     }
 }
 

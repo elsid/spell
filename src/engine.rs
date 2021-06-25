@@ -15,8 +15,8 @@ use crate::world::PlayerId;
 use crate::world::{
     Actor, ActorId, ActorOccupation, Aura, Beam, BeamId, Body, BoundedArea, BoundedAreaId,
     CircleArc, DelayedMagick, DelayedMagickStatus, Disk, Effect, Element, Field, FieldId, Gun,
-    GunId, Magick, Material, Projectile, ProjectileId, RingSector, StaticArea, StaticObject,
-    StaticObjectId, StaticShape, TempArea, TempAreaId, World, WorldSettings,
+    GunId, Magick, Material, Projectile, ProjectileId, RingSector, Shield, ShieldId, StaticArea,
+    StaticObject, StaticObjectId, StaticShape, TempArea, TempAreaId, World, WorldSettings,
 };
 
 const RESOLUTION_FACTOR: f64 = 4.0;
@@ -26,12 +26,17 @@ const DEFAULT_AURA: Aura = Aura {
     radius: 0.0,
     elements: [false; 11],
 };
+const DEFAULT_EFFECT: Effect = Effect {
+    applied: [0.0; 11],
+    power: [0.0; 11],
+};
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub enum Index {
     Actor(usize),
     Projectile(usize),
     StaticObject(usize),
+    Shield(usize),
 }
 
 struct Spell<'a> {
@@ -213,6 +218,7 @@ impl Engine {
             &world.settings,
             &mut world.static_objects,
         );
+        update_shields(duration, &world.settings, &mut world.shields);
         self.update_beams(world);
         move_objects(duration, world, &self.shape_cache);
         world
@@ -239,6 +245,7 @@ impl Engine {
                     is_active(&bounds, shape, v.position, v.health)
                 })
         });
+        world.shields.retain(|v| v.power > 0.0);
         handle_completed_magicks(world);
         update_player_spawn_time(world);
     }
@@ -438,28 +445,19 @@ fn cast_spray_based_shield(magick: Magick, actor_index: usize, world: &mut World
 
 fn cast_reflecting_shield(length: f64, actor_index: usize, world: &mut World) {
     let actor = &world.actors[actor_index];
-    let radius = 5.0;
-    let mut elements = [false; 11];
-    elements[Element::Shield as usize] = true;
-    world.static_objects.push(StaticObject {
-        id: StaticObjectId(get_next_id(&mut world.id_counter)),
+    world.shields.push(Shield {
+        id: ShieldId(get_next_id(&mut world.id_counter)),
+        actor_id: actor.id,
         body: Body {
-            shape: StaticShape::CircleArc(CircleArc {
-                radius,
+            shape: CircleArc {
+                radius: 5.0,
                 length,
                 rotation: normalize_angle(actor.current_direction.angle()),
-            }),
+            },
             material: Material::None,
         },
         position: actor.position,
-        health: 0.0,
-        effect: Effect::default(),
-        aura: Aura {
-            applied: world.time,
-            power: 5.0,
-            radius: 0.0,
-            elements,
-        },
+        power: 1.0,
     });
 }
 
@@ -654,6 +652,18 @@ impl StaticShape {
 impl Disk {
     fn as_shape(&self) -> Ball {
         Ball::new(self.radius)
+    }
+}
+
+impl CircleArc {
+    fn with_shape<R, F: FnMut(&dyn Shape) -> R>(&self, cache: &ShapeCache, f: F) -> R {
+        cache.with(
+            &CircleArcKey {
+                radius: self.radius,
+                length: self.length,
+            },
+            f,
+        )
     }
 }
 
@@ -1121,6 +1131,12 @@ fn update_static_objects(
     }
 }
 
+fn update_shields(duration: f64, settings: &WorldSettings, shields: &mut Vec<Shield>) {
+    for shield in shields.iter_mut() {
+        shield.power -= duration * settings.shield_decay_factor;
+    }
+}
+
 fn update_actor_current_direction(duration: f64, max_rotation_speed: f64, actor: &mut Actor) {
     if is_actor_immobilized(actor) {
         return;
@@ -1327,20 +1343,39 @@ fn intersect_beam(
     )
     .map(|(i, n)| (Index::StaticObject(i), n))
     .or(nearest_hit);
+    nearest_hit =
+        find_beam_nearest_intersection(origin, direction, &world.shields, length, shape_cache)
+            .map(|(i, n)| (Index::Shield(i), n))
+            .or(nearest_hit);
     if let Some((index, mut normal)) = nearest_hit {
-        let (aura, effect) = match index {
+        let can_reflect = match index {
             Index::Actor(i) => {
-                let object = &mut world.actors[i];
-                (&object.aura, &mut object.effect)
+                world.actors[i].effect = add_magick_power_to_effect(
+                    world.time,
+                    &world.actors[i].effect,
+                    &magick.power,
+                );
+                can_reflect_beams(&world.actors[i].aura.elements)
             }
-            Index::Projectile(i) => (&DEFAULT_AURA, &mut world.projectiles[i].effect),
+            Index::Projectile(i) => {
+                world.projectiles[i].effect = add_magick_power_to_effect(
+                    world.time,
+                    &world.projectiles[i].effect,
+                    &magick.power,
+                );
+                false
+            }
             Index::StaticObject(i) => {
-                let object = &mut world.static_objects[i];
-                (&object.aura, &mut object.effect)
+                world.static_objects[i].effect = add_magick_power_to_effect(
+                    world.time,
+                    &world.static_objects[i].effect,
+                    &magick.power,
+                );
+                can_reflect_beams(&world.static_objects[i].aura.elements)
             }
+            Index::Shield(..) => true,
         };
-        *effect = add_magick_power_to_effect(world.time, effect, &magick.power);
-        if depth < world.settings.max_beam_depth as usize && can_reflect_beams(&aura.elements) {
+        if depth < world.settings.max_beam_depth as usize && can_reflect {
             // RayCast::cast_ray_and_get_normal returns not normalized normal
             normal.normalize();
             Some(EmittedBeam {
@@ -1385,6 +1420,15 @@ impl WithIsometry for StaticObject {
     }
 }
 
+impl WithIsometry for Shield {
+    fn get_isometry(&self) -> Isometry<Real> {
+        Isometry::new(
+            Vector2::new(self.position.x, self.position.y),
+            self.body.shape.rotation,
+        )
+    }
+}
+
 trait WithShape {
     fn with_shape(&self, shape_cache: &ShapeCache, f: &mut dyn FnMut(&dyn Shape));
 }
@@ -1402,6 +1446,15 @@ impl WithShape for Projectile {
 }
 
 impl WithShape for StaticObject {
+    fn with_shape(&self, shape_cache: &ShapeCache, f: &mut dyn FnMut(&dyn Shape)) {
+        self.body
+            .shape
+            .clone()
+            .with_shape(shape_cache, |shape| (*f)(shape))
+    }
+}
+
+impl WithShape for Shield {
     fn with_shape(&self, shape_cache: &ShapeCache, f: &mut dyn FnMut(&dyn Shape)) {
         self.body
             .shape
@@ -1483,6 +1536,28 @@ fn move_objects(duration: f64, world: &mut World, shape_cache: &ShapeCache) {
                 }
             }
         }
+        for (i, shield) in world.shields.iter().enumerate() {
+            for (j, actor) in world.actors.iter().enumerate() {
+                if let Some(toi) = time_of_impact(duration_left, shape_cache, shield, actor) {
+                    update_earliest_collision(
+                        Index::Shield(i),
+                        Index::Actor(j),
+                        toi,
+                        &mut earliest_collision,
+                    );
+                }
+            }
+            for (j, projectile) in world.projectiles.iter().enumerate() {
+                if let Some(toi) = time_of_impact(duration_left, shape_cache, shield, projectile) {
+                    update_earliest_collision(
+                        Index::Shield(i),
+                        Index::Projectile(j),
+                        toi,
+                        &mut earliest_collision,
+                    );
+                }
+            }
+        }
         if !world.actors.is_empty() {
             for i in 0..world.actors.len() - 1 {
                 for j in i + 1..world.actors.len() {
@@ -1508,6 +1583,16 @@ fn move_objects(duration: f64, world: &mut World, shape_cache: &ShapeCache) {
                     update_earliest_collision(
                         Index::Projectile(i),
                         Index::Actor(j),
+                        toi,
+                        &mut earliest_collision,
+                    );
+                }
+            }
+            for (j, shield) in world.shields.iter().enumerate() {
+                if let Some(toi) = time_of_impact(duration_left, shape_cache, projectile, shield) {
+                    update_earliest_collision(
+                        Index::Projectile(i),
+                        Index::Shield(j),
                         toi,
                         &mut earliest_collision,
                     );
@@ -1625,6 +1710,12 @@ impl WithVelocity for StaticObject {
     }
 }
 
+impl WithVelocity for Shield {
+    fn velocity(&self) -> Vec2f {
+        Vec2f::ZERO
+    }
+}
+
 struct Collision {
     lhs: Index,
     rhs: Index,
@@ -1643,8 +1734,10 @@ trait CollidingObject: WithVelocity + WithShape + WithIsometry {
     fn position(&self) -> Vec2f;
     fn set_position(&mut self, value: Vec2f);
     fn set_velocity(&mut self, value: Vec2f);
-    fn effect(&mut self) -> &mut Effect;
-    fn health(&mut self) -> &mut f64;
+    fn effect(&self) -> &Effect;
+    fn set_effect(&mut self, value: Effect);
+    fn health(&self) -> f64;
+    fn set_health(&mut self, value: f64);
     fn aura(&self) -> &Aura;
     fn is_static(&self) -> bool;
 }
@@ -1672,6 +1765,7 @@ where
             }
             Index::Projectile(rhs) => f(&mut world.actors[lhs], &mut world.projectiles[rhs]),
             Index::StaticObject(rhs) => f(&mut world.actors[lhs], &mut world.static_objects[rhs]),
+            Index::Shield(rhs) => f(&mut world.actors[lhs], &mut world.shields[rhs]),
         },
         Index::Projectile(lhs) => match rhs {
             Index::Actor(rhs) => f(&mut world.projectiles[lhs], &mut world.actors[rhs]),
@@ -1682,6 +1776,7 @@ where
             Index::StaticObject(rhs) => {
                 f(&mut world.projectiles[lhs], &mut world.static_objects[rhs])
             }
+            Index::Shield(rhs) => f(&mut world.projectiles[lhs], &mut world.shields[rhs]),
         },
         Index::StaticObject(lhs) => match rhs {
             Index::Actor(rhs) => f(&mut world.static_objects[lhs], &mut world.actors[rhs]),
@@ -1690,6 +1785,16 @@ where
             }
             Index::StaticObject(rhs) => {
                 let (left, right) = world.static_objects.split_at_mut(rhs);
+                f(&mut left[lhs], &mut right[0])
+            }
+            Index::Shield(rhs) => f(&mut world.static_objects[lhs], &mut world.shields[rhs]),
+        },
+        Index::Shield(lhs) => match rhs {
+            Index::Actor(rhs) => f(&mut world.shields[lhs], &mut world.actors[rhs]),
+            Index::Projectile(rhs) => f(&mut world.shields[lhs], &mut world.projectiles[rhs]),
+            Index::StaticObject(rhs) => f(&mut world.shields[lhs], &mut world.static_objects[rhs]),
+            Index::Shield(rhs) => {
+                let (left, right) = world.shields.split_at_mut(rhs);
                 f(&mut left[lhs], &mut right[0])
             }
         },
@@ -1746,8 +1851,8 @@ fn apply_impact(
     }
     let new_lhs_effect = add_magick_power_to_effect(now, lhs.effect(), &rhs.effect().power);
     let new_rhs_effect = add_magick_power_to_effect(now, rhs.effect(), &lhs.effect().power);
-    *lhs.effect() = new_lhs_effect;
-    *rhs.effect() = new_rhs_effect;
+    lhs.set_effect(new_lhs_effect);
+    rhs.set_effect(new_rhs_effect);
     handle_collision_damage(lhs_kinetic_energy, damage_factor, lhs_velocity, lhs);
     handle_collision_damage(rhs_kinetic_energy, damage_factor, rhs_velocity, rhs);
 }
@@ -1794,12 +1899,20 @@ impl CollidingObject for Actor {
         self.velocity = value;
     }
 
-    fn effect(&mut self) -> &mut Effect {
-        &mut self.effect
+    fn effect(&self) -> &Effect {
+        &self.effect
     }
 
-    fn health(&mut self) -> &mut f64 {
-        &mut self.health
+    fn set_effect(&mut self, value: Effect) {
+        self.effect = value;
+    }
+
+    fn health(&self) -> f64 {
+        self.health
+    }
+
+    fn set_health(&mut self, value: f64) {
+        self.health = value;
     }
 
     fn aura(&self) -> &Aura {
@@ -1832,12 +1945,20 @@ impl CollidingObject for Projectile {
         self.velocity = value;
     }
 
-    fn effect(&mut self) -> &mut Effect {
-        &mut self.effect
+    fn effect(&self) -> &Effect {
+        &self.effect
     }
 
-    fn health(&mut self) -> &mut f64 {
-        &mut self.health
+    fn set_effect(&mut self, value: Effect) {
+        self.effect = value;
+    }
+
+    fn health(&self) -> f64 {
+        self.health
+    }
+
+    fn set_health(&mut self, value: f64) {
+        self.health = value;
     }
 
     fn aura(&self) -> &Aura {
@@ -1866,16 +1987,62 @@ impl CollidingObject for StaticObject {
 
     fn set_velocity(&mut self, _: Vec2f) {}
 
-    fn effect(&mut self) -> &mut Effect {
-        &mut self.effect
+    fn effect(&self) -> &Effect {
+        &self.effect
     }
 
-    fn health(&mut self) -> &mut f64 {
-        &mut self.health
+    fn set_effect(&mut self, value: Effect) {
+        self.effect = value;
+    }
+
+    fn health(&self) -> f64 {
+        self.health
+    }
+
+    fn set_health(&mut self, value: f64) {
+        self.health = value;
     }
 
     fn aura(&self) -> &Aura {
         &self.aura
+    }
+
+    fn is_static(&self) -> bool {
+        true
+    }
+}
+
+impl CollidingObject for Shield {
+    fn material(&self) -> Material {
+        self.body.material
+    }
+
+    fn mass(&self) -> f64 {
+        self.body.mass()
+    }
+
+    fn position(&self) -> Vec2f {
+        self.position
+    }
+
+    fn set_position(&mut self, _: Vec2f) {}
+
+    fn set_velocity(&mut self, _: Vec2f) {}
+
+    fn effect(&self) -> &Effect {
+        &DEFAULT_EFFECT
+    }
+
+    fn set_effect(&mut self, _: Effect) {}
+
+    fn health(&self) -> f64 {
+        0.0
+    }
+
+    fn set_health(&mut self, _: f64) {}
+
+    fn aura(&self) -> &Aura {
+        &DEFAULT_AURA
     }
 
     fn is_static(&self) -> bool {
@@ -1890,10 +2057,13 @@ fn handle_collision_damage(
     object: &mut dyn CollidingObject,
 ) {
     if !can_absorb_physical_damage(&object.aura().elements) {
-        *object.health() -= (get_kinetic_energy(object.mass(), velocity) - prev_kinetic_energy)
-            .abs()
-            * damage_factor
-            / object.mass();
+        let health = object.health();
+        object.set_health(
+            health
+                - (get_kinetic_energy(object.mass(), velocity) - prev_kinetic_energy).abs()
+                    * damage_factor
+                    / object.mass(),
+        );
     }
 }
 
@@ -2160,24 +2330,23 @@ mod tests {
     }
 
     #[test]
-    fn time_of_impact_should_find_impact_for_static_circle_arc_and_moving_disk() {
+    fn time_of_impact_should_find_impact_for_shield_circle_arc_and_moving_disk() {
         use std::f64::consts::FRAC_PI_2;
         let duration = 10.0;
         let shape_cache = ShapeCache::default();
-        let static_object = StaticObject {
-            id: StaticObjectId(1),
+        let shield = Shield {
+            id: ShieldId(1),
+            actor_id: ActorId(0),
             body: Body {
-                shape: StaticShape::CircleArc(CircleArc {
+                shape: CircleArc {
                     radius: 5.0,
                     length: FRAC_PI_2,
                     rotation: -2.6539321938108684,
-                }),
+                },
                 material: Material::None,
             },
             position: Vec2f::new(-33.23270204831895, -32.3454131103618),
-            health: 0.0,
-            effect: Effect::default(),
-            aura: Aura::default(),
+            power: 0.0,
         };
         let projectile = Projectile {
             id: ProjectileId(2),
@@ -2193,7 +2362,7 @@ mod tests {
             position_z: 1.5,
             velocity_z: -0.08166666666666667,
         };
-        let toi = time_of_impact(duration, &shape_cache, &static_object, &projectile).unwrap();
+        let toi = time_of_impact(duration, &shape_cache, &shield, &projectile).unwrap();
         assert!(
             (toi.toi - 0.004296260825975674) <= f64::EPSILON,
             "{}",

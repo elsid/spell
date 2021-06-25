@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::vec2::Vec2f;
 use crate::world::{
     Actor, ActorId, ActorOccupation, Aura, Beam, BoundedArea, DelayedMagick, Effect, Element,
-    Field, Gun, GunId, Player, PlayerId, Projectile, ProjectileId, StaticArea, StaticObject,
-    StaticObjectId, TempArea, TempAreaId, World,
+    Field, Gun, GunId, Player, PlayerId, Projectile, ProjectileId, Shield, ShieldId, StaticArea,
+    StaticObject, StaticObjectId, TempArea, TempAreaId, World,
 };
 
 pub const HEARTBEAT_PERIOD: Duration = Duration::from_secs(1);
@@ -81,6 +81,7 @@ pub struct WorldUpdate {
     pub bounded_areas: Option<ExistenceDifference<BoundedArea>>,
     pub fields: Option<ExistenceDifference<Field>>,
     pub guns: Option<Difference<Gun, GunUpdate>>,
+    pub shields: Option<Difference<Shield, ShieldUpdate>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
@@ -141,6 +142,12 @@ pub struct GunUpdate {
     pub id: GunId,
     pub shots_left: Option<u64>,
     pub last_shot: Option<f64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
+pub struct ShieldUpdate {
+    pub id: ShieldId,
+    pub power: Option<f64>,
 }
 
 #[derive(Default, Debug, Deserialize, Serialize)]
@@ -256,6 +263,7 @@ pub fn make_world_update(before: &World, after: &World) -> WorldUpdate {
         bounded_areas: get_bounded_areas_difference(&before.bounded_areas, &after.bounded_areas),
         fields: get_fields_difference(&before.fields, &after.fields),
         guns: get_guns_difference(&before.guns, &after.guns),
+        shields: get_shields_difference(&before.shields, &after.shields),
     }
 }
 
@@ -318,6 +326,13 @@ fn get_fields_difference(before: &[Field], after: &[Field]) -> Option<ExistenceD
 
 fn get_guns_difference(before: &[Gun], after: &[Gun]) -> Option<Difference<Gun, GunUpdate>> {
     get_difference(before, after, |v| v.id.0, make_gun_update)
+}
+
+fn get_shields_difference(
+    before: &[Shield],
+    after: &[Shield],
+) -> Option<Difference<Shield, ShieldUpdate>> {
+    get_difference(before, after, |v| v.id.0, make_shield_update)
 }
 
 fn make_player_update(b: &Player, a: &Player) -> Option<PlayerUpdate> {
@@ -416,6 +431,18 @@ fn make_gun_update(b: &Gun, a: &Gun) -> Option<GunUpdate> {
     let mut d = false;
     d = clone_if_different(&b.shots_left, &a.shots_left, &mut r.shots_left) || d;
     d = clone_if_different(&b.last_shot, &a.last_shot, &mut r.last_shot) || d;
+    if d {
+        r.id = a.id;
+        Some(r)
+    } else {
+        None
+    }
+}
+
+fn make_shield_update(b: &Shield, a: &Shield) -> Option<ShieldUpdate> {
+    let mut r = ShieldUpdate::default();
+    let mut d = false;
+    d = clone_if_different(&b.power, &a.power, &mut r.power) || d;
     if d {
         r.id = a.id;
         Some(r)
@@ -611,6 +638,13 @@ pub fn apply_world_update(update: WorldUpdate, world: &mut World) {
         apply_gun_update,
         &mut world.guns,
     );
+    apply_difference(
+        update.shields,
+        &|v| v.id.0,
+        &|a, b| a.id == b.id,
+        apply_shield_update,
+        &mut world.shields,
+    );
 }
 
 fn apply_difference<T, U, GetId, EqualById, ApplyUpdate>(
@@ -737,6 +771,10 @@ fn apply_gun_update(src: &GunUpdate, dst: &mut Gun) {
     clone_if_some(&src.last_shot, &mut dst.last_shot);
 }
 
+fn apply_shield_update(src: &ShieldUpdate, dst: &mut Shield) {
+    clone_if_some(&src.power, &mut dst.power);
+}
+
 fn clone_if_some<T: Clone>(src: &Option<T>, dst: &mut T) {
     if let Some(value) = src.as_ref() {
         *dst = value.clone();
@@ -756,6 +794,7 @@ where
     let mut sort_bounded_areas = false;
     let mut sort_fields = false;
     let mut sort_guns = false;
+    let mut sort_shields = false;
     for v in src {
         add_removed_difference(&v.actors, &mut dst.actors, &mut sort_actors);
         add_removed_difference(&v.projectiles, &mut dst.projectiles, &mut sort_projectiles);
@@ -778,6 +817,7 @@ where
         );
         add_removed_existence_difference(&v.fields, &mut dst.fields, &mut sort_fields);
         add_removed_difference(&v.guns, &mut dst.guns, &mut sort_guns);
+        add_removed_difference(&v.shields, &mut dst.shields, &mut sort_shields);
     }
     sort_and_dedup(sort_actors, dst.actors.as_mut().map(|v| v.removed.as_mut()));
     sort_and_dedup(
@@ -803,6 +843,10 @@ where
     );
     sort_and_dedup(sort_fields, dst.fields.as_mut().map(|v| v.removed.as_mut()));
     sort_and_dedup(sort_guns, dst.guns.as_mut().map(|v| v.removed.as_mut()));
+    sort_and_dedup(
+        sort_shields,
+        dst.shields.as_mut().map(|v| v.removed.as_mut()),
+    );
 }
 
 fn add_removed_difference<T, U>(
@@ -1004,7 +1048,7 @@ mod tests {
     fn serialized_default_world_update_size() {
         assert_eq!(
             bincode::serialize(&WorldUpdate::default()).unwrap().len(),
-            34
+            35
         );
     }
 
