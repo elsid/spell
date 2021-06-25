@@ -20,6 +20,12 @@ use crate::world::{
 };
 
 const RESOLUTION_FACTOR: f64 = 4.0;
+const DEFAULT_AURA: Aura = Aura {
+    applied: 0.0,
+    power: 0.0,
+    radius: 0.0,
+    elements: [false; 11],
+};
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub enum Index {
@@ -1080,7 +1086,6 @@ fn update_dynamic_objects(
             &mut object.health,
         );
         decay_effect(now, &mut object.effect);
-        decay_aura(now, duration, settings.decay_factor, &mut object.aura);
         update_velocity(
             duration,
             object.body.mass(),
@@ -1333,10 +1338,7 @@ fn intersect_beam(
                 let object = &mut world.actors[i];
                 (&object.aura, &mut object.effect)
             }
-            Index::DynamicObject(i) => {
-                let object = &mut world.dynamic_objects[i];
-                (&object.aura, &mut object.effect)
-            }
+            Index::DynamicObject(i) => (&DEFAULT_AURA, &mut world.dynamic_objects[i].effect),
             Index::StaticObject(i) => {
                 let object = &mut world.static_objects[i];
                 (&object.aura, &mut object.effect)
@@ -1849,7 +1851,7 @@ impl CollidingObject for DynamicObject {
     }
 
     fn aura(&self) -> &Aura {
-        &self.aura
+        &DEFAULT_AURA
     }
 
     fn is_static(&self) -> bool {
@@ -1946,7 +1948,6 @@ fn handle_completed_magicks(world: &mut World) {
                         applied: [world.time; 11],
                         power: delayed_magick.power,
                     },
-                    aura: Default::default(),
                     velocity: actor.velocity,
                     dynamic_force: actor.current_direction
                         * ((world.time - delayed_magick.started)
@@ -2098,7 +2099,6 @@ fn shoot_from_guns<R: Rng>(world: &mut World, rng: &mut R) {
                     applied: [world.time; 11],
                     power: gun.bullet_power,
                 },
-                aura: Aura::default(),
                 velocity: actor.velocity,
                 dynamic_force: (actor.current_direction * gun.bullet_force_factor).rotated(
                     rng.gen_range(
@@ -2198,7 +2198,6 @@ mod tests {
             position: Vec2f::new(-34.41147614376544, -32.89358428062188),
             health: 1.0,
             effect: Effect::default(),
-            aura: Aura::default(),
             velocity: Vec2f::new(-737.9674461149048, -343.18066550098706),
             dynamic_force: Vec2f::ZERO,
             position_z: 1.5,

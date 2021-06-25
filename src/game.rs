@@ -771,10 +771,6 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
         draw_aura(&v.aura, v.position);
     }
 
-    for v in scene.world.dynamic_objects.iter() {
-        draw_aura(&v.aura, v.position);
-    }
-
     for v in scene.world.static_objects.iter() {
         draw_aura(&v.aura, v.position);
     }
@@ -801,11 +797,6 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
 
     for v in scene.world.dynamic_objects.iter() {
         draw_health(v.health, v.body.shape.radius, v.position);
-        draw_aura_power(
-            v.aura.power / scene.world.settings.max_magic_power,
-            v.body.shape.radius,
-            v.position,
-        );
     }
 
     for v in scene.world.static_objects.iter() {

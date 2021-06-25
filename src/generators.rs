@@ -236,7 +236,6 @@ pub fn generate_dynamic_object<R: Rng>(
         ),
         health: 1.0,
         effect: Effect::default(),
-        aura: Aura::default(),
         velocity: Vec2f::ZERO,
         dynamic_force: Vec2f::ZERO,
         position_z: radius,

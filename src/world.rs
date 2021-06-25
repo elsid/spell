@@ -130,7 +130,6 @@ pub struct DynamicObject {
     pub position: Vec2f,
     pub health: f64,
     pub effect: Effect,
-    pub aura: Aura,
     pub velocity: Vec2f,
     pub dynamic_force: Vec2f,
     pub position_z: f64,
@@ -401,7 +400,7 @@ mod tests {
             ))
             .unwrap()
             .len(),
-            303
+            268
         );
     }
 

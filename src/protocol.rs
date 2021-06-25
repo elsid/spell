@@ -116,7 +116,6 @@ pub struct DynamicObjectUpdate {
     pub position: Option<Vec2f>,
     pub health: Option<f64>,
     pub effect: Option<Effect>,
-    pub aura: Option<Aura>,
     pub velocity: Option<Vec2f>,
     pub dynamic_force: Option<Vec2f>,
     pub position_z: Option<f64>,
@@ -377,7 +376,6 @@ fn make_dynamic_object_update(b: &DynamicObject, a: &DynamicObject) -> Option<Dy
     d = clone_if_different(&b.position, &a.position, &mut r.position) || d;
     d = clone_if_different(&b.health, &a.health, &mut r.health) || d;
     d = clone_if_different(&b.effect, &a.effect, &mut r.effect) || d;
-    d = clone_if_different(&b.aura, &a.aura, &mut r.aura) || d;
     d = clone_if_different(&b.velocity, &a.velocity, &mut r.velocity) || d;
     d = clone_if_different(&b.dynamic_force, &a.dynamic_force, &mut r.dynamic_force) || d;
     d = clone_if_different(&b.position_z, &a.position_z, &mut r.position_z) || d;
@@ -721,7 +719,6 @@ fn apply_dynamic_object_update(src: &DynamicObjectUpdate, dst: &mut DynamicObjec
     clone_if_some(&src.position, &mut dst.position);
     clone_if_some(&src.health, &mut dst.health);
     clone_if_some(&src.effect, &mut dst.effect);
-    clone_if_some(&src.aura, &mut dst.aura);
     clone_if_some(&src.velocity, &mut dst.velocity);
     clone_if_some(&src.dynamic_force, &mut dst.dynamic_force);
     clone_if_some(&src.position_z, &mut dst.position_z);
@@ -1032,7 +1029,7 @@ mod tests {
             bincode::serialize(&DynamicObjectUpdate::default())
                 .unwrap()
                 .len(),
-            16
+            15
         );
     }
 
