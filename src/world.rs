@@ -12,7 +12,7 @@ pub struct World {
     pub id_counter: u64,
     pub players: Vec<Player>,
     pub actors: Vec<Actor>,
-    pub dynamic_objects: Vec<DynamicObject>,
+    pub projectiles: Vec<Projectile>,
     pub static_objects: Vec<StaticObject>,
     pub beams: Vec<Beam>,
     pub static_areas: Vec<StaticArea>,
@@ -121,11 +121,11 @@ pub struct Actor {
 }
 
 #[derive(Default, Debug, Clone, Copy, Deserialize, Serialize, PartialEq)]
-pub struct DynamicObjectId(pub u64);
+pub struct ProjectileId(pub u64);
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub struct DynamicObject {
-    pub id: DynamicObjectId,
+pub struct Projectile {
+    pub id: ProjectileId,
     pub body: Body<Disk>,
     pub position: Vec2f,
     pub health: f64,
@@ -388,10 +388,10 @@ mod tests {
     }
 
     #[test]
-    fn serialized_dynamic_object_size() {
+    fn serialized_projectile_size() {
         assert_eq!(
-            bincode::serialize(&DynamicObject {
-                id: DynamicObjectId(1),
+            bincode::serialize(&Projectile {
+                id: ProjectileId(1),
                 body: Body {
                     shape: Disk { radius: 1.0 },
                     material: Material::Stone,

@@ -724,7 +724,7 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
         );
     }
 
-    for v in scene.world.dynamic_objects.iter() {
+    for v in scene.world.projectiles.iter() {
         draw_disk_body_and_magick(
             &v.body.shape,
             v.body.material,
@@ -795,7 +795,7 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
         }
     }
 
-    for v in scene.world.dynamic_objects.iter() {
+    for v in scene.world.projectiles.iter() {
         draw_health(v.health, v.body.shape.radius, v.position);
     }
 
@@ -997,7 +997,7 @@ fn draw_debug_scene_text(counter: &mut usize, scene: &Scene, font: Font) {
             ),
             format!("Pointer: {:.3} {:.3}", scene.pointer.x, scene.pointer.y),
             format!("Actors: {}", scene.world.actors.len()),
-            format!("Dynamic objects: {}", scene.world.dynamic_objects.len()),
+            format!("Projectiles: {}", scene.world.projectiles.len()),
             format!("Static objects: {}", scene.world.static_objects.len()),
             format!("Beams: {}", scene.world.beams.len()),
             format!("Static areas: {}", scene.world.static_areas.len()),

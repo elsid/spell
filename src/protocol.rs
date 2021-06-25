@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::vec2::Vec2f;
 use crate::world::{
-    Actor, ActorId, ActorOccupation, Aura, Beam, BoundedArea, DelayedMagick, DynamicObject,
-    DynamicObjectId, Effect, Element, Field, Gun, GunId, Player, PlayerId, StaticArea,
-    StaticObject, StaticObjectId, TempArea, TempAreaId, World,
+    Actor, ActorId, ActorOccupation, Aura, Beam, BoundedArea, DelayedMagick, Effect, Element,
+    Field, Gun, GunId, Player, PlayerId, Projectile, ProjectileId, StaticArea, StaticObject,
+    StaticObjectId, TempArea, TempAreaId, World,
 };
 
 pub const HEARTBEAT_PERIOD: Duration = Duration::from_secs(1);
@@ -73,7 +73,7 @@ pub struct WorldUpdate {
     pub time: f64,
     pub players: Option<Difference<Player, PlayerUpdate>>,
     pub actors: Option<Difference<Actor, ActorUpdate>>,
-    pub dynamic_objects: Option<Difference<DynamicObject, DynamicObjectUpdate>>,
+    pub projectiles: Option<Difference<Projectile, ProjectileUpdate>>,
     pub static_objects: Option<Difference<StaticObject, StaticObjectUpdate>>,
     pub beams: Option<ExistenceDifference<Beam>>,
     pub static_areas: Option<ExistenceDifference<StaticArea>>,
@@ -111,8 +111,8 @@ pub struct ActorUpdate {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
-pub struct DynamicObjectUpdate {
-    pub id: DynamicObjectId,
+pub struct ProjectileUpdate {
+    pub id: ProjectileId,
     pub position: Option<Vec2f>,
     pub health: Option<f64>,
     pub effect: Option<Effect>,
@@ -245,10 +245,7 @@ pub fn make_world_update(before: &World, after: &World) -> WorldUpdate {
         time: after.time,
         players: get_players_difference(&before.players, &after.players),
         actors: get_actors_difference(&before.actors, &after.actors),
-        dynamic_objects: get_dynamic_objects_difference(
-            &before.dynamic_objects,
-            &after.dynamic_objects,
-        ),
+        projectiles: get_projectiles_difference(&before.projectiles, &after.projectiles),
         static_objects: get_static_objects_difference(
             &before.static_objects,
             &after.static_objects,
@@ -276,11 +273,11 @@ fn get_actors_difference(
     get_difference(before, after, |v| v.id.0, make_actor_update)
 }
 
-fn get_dynamic_objects_difference(
-    before: &[DynamicObject],
-    after: &[DynamicObject],
-) -> Option<Difference<DynamicObject, DynamicObjectUpdate>> {
-    get_difference(before, after, |v| v.id.0, make_dynamic_object_update)
+fn get_projectiles_difference(
+    before: &[Projectile],
+    after: &[Projectile],
+) -> Option<Difference<Projectile, ProjectileUpdate>> {
+    get_difference(before, after, |v| v.id.0, make_projectile_update)
 }
 
 fn get_static_objects_difference(
@@ -370,8 +367,8 @@ fn make_actor_update(b: &Actor, a: &Actor) -> Option<ActorUpdate> {
     }
 }
 
-fn make_dynamic_object_update(b: &DynamicObject, a: &DynamicObject) -> Option<DynamicObjectUpdate> {
-    let mut r = DynamicObjectUpdate::default();
+fn make_projectile_update(b: &Projectile, a: &Projectile) -> Option<ProjectileUpdate> {
+    let mut r = ProjectileUpdate::default();
     let mut d = false;
     d = clone_if_different(&b.position, &a.position, &mut r.position) || d;
     d = clone_if_different(&b.health, &a.health, &mut r.health) || d;
@@ -583,11 +580,11 @@ pub fn apply_world_update(update: WorldUpdate, world: &mut World) {
         &mut world.actors,
     );
     apply_difference(
-        update.dynamic_objects,
+        update.projectiles,
         &|v| v.id.0,
         &|a, b| a.id == b.id,
-        apply_dynamic_object_update,
-        &mut world.dynamic_objects,
+        apply_projectile_update,
+        &mut world.projectiles,
     );
     apply_difference(
         update.static_objects,
@@ -715,7 +712,7 @@ fn apply_actor_update(src: &ActorUpdate, dst: &mut Actor) {
     clone_if_some(&src.occupation, &mut dst.occupation);
 }
 
-fn apply_dynamic_object_update(src: &DynamicObjectUpdate, dst: &mut DynamicObject) {
+fn apply_projectile_update(src: &ProjectileUpdate, dst: &mut Projectile) {
     clone_if_some(&src.position, &mut dst.position);
     clone_if_some(&src.health, &mut dst.health);
     clone_if_some(&src.effect, &mut dst.effect);
@@ -751,7 +748,7 @@ where
     I: Iterator<Item = &'a WorldUpdate>,
 {
     let mut sort_actors = false;
-    let mut sort_dynamic_objects = false;
+    let mut sort_projectiles = false;
     let mut sort_static_objects = false;
     let mut sort_beams = false;
     let mut sort_static_areas = false;
@@ -761,11 +758,7 @@ where
     let mut sort_guns = false;
     for v in src {
         add_removed_difference(&v.actors, &mut dst.actors, &mut sort_actors);
-        add_removed_difference(
-            &v.dynamic_objects,
-            &mut dst.dynamic_objects,
-            &mut sort_dynamic_objects,
-        );
+        add_removed_difference(&v.projectiles, &mut dst.projectiles, &mut sort_projectiles);
         add_removed_difference(
             &v.static_objects,
             &mut dst.static_objects,
@@ -788,8 +781,8 @@ where
     }
     sort_and_dedup(sort_actors, dst.actors.as_mut().map(|v| v.removed.as_mut()));
     sort_and_dedup(
-        sort_dynamic_objects,
-        dst.dynamic_objects.as_mut().map(|v| v.removed.as_mut()),
+        sort_projectiles,
+        dst.projectiles.as_mut().map(|v| v.removed.as_mut()),
     );
     sort_and_dedup(
         sort_static_objects,
@@ -1024,9 +1017,9 @@ mod tests {
     }
 
     #[test]
-    fn serialized_default_dynamic_object_update_size() {
+    fn serialized_default_projectile_update_size() {
         assert_eq!(
-            bincode::serialize(&DynamicObjectUpdate::default())
+            bincode::serialize(&ProjectileUpdate::default())
                 .unwrap()
                 .len(),
             15

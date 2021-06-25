@@ -82,7 +82,7 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
         id_counter,
         players: Vec::new(),
         actors,
-        dynamic_objects: Vec::new(),
+        projectiles: Vec::new(),
         static_objects,
         beams: Vec::new(),
         static_areas,

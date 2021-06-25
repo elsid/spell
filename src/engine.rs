@@ -14,8 +14,8 @@ use crate::vec2::{Square, Vec2f};
 use crate::world::PlayerId;
 use crate::world::{
     Actor, ActorId, ActorOccupation, Aura, Beam, BeamId, Body, BoundedArea, BoundedAreaId,
-    CircleArc, DelayedMagick, DelayedMagickStatus, Disk, DynamicObject, DynamicObjectId, Effect,
-    Element, Field, FieldId, Gun, GunId, Magick, Material, RingSector, StaticArea, StaticObject,
+    CircleArc, DelayedMagick, DelayedMagickStatus, Disk, Effect, Element, Field, FieldId, Gun,
+    GunId, Magick, Material, Projectile, ProjectileId, RingSector, StaticArea, StaticObject,
     StaticObjectId, StaticShape, TempArea, TempAreaId, World, WorldSettings,
 };
 
@@ -30,7 +30,7 @@ const DEFAULT_AURA: Aura = Aura {
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub enum Index {
     Actor(usize),
-    DynamicObject(usize),
+    Projectile(usize),
     StaticObject(usize),
 }
 
@@ -201,11 +201,11 @@ impl Engine {
         intersect_objects_with_all_fields(world);
         update_temp_areas(world.time, &mut world.temp_areas);
         update_actors(world.time, duration, &world.settings, &mut world.actors);
-        update_dynamic_objects(
+        update_projectiles(
             world.time,
             duration,
             &world.settings,
-            &mut world.dynamic_objects,
+            &mut world.projectiles,
         );
         update_static_objects(
             world.time,
@@ -220,7 +220,7 @@ impl Engine {
             .iter_mut()
             .for_each(|v| v.dynamic_force = Vec2f::ZERO);
         world
-            .dynamic_objects
+            .projectiles
             .iter_mut()
             .for_each(|v| v.dynamic_force = Vec2f::ZERO);
         let bounds = world.bounds.clone();
@@ -229,7 +229,7 @@ impl Engine {
         });
         remove_inactive_actors_occupation_results(world);
         world.actors.retain(|v| v.active);
-        world.dynamic_objects.retain(|v| {
+        world.projectiles.retain(|v| {
             (v.velocity_z > f64::EPSILON || v.velocity.norm() > f64::EPSILON)
                 && is_active(&bounds, &v.body.shape.as_shape(), v.position, v.health)
         });
@@ -751,15 +751,15 @@ fn intersect_objects_with_areas(world: &mut World, shape_cache: &ShapeCache) {
             },
         );
     }
-    for object in world.dynamic_objects.iter_mut() {
+    for v in world.projectiles.iter_mut() {
         intersect_static_object_with_all_bounded_areas(
             world.time,
             &world.bounded_areas,
             &world.actors,
             &mut IntersectingStaticObject {
-                shape: &Ball::new(object.body.shape.radius),
-                isometry: Isometry::translation(object.position.x, object.position.y),
-                effect: &mut object.effect,
+                shape: &Ball::new(v.body.shape.radius),
+                isometry: Isometry::translation(v.position.x, v.position.y),
+                effect: &mut v.effect,
             },
         );
         intersect_with_temp_and_static_areas(
@@ -768,13 +768,13 @@ fn intersect_objects_with_areas(world: &mut World, shape_cache: &ShapeCache) {
             &world.temp_areas,
             &world.static_areas,
             &mut IntersectingDynamicObject {
-                shape: &Ball::new(object.body.shape.radius),
-                velocity: object.velocity,
-                isometry: Isometry::translation(object.position.x, object.position.y),
-                levitating: (object.position_z - object.body.shape.radius) > f64::EPSILON,
-                mass: object.body.mass(),
-                dynamic_force: &mut object.dynamic_force,
-                effect: &mut object.effect,
+                shape: &Ball::new(v.body.shape.radius),
+                velocity: v.velocity,
+                isometry: Isometry::translation(v.position.x, v.position.y),
+                levitating: (v.position_z - v.body.shape.radius) > f64::EPSILON,
+                mass: v.body.mass(),
+                dynamic_force: &mut v.dynamic_force,
+                effect: &mut v.effect,
             },
         );
     }
@@ -963,14 +963,14 @@ fn intersect_objects_with_all_fields(world: &mut World) {
             },
         );
     }
-    for object in world.dynamic_objects.iter_mut() {
+    for v in world.projectiles.iter_mut() {
         intersect_object_with_all_fields(
             &world.fields,
             &world.actors,
             &mut PushedObject {
-                shape: Ball::new(object.body.shape.radius),
-                position: object.position,
-                dynamic_force: &mut object.dynamic_force,
+                shape: Ball::new(v.body.shape.radius),
+                position: v.position,
+                dynamic_force: &mut v.dynamic_force,
             },
         );
     }
@@ -1071,40 +1071,40 @@ fn update_actors(now: f64, duration: f64, settings: &WorldSettings, actors: &mut
     }
 }
 
-fn update_dynamic_objects(
+fn update_projectiles(
     now: f64,
     duration: f64,
     settings: &WorldSettings,
-    dynamic_objects: &mut Vec<DynamicObject>,
+    projectiles: &mut Vec<Projectile>,
 ) {
-    for object in dynamic_objects.iter_mut() {
+    for projectile in projectiles.iter_mut() {
         damage_health(
             duration,
             settings.magical_damage_factor,
-            object.body.mass(),
-            &object.effect,
-            &mut object.health,
+            projectile.body.mass(),
+            &projectile.effect,
+            &mut projectile.health,
         );
-        decay_effect(now, &mut object.effect);
+        decay_effect(now, &mut projectile.effect);
         update_velocity(
             duration,
-            object.body.mass(),
-            object.dynamic_force,
+            projectile.body.mass(),
+            projectile.dynamic_force,
             settings.min_move_distance,
-            &mut object.velocity,
+            &mut projectile.velocity,
         );
         update_position_z(
             duration,
-            object.body.shape.radius,
-            object.velocity_z,
-            &mut object.position_z,
+            projectile.body.shape.radius,
+            projectile.velocity_z,
+            &mut projectile.position_z,
         );
         update_velocity_z(
             duration,
-            object.body.shape.radius,
+            projectile.body.shape.radius,
             settings.gravitational_acceleration,
-            object.position_z,
-            &mut object.velocity_z,
+            projectile.position_z,
+            &mut projectile.velocity_z,
         );
     }
 }
@@ -1314,15 +1314,10 @@ fn intersect_beam(
     let mut nearest_hit =
         find_beam_nearest_intersection(origin, direction, &world.actors, length, shape_cache)
             .map(|(i, n)| (Index::Actor(i), n));
-    nearest_hit = find_beam_nearest_intersection(
-        origin,
-        direction,
-        &world.dynamic_objects,
-        length,
-        shape_cache,
-    )
-    .map(|(i, n)| (Index::DynamicObject(i), n))
-    .or(nearest_hit);
+    nearest_hit =
+        find_beam_nearest_intersection(origin, direction, &world.projectiles, length, shape_cache)
+            .map(|(i, n)| (Index::Projectile(i), n))
+            .or(nearest_hit);
     nearest_hit = find_beam_nearest_intersection(
         origin,
         direction,
@@ -1338,7 +1333,7 @@ fn intersect_beam(
                 let object = &mut world.actors[i];
                 (&object.aura, &mut object.effect)
             }
-            Index::DynamicObject(i) => (&DEFAULT_AURA, &mut world.dynamic_objects[i].effect),
+            Index::Projectile(i) => (&DEFAULT_AURA, &mut world.projectiles[i].effect),
             Index::StaticObject(i) => {
                 let object = &mut world.static_objects[i];
                 (&object.aura, &mut object.effect)
@@ -1373,7 +1368,7 @@ impl WithIsometry for Actor {
     }
 }
 
-impl WithIsometry for DynamicObject {
+impl WithIsometry for Projectile {
     fn get_isometry(&self) -> Isometry<Real> {
         Isometry::translation(self.position.x, self.position.y)
     }
@@ -1400,7 +1395,7 @@ impl WithShape for Actor {
     }
 }
 
-impl WithShape for DynamicObject {
+impl WithShape for Projectile {
     fn with_shape(&self, _: &ShapeCache, f: &mut dyn FnMut(&dyn Shape)) {
         (*f)(&self.body.shape.as_shape())
     }
@@ -1475,13 +1470,13 @@ fn move_objects(duration: f64, world: &mut World, shape_cache: &ShapeCache) {
                     );
                 }
             }
-            for (j, dynamic_object) in world.dynamic_objects.iter().enumerate() {
+            for (j, projectile) in world.projectiles.iter().enumerate() {
                 if let Some(toi) =
-                    time_of_impact(duration_left, shape_cache, static_object, dynamic_object)
+                    time_of_impact(duration_left, shape_cache, static_object, projectile)
                 {
                     update_earliest_collision(
                         Index::StaticObject(i),
-                        Index::DynamicObject(j),
+                        Index::Projectile(j),
                         toi,
                         &mut earliest_collision,
                     );
@@ -1507,12 +1502,11 @@ fn move_objects(duration: f64, world: &mut World, shape_cache: &ShapeCache) {
                 }
             }
         }
-        for (i, dynamic_object) in world.dynamic_objects.iter().enumerate() {
+        for (i, projectile) in world.projectiles.iter().enumerate() {
             for (j, actor) in world.actors.iter().enumerate() {
-                if let Some(toi) = time_of_impact(duration_left, shape_cache, dynamic_object, actor)
-                {
+                if let Some(toi) = time_of_impact(duration_left, shape_cache, projectile, actor) {
                     update_earliest_collision(
-                        Index::DynamicObject(i),
+                        Index::Projectile(i),
                         Index::Actor(j),
                         toi,
                         &mut earliest_collision,
@@ -1520,18 +1514,18 @@ fn move_objects(duration: f64, world: &mut World, shape_cache: &ShapeCache) {
                 }
             }
         }
-        if !world.dynamic_objects.is_empty() {
-            for i in 0..world.dynamic_objects.len() - 1 {
-                for j in i + 1..world.dynamic_objects.len() {
+        if !world.projectiles.is_empty() {
+            for i in 0..world.projectiles.len() - 1 {
+                for j in i + 1..world.projectiles.len() {
                     if let Some(toi) = time_of_impact(
                         duration_left,
                         shape_cache,
-                        &world.dynamic_objects[i],
-                        &world.dynamic_objects[j],
+                        &world.projectiles[i],
+                        &world.projectiles[j],
                     ) {
                         update_earliest_collision(
-                            Index::DynamicObject(i),
-                            Index::DynamicObject(j),
+                            Index::Projectile(i),
+                            Index::Projectile(j),
                             toi,
                             &mut earliest_collision,
                         );
@@ -1558,14 +1552,12 @@ fn move_objects(duration: f64, world: &mut World, shape_cache: &ShapeCache) {
                     update_position(collision.toi.toi, actor.velocity, &mut actor.position)
                 }
             }
-            for (i, dynamic_object) in world.dynamic_objects.iter_mut().enumerate() {
-                if Index::DynamicObject(i) != collision.lhs
-                    && Index::DynamicObject(i) != collision.rhs
-                {
+            for (i, projectile) in world.projectiles.iter_mut().enumerate() {
+                if Index::Projectile(i) != collision.lhs && Index::Projectile(i) != collision.rhs {
                     update_position(
                         collision.toi.toi,
-                        dynamic_object.velocity,
-                        &mut dynamic_object.position,
+                        projectile.velocity,
+                        &mut projectile.position,
                     )
                 }
             }
@@ -1580,7 +1572,7 @@ fn move_objects(duration: f64, world: &mut World, shape_cache: &ShapeCache) {
                 .iter_mut()
                 .for_each(|v| update_position(duration, v.velocity, &mut v.position));
             world
-                .dynamic_objects
+                .projectiles
                 .iter_mut()
                 .for_each(|v| update_position(duration, v.velocity, &mut v.position));
             break;
@@ -1621,7 +1613,7 @@ impl WithVelocity for Actor {
     }
 }
 
-impl WithVelocity for DynamicObject {
+impl WithVelocity for Projectile {
     fn velocity(&self) -> Vec2f {
         self.velocity
     }
@@ -1678,26 +1670,24 @@ where
                 let (left, right) = world.actors.split_at_mut(rhs);
                 f(&mut left[lhs], &mut right[0])
             }
-            Index::DynamicObject(rhs) => f(&mut world.actors[lhs], &mut world.dynamic_objects[rhs]),
+            Index::Projectile(rhs) => f(&mut world.actors[lhs], &mut world.projectiles[rhs]),
             Index::StaticObject(rhs) => f(&mut world.actors[lhs], &mut world.static_objects[rhs]),
         },
-        Index::DynamicObject(lhs) => match rhs {
-            Index::Actor(rhs) => f(&mut world.dynamic_objects[lhs], &mut world.actors[rhs]),
-            Index::DynamicObject(rhs) => {
-                let (left, right) = world.dynamic_objects.split_at_mut(rhs);
+        Index::Projectile(lhs) => match rhs {
+            Index::Actor(rhs) => f(&mut world.projectiles[lhs], &mut world.actors[rhs]),
+            Index::Projectile(rhs) => {
+                let (left, right) = world.projectiles.split_at_mut(rhs);
                 f(&mut left[lhs], &mut right[0])
             }
-            Index::StaticObject(rhs) => f(
-                &mut world.dynamic_objects[lhs],
-                &mut world.static_objects[rhs],
-            ),
+            Index::StaticObject(rhs) => {
+                f(&mut world.projectiles[lhs], &mut world.static_objects[rhs])
+            }
         },
         Index::StaticObject(lhs) => match rhs {
             Index::Actor(rhs) => f(&mut world.static_objects[lhs], &mut world.actors[rhs]),
-            Index::DynamicObject(rhs) => f(
-                &mut world.static_objects[lhs],
-                &mut world.dynamic_objects[rhs],
-            ),
+            Index::Projectile(rhs) => {
+                f(&mut world.static_objects[lhs], &mut world.projectiles[rhs])
+            }
             Index::StaticObject(rhs) => {
                 let (left, right) = world.static_objects.split_at_mut(rhs);
                 f(&mut left[lhs], &mut right[0])
@@ -1821,7 +1811,7 @@ impl CollidingObject for Actor {
     }
 }
 
-impl CollidingObject for DynamicObject {
+impl CollidingObject for Projectile {
     fn material(&self) -> Material {
         self.body.material
     }
@@ -1934,8 +1924,8 @@ fn handle_completed_magicks(world: &mut World) {
                 let radius = delayed_magick.power.iter().sum::<f64>() * actor.body.shape.radius
                     / world.settings.max_magic_power;
                 let material = Material::Stone;
-                world.dynamic_objects.push(DynamicObject {
-                    id: DynamicObjectId(get_next_id(&mut world.id_counter)),
+                world.projectiles.push(Projectile {
+                    id: ProjectileId(get_next_id(&mut world.id_counter)),
                     body: Body {
                         shape: Disk { radius },
                         material,
@@ -2085,8 +2075,8 @@ fn shoot_from_guns<R: Rng>(world: &mut World, rng: &mut R) {
             gun.last_shot = world.time;
             gun.shots_left -= 1;
             let radius = world.settings.gun_bullet_radius;
-            world.dynamic_objects.push(DynamicObject {
-                id: DynamicObjectId(get_next_id(&mut world.id_counter)),
+            world.projectiles.push(Projectile {
+                id: ProjectileId(get_next_id(&mut world.id_counter)),
                 body: Body {
                     shape: Disk { radius },
                     material: Material::Ice,
@@ -2189,8 +2179,8 @@ mod tests {
             effect: Effect::default(),
             aura: Aura::default(),
         };
-        let dynamic_object = DynamicObject {
-            id: DynamicObjectId(2),
+        let projectile = Projectile {
+            id: ProjectileId(2),
             body: Body {
                 shape: Disk { radius: 0.2 },
                 material: Material::Stone,
@@ -2203,7 +2193,7 @@ mod tests {
             position_z: 1.5,
             velocity_z: -0.08166666666666667,
         };
-        let toi = time_of_impact(duration, &shape_cache, &static_object, &dynamic_object).unwrap();
+        let toi = time_of_impact(duration, &shape_cache, &static_object, &projectile).unwrap();
         assert!(
             (toi.toi - 0.004296260825975674) <= f64::EPSILON,
             "{}",
