@@ -9,7 +9,7 @@ use rand::Rng;
 
 use crate::generators::generate_player_actor;
 use crate::rect::Rectf;
-use crate::vec2::{Square, Vec2f};
+use crate::vec2::Vec2f;
 #[cfg(feature = "server")]
 use crate::world::PlayerId;
 use crate::world::{
@@ -1086,7 +1086,7 @@ fn update_actors(now: f64, duration: f64, settings: &WorldSettings, actors: &mut
             &mut actor.health,
         );
         decay_effect(now, &mut actor.effect);
-        decay_aura(now, duration, settings.decay_factor, &mut actor.aura);
+        decay_aura(duration, settings.decay_factor, &mut actor.aura);
         update_velocity(
             duration,
             actor.body.mass(),
@@ -1155,7 +1155,7 @@ fn update_static_objects(
 
 fn update_shields(duration: f64, settings: &WorldSettings, shields: &mut Vec<Shield>) {
     for shield in shields.iter_mut() {
-        shield.power -= duration * settings.shield_decay_factor;
+        shield.power -= duration * settings.decay_factor;
     }
 }
 
@@ -1234,10 +1234,8 @@ fn get_element_duration(element: Element) -> f64 {
     }
 }
 
-fn decay_aura(now: f64, duration: f64, decay_factor: f64, aura: &mut Aura) {
-    let passed = now - aura.applied;
-    let initial = aura.power - decay_factor * (passed - duration).square();
-    aura.power = initial - decay_factor * passed.square();
+fn decay_aura(duration: f64, decay_factor: f64, aura: &mut Aura) {
+    aura.power -= duration * decay_factor;
     if aura.power <= 0.0 {
         aura.power = 0.0;
         aura.elements.fill(false);

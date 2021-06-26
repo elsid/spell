@@ -50,7 +50,6 @@ pub struct WorldSettings {
     pub base_gun_fire_period: f64,
     pub gun_bullet_radius: f64,
     pub gun_half_grouping_angle: f64,
-    pub shield_decay_factor: f64,
     pub temp_obstacle_magick_duration: f64,
     pub temp_area_duration: f64,
 }
@@ -59,7 +58,7 @@ impl Default for WorldSettings {
     fn default() -> Self {
         Self {
             max_magic_power: 5.0,
-            decay_factor: 1e-3,
+            decay_factor: 1.0 / 5.0,
             margin: 0.1,
             physical_damage_factor: 1e-3,
             magical_damage_factor: 1e3,
@@ -82,7 +81,6 @@ impl Default for WorldSettings {
             base_gun_fire_period: 0.3,
             gun_bullet_radius: 0.2,
             gun_half_grouping_angle: std::f64::consts::PI / 12.0,
-            shield_decay_factor: 1.0 / 3.0,
             temp_obstacle_magick_duration: 20.0,
             temp_area_duration: 5.0,
         }
@@ -386,7 +384,7 @@ mod tests {
 
     #[test]
     fn serialized_default_world_size() {
-        assert_eq!(bincode::serialize(&World::default()).unwrap().len(), 354);
+        assert_eq!(bincode::serialize(&World::default()).unwrap().len(), 346);
     }
 
     #[test]
