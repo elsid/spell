@@ -2641,4 +2641,102 @@ mod tests {
         );
         assert_eq!(toi.status, TOIStatus::Converged);
     }
+
+    #[test]
+    fn apply_impact_for_standing_actor_and_moving_projectile() {
+        let duration = 1.0 / 60.0;
+        let shape_cache = ShapeCache::default();
+        let mut actor = Actor {
+            id: ActorId(1),
+            player_id: PlayerId(2),
+            active: true,
+            name: String::new(),
+            body: Body {
+                shape: Disk { radius: 1.0 },
+                material: Material::Flesh,
+            },
+            position: Vec2f::new(0.0, 0.0),
+            health: 1.0,
+            effect: Effect::default(),
+            aura: Aura::default(),
+            velocity: Vec2f::ZERO,
+            dynamic_force: Vec2f::ZERO,
+            current_direction: Vec2f::only_x(1.0),
+            target_direction: Vec2f::only_x(1.0),
+            spell_elements: Vec::new(),
+            moving: false,
+            delayed_magick: None,
+            position_z: 1.0,
+            velocity_z: 0.0,
+            occupation: ActorOccupation::None,
+        };
+        let mut projectile = Projectile {
+            id: Default::default(),
+            body: Body {
+                shape: Disk { radius: 0.1 },
+                material: Material::Stone,
+            },
+            position: Vec2f::only_x(2.0),
+            health: 1.0,
+            magick: Magick::default(),
+            velocity: Vec2f::only_x(-500.0),
+            dynamic_force: Vec2f::ZERO,
+            position_z: 1.0,
+            velocity_z: 0.0,
+        };
+        let toi = time_of_impact(duration, &shape_cache, &actor, &projectile);
+        assert!(toi.is_some());
+        ApplyImpact {
+            now: 42.0,
+            damage_factor: 1e-3,
+            epsilon_duration: 1e-3,
+            shape_cache: &shape_cache,
+            toi: &toi.unwrap(),
+        }
+        .call(&mut actor, &mut projectile);
+        assert_eq!(
+            actor,
+            Actor {
+                id: ActorId(1),
+                player_id: PlayerId(2),
+                active: true,
+                name: String::new(),
+                body: Body {
+                    shape: Disk { radius: 1.0 },
+                    material: Material::Flesh,
+                },
+                position: Vec2f::only_x(-0.0017985051385861106),
+                health: 0.9983826896332397,
+                effect: Effect::default(),
+                aura: Aura::default(),
+                velocity: Vec2f::only_x(-1.7985051385861106),
+                dynamic_force: Vec2f::ZERO,
+                current_direction: Vec2f::only_x(1.0),
+                target_direction: Vec2f::only_x(1.0),
+                spell_elements: Vec::new(),
+                moving: false,
+                delayed_magick: None,
+                position_z: 1.0,
+                velocity_z: 0.0,
+                occupation: ActorOccupation::None,
+            }
+        );
+        assert_eq!(
+            projectile,
+            Projectile {
+                id: Default::default(),
+                body: Body {
+                    shape: Disk { radius: 0.1 },
+                    material: Material::Stone,
+                },
+                position: Vec2f::only_x(1.1979445655559018),
+                health: -119.20343103903285,
+                magick: Magick::default(),
+                velocity: Vec2f::only_x(97.94456555590159),
+                dynamic_force: Vec2f::ZERO,
+                position_z: 1.0,
+                velocity_z: 0.0,
+            }
+        );
+    }
 }
