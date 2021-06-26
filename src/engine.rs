@@ -32,6 +32,7 @@ const DEFAULT_EFFECT: Effect = Effect {
     power: [0.0; 11],
 };
 const DEFAULT_MAGICK: Magick = Magick { power: [0.0; 11] };
+const DEFAULT_RESISTANCE: [bool; 11] = [false; 11];
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub enum Index {
@@ -532,10 +533,11 @@ pub fn self_magick(actor_index: usize, world: &mut World) {
     )
     .cast();
     if magick.power[Element::Shield as usize] == 0.0 {
-        world.actors[actor_index].effect = add_magick_power_to_effect(
+        world.actors[actor_index].effect = add_magick_to_effect(
             world.time,
             &world.actors[actor_index].effect,
-            &magick.power,
+            &magick,
+            &world.actors[actor_index].aura.elements,
         );
     } else {
         let mut elements = [false; 11];
@@ -755,6 +757,7 @@ fn intersect_objects_with_areas(world: &mut World, shape_cache: &ShapeCache) {
                 isometry: Isometry::translation(actor.position.x, actor.position.y),
                 levitating: (actor.position_z - actor.body.shape.radius) > f64::EPSILON,
                 mass: actor.body.mass(),
+                resistance: &actor.aura.elements,
                 dynamic_force: &mut actor.dynamic_force,
                 effect: &mut actor.effect,
             },
@@ -769,6 +772,7 @@ fn intersect_objects_with_areas(world: &mut World, shape_cache: &ShapeCache) {
             &mut IntersectingStaticObject {
                 shape: &Ball::new(v.body.shape.radius),
                 isometry: Isometry::translation(v.position.x, v.position.y),
+                resistance: &v.magick.power,
                 effect: &mut effect,
             },
         );
@@ -783,6 +787,7 @@ fn intersect_objects_with_areas(world: &mut World, shape_cache: &ShapeCache) {
                 isometry: Isometry::translation(v.position.x, v.position.y),
                 levitating: (v.position_z - v.body.shape.radius) > f64::EPSILON,
                 mass: v.body.mass(),
+                resistance: &DEFAULT_RESISTANCE,
                 dynamic_force: &mut v.dynamic_force,
                 effect: &mut effect,
             },
@@ -802,6 +807,7 @@ fn intersect_objects_with_areas(world: &mut World, shape_cache: &ShapeCache) {
                     &mut IntersectingStaticObject {
                         shape,
                         isometry: Isometry::translation(object.position.x, object.position.y),
+                        resistance: &DEFAULT_RESISTANCE,
                         effect: &mut object.effect,
                     },
                 );
@@ -815,40 +821,46 @@ fn intersect_objects_with_areas(world: &mut World, shape_cache: &ShapeCache) {
             &mut IntersectingStaticObject {
                 shape: &Ball::new(temp_obstacle.body.shape.radius),
                 isometry: Isometry::translation(temp_obstacle.position.x, temp_obstacle.position.y),
+                resistance: &DEFAULT_RESISTANCE,
                 effect: &mut temp_obstacle.effect,
             },
         );
     }
 }
 
-struct IntersectingDynamicObject<'a> {
+struct IntersectingDynamicObject<'a, T: Default + PartialEq> {
     shape: &'a dyn Shape,
     velocity: Vec2f,
     isometry: Isometry<Real>,
     levitating: bool,
     mass: f64,
+    resistance: &'a [T; 11],
     dynamic_force: &'a mut Vec2f,
     effect: &'a mut Effect,
 }
 
-fn intersect_with_temp_and_static_areas(
+fn intersect_with_temp_and_static_areas<T>(
     now: f64,
     gravitational_acceleration: f64,
     temp_areas: &[TempArea],
     static_areas: &[StaticArea],
-    object: &mut IntersectingDynamicObject,
-) {
+    object: &mut IntersectingDynamicObject<T>,
+) where
+    T: Default + PartialEq,
+{
     intersect_with_temp_areas(now, temp_areas, object);
     if !object.levitating {
         intersect_with_last_static_area(now, gravitational_acceleration, static_areas, object);
     }
 }
 
-fn intersect_with_temp_areas(
+fn intersect_with_temp_areas<T>(
     now: f64,
     temp_areas: &[TempArea],
-    object: &mut IntersectingDynamicObject,
-) {
+    object: &mut IntersectingDynamicObject<T>,
+) where
+    T: Default + PartialEq,
+{
     for temp_area in temp_areas.iter() {
         let isometry = Isometry::translation(temp_area.position.x, temp_area.position.y);
         if query::intersection_test(
@@ -860,17 +872,19 @@ fn intersect_with_temp_areas(
         .unwrap()
         {
             *object.effect =
-                add_magick_power_to_effect(now, object.effect, &temp_area.magick.power);
+                add_magick_to_effect(now, object.effect, &temp_area.magick, object.resistance);
         }
     }
 }
 
-fn intersect_with_last_static_area(
+fn intersect_with_last_static_area<T>(
     now: f64,
     gravitational_acceleration: f64,
     static_areas: &[StaticArea],
-    object: &mut IntersectingDynamicObject,
-) {
+    object: &mut IntersectingDynamicObject<T>,
+) where
+    T: Default + PartialEq,
+{
     if let Some(static_area) = static_areas.iter().rev().find(|v| {
         let isometry = Isometry::translation(v.position.x, v.position.y);
         query::intersection_test(
@@ -888,13 +902,15 @@ fn intersect_with_last_static_area(
             gravitational_acceleration,
             object.dynamic_force,
         );
-        *object.effect = add_magick_power_to_effect(now, object.effect, &static_area.magick.power);
+        *object.effect =
+            add_magick_to_effect(now, object.effect, &static_area.magick, object.resistance);
     }
 }
 
-struct IntersectingStaticObject<'a> {
+struct IntersectingStaticObject<'a, T: Default + PartialEq> {
     shape: &'a dyn Shape,
     isometry: Isometry<Real>,
+    resistance: &'a [T; 11],
     effect: &'a mut Effect,
 }
 
@@ -912,6 +928,7 @@ fn intersect_actor_with_all_bounded_areas(
         &mut IntersectingStaticObject {
             shape: &Ball::new(right[0].body.shape.radius),
             isometry: Isometry::translation(right[0].position.x, right[0].position.y),
+            resistance: &right[0].aura.elements,
             effect: &mut right[0].effect,
         },
     );
@@ -926,17 +943,20 @@ fn intersect_actor_with_all_bounded_areas(
                 left[actor_index].position.x,
                 left[actor_index].position.y,
             ),
+            resistance: &left[actor_index].aura.elements,
             effect: &mut left[actor_index].effect,
         },
     );
 }
 
-fn intersect_static_object_with_all_bounded_areas(
+fn intersect_static_object_with_all_bounded_areas<T>(
     now: f64,
     bounded_areas: &[BoundedArea],
     actors: &[Actor],
-    object: &mut IntersectingStaticObject,
-) {
+    object: &mut IntersectingStaticObject<T>,
+) where
+    T: Default + PartialEq,
+{
     for bounded_area in bounded_areas {
         if let Some(owner) = actors.iter().find(|v| v.id == bounded_area.actor_id) {
             intersect_static_object_with_bounded_area(now, bounded_area, owner, object);
@@ -944,12 +964,14 @@ fn intersect_static_object_with_all_bounded_areas(
     }
 }
 
-fn intersect_static_object_with_bounded_area(
+fn intersect_static_object_with_bounded_area<T>(
     now: f64,
     area: &BoundedArea,
     owner: &Actor,
-    object: &mut IntersectingStaticObject,
-) {
+    object: &mut IntersectingStaticObject<T>,
+) where
+    T: Default + PartialEq,
+{
     let isometry = Isometry::translation(owner.position.x, owner.position.y);
     if intersection_test(
         &object.isometry,
@@ -958,7 +980,7 @@ fn intersect_static_object_with_bounded_area(
         &area.body,
         owner.current_direction,
     ) {
-        *object.effect = add_magick_power_to_effect(now, object.effect, &area.magick.power);
+        *object.effect = add_magick_to_effect(now, object.effect, &area.magick, object.resistance);
     }
 }
 
@@ -1055,6 +1077,7 @@ fn update_actors(now: f64, duration: f64, settings: &WorldSettings, actors: &mut
     for actor in actors.iter_mut() {
         update_actor_current_direction(duration, settings.max_rotation_speed, actor);
         update_actor_dynamic_force(settings.move_force, actor);
+        resist_magick(&actor.aura.elements, &mut actor.effect.power);
         damage_health(
             duration,
             settings.magical_damage_factor,
@@ -1142,6 +1165,7 @@ fn update_temp_obstacles(
     temp_obstacles: &mut Vec<TempObstacle>,
 ) {
     for temp_obstacle in temp_obstacles.iter_mut() {
+        resist_magick(&temp_obstacle.magick.power, &mut temp_obstacle.effect.power);
         damage_health(
             duration,
             settings.magical_damage_factor,
@@ -1265,12 +1289,23 @@ fn update_velocity_z(
     }
 }
 
-fn add_magick_power_to_effect(now: f64, target: &Effect, other: &[f64; 11]) -> Effect {
+fn add_magick_to_effect<T>(
+    now: f64,
+    target: &Effect,
+    magick: &Magick,
+    resistance: &[T; 11],
+) -> Effect
+where
+    T: Default + PartialEq,
+{
     let mut power = target.power;
     let mut applied = target.applied;
+    let shield = (resistance[Element::Shield as usize] == T::default()) as i32 as f64;
     for i in 0..power.len() {
-        if other[i] > 0.0 {
-            power[i] = power[i].max(other[i]);
+        if magick.power[i] > 0.0 {
+            power[i] = power[i].max(magick.power[i])
+                * (resistance[i] == T::default()) as i32 as f64
+                * shield;
             applied[i] = now;
         }
     }
@@ -1301,6 +1336,16 @@ fn add_magick_power_to_effect(now: f64, target: &Effect, other: &[f64; 11]) -> E
         power[Element::Cold as usize] = 0.0;
     }
     Effect { applied, power }
+}
+
+fn resist_magick<T>(resistance: &[T; 11], power: &mut [f64; 11])
+where
+    T: Default + PartialEq,
+{
+    let shield = (resistance[Element::Shield as usize] == T::default()) as i32 as f64;
+    for i in 0..power.len() {
+        power[i] *= (resistance[i] == T::default()) as i32 as f64 * shield;
+    }
 }
 
 fn get_damage(power: &[f64; 11]) -> f64 {
@@ -1380,16 +1425,21 @@ fn intersect_beam(
     if let Some((index, mut normal)) = nearest_hit {
         let can_reflect = match index {
             Index::Actor(i) => {
-                world.actors[i].effect =
-                    add_magick_power_to_effect(world.time, &world.actors[i].effect, &magick.power);
+                world.actors[i].effect = add_magick_to_effect(
+                    world.time,
+                    &world.actors[i].effect,
+                    &magick,
+                    &world.actors[i].aura.elements,
+                );
                 can_reflect_beams(&world.actors[i].aura.elements)
             }
             Index::Projectile(..) => false,
             Index::StaticObject(i) => {
-                world.static_objects[i].effect = add_magick_power_to_effect(
+                world.static_objects[i].effect = add_magick_to_effect(
                     world.time,
                     &world.static_objects[i].effect,
-                    &magick.power,
+                    &magick,
+                    &DEFAULT_RESISTANCE,
                 );
                 false
             }
@@ -1677,19 +1727,14 @@ fn move_objects(duration: f64, world: &mut World, shape_cache: &ShapeCache) {
             }
         }
         if let Some(collision) = earliest_collision.as_ref() {
-            let now = world.time + (duration - duration_left);
-            let physical_damage_factor = world.settings.physical_damage_factor;
-            with_colliding_objects_mut(collision.lhs, collision.rhs, world, |lhs, rhs| {
-                apply_impact(
-                    now,
-                    physical_damage_factor,
-                    duration / 100.0,
-                    shape_cache,
-                    &collision.toi,
-                    lhs,
-                    rhs,
-                );
-            });
+            let apply_impact = ApplyImpact {
+                now: world.time + (duration - duration_left),
+                damage_factor: world.settings.physical_damage_factor,
+                shape_cache,
+                epsilon_duration: duration / 100.0,
+                toi: &collision.toi,
+            };
+            collide_objects(collision.lhs, collision.rhs, &apply_impact, world);
             for (i, actor) in world.actors.iter_mut().enumerate() {
                 if Index::Actor(i) != collision.lhs && Index::Actor(i) != collision.rhs {
                     update_position(collision.toi.toi, actor.velocity, &mut actor.position)
@@ -1792,13 +1837,14 @@ fn update_earliest_collision(lhs: Index, rhs: Index, toi: TOI, collision: &mut O
     }
 }
 
-trait CollidingObject: WithVelocity + WithShape + WithIsometry {
+trait CollidingObject<T: Default + PartialEq>: WithVelocity + WithShape + WithIsometry {
     fn material(&self) -> Material;
     fn mass(&self) -> f64;
     fn position(&self) -> Vec2f;
     fn set_position(&mut self, value: Vec2f);
     fn set_velocity(&mut self, value: Vec2f);
     fn magick(&self) -> &Magick;
+    fn resistance(&self) -> &[T; 11];
     fn effect(&self) -> &Effect;
     fn set_effect(&mut self, value: Effect);
     fn health(&self) -> f64;
@@ -1807,98 +1853,129 @@ trait CollidingObject: WithVelocity + WithShape + WithIsometry {
     fn is_static(&self) -> bool;
 }
 
-fn with_colliding_objects_mut<F>(lhs: Index, rhs: Index, world: &mut World, mut f: F)
-where
-    F: FnMut(&mut dyn CollidingObject, &mut dyn CollidingObject),
-{
+fn collide_objects(lhs: Index, rhs: Index, apply_impact: &ApplyImpact, world: &mut World) {
     if lhs > rhs {
-        with_colliding_objects_ord_mut(rhs, lhs, world, |l, r| f(r, l))
+        collide_ordered_objects(rhs, lhs, apply_impact, world)
     } else {
-        with_colliding_objects_ord_mut(lhs, rhs, world, f)
+        collide_ordered_objects(lhs, rhs, apply_impact, world)
     }
 }
 
-fn with_colliding_objects_ord_mut<F>(lhs: Index, rhs: Index, world: &mut World, mut f: F)
-where
-    F: FnMut(&mut dyn CollidingObject, &mut dyn CollidingObject),
-{
+fn collide_ordered_objects(lhs: Index, rhs: Index, f: &ApplyImpact, world: &mut World) {
     match lhs {
         Index::Actor(lhs) => match rhs {
             Index::Actor(rhs) => {
                 let (left, right) = world.actors.split_at_mut(rhs);
-                f(&mut left[lhs], &mut right[0])
+                f.call(&mut left[lhs], &mut right[0])
             }
-            Index::Projectile(rhs) => f(&mut world.actors[lhs], &mut world.projectiles[rhs]),
-            Index::StaticObject(rhs) => f(&mut world.actors[lhs], &mut world.static_objects[rhs]),
-            Index::Shield(rhs) => f(&mut world.actors[lhs], &mut world.shields[rhs]),
-            Index::TempObstacle(rhs) => f(&mut world.actors[lhs], &mut world.temp_obstacles[rhs]),
+            Index::Projectile(rhs) => f.call(&mut world.actors[lhs], &mut world.projectiles[rhs]),
+            Index::StaticObject(rhs) => {
+                f.call(&mut world.actors[lhs], &mut world.static_objects[rhs])
+            }
+            Index::Shield(rhs) => f.call(&mut world.actors[lhs], &mut world.shields[rhs]),
+            Index::TempObstacle(rhs) => {
+                f.call(&mut world.actors[lhs], &mut world.temp_obstacles[rhs])
+            }
         },
         Index::Projectile(lhs) => match rhs {
-            Index::Actor(rhs) => f(&mut world.projectiles[lhs], &mut world.actors[rhs]),
+            Index::Actor(rhs) => f.call(&mut world.projectiles[lhs], &mut world.actors[rhs]),
             Index::Projectile(rhs) => {
                 let (left, right) = world.projectiles.split_at_mut(rhs);
-                f(&mut left[lhs], &mut right[0])
+                f.call(&mut left[lhs], &mut right[0])
             }
             Index::StaticObject(rhs) => {
-                f(&mut world.projectiles[lhs], &mut world.static_objects[rhs])
+                f.call(&mut world.projectiles[lhs], &mut world.static_objects[rhs])
             }
-            Index::Shield(rhs) => f(&mut world.projectiles[lhs], &mut world.shields[rhs]),
+            Index::Shield(rhs) => f.call(&mut world.projectiles[lhs], &mut world.shields[rhs]),
             Index::TempObstacle(rhs) => {
-                f(&mut world.projectiles[lhs], &mut world.temp_obstacles[rhs])
+                f.call(&mut world.projectiles[lhs], &mut world.temp_obstacles[rhs])
             }
         },
         Index::StaticObject(lhs) => match rhs {
-            Index::Actor(rhs) => f(&mut world.static_objects[lhs], &mut world.actors[rhs]),
+            Index::Actor(rhs) => f.call(&mut world.static_objects[lhs], &mut world.actors[rhs]),
             Index::Projectile(rhs) => {
-                f(&mut world.static_objects[lhs], &mut world.projectiles[rhs])
+                f.call(&mut world.static_objects[lhs], &mut world.projectiles[rhs])
             }
             Index::StaticObject(rhs) => {
                 let (left, right) = world.static_objects.split_at_mut(rhs);
-                f(&mut left[lhs], &mut right[0])
+                f.call(&mut left[lhs], &mut right[0])
             }
-            Index::Shield(rhs) => f(&mut world.static_objects[lhs], &mut world.shields[rhs]),
-            Index::TempObstacle(rhs) => f(
+            Index::Shield(rhs) => f.call(&mut world.static_objects[lhs], &mut world.shields[rhs]),
+            Index::TempObstacle(rhs) => f.call(
                 &mut world.static_objects[lhs],
                 &mut world.temp_obstacles[rhs],
             ),
         },
         Index::Shield(lhs) => match rhs {
-            Index::Actor(rhs) => f(&mut world.shields[lhs], &mut world.actors[rhs]),
-            Index::Projectile(rhs) => f(&mut world.shields[lhs], &mut world.projectiles[rhs]),
-            Index::StaticObject(rhs) => f(&mut world.shields[lhs], &mut world.static_objects[rhs]),
+            Index::Actor(rhs) => f.call(&mut world.shields[lhs], &mut world.actors[rhs]),
+            Index::Projectile(rhs) => f.call(&mut world.shields[lhs], &mut world.projectiles[rhs]),
+            Index::StaticObject(rhs) => {
+                f.call(&mut world.shields[lhs], &mut world.static_objects[rhs])
+            }
             Index::Shield(rhs) => {
                 let (left, right) = world.shields.split_at_mut(rhs);
-                f(&mut left[lhs], &mut right[0])
+                f.call(&mut left[lhs], &mut right[0])
             }
-            Index::TempObstacle(rhs) => f(&mut world.shields[lhs], &mut world.temp_obstacles[rhs]),
+            Index::TempObstacle(rhs) => {
+                f.call(&mut world.shields[lhs], &mut world.temp_obstacles[rhs])
+            }
         },
         Index::TempObstacle(lhs) => match rhs {
-            Index::Actor(rhs) => f(&mut world.temp_obstacles[lhs], &mut world.actors[rhs]),
+            Index::Actor(rhs) => f.call(&mut world.temp_obstacles[lhs], &mut world.actors[rhs]),
             Index::Projectile(rhs) => {
-                f(&mut world.temp_obstacles[lhs], &mut world.projectiles[rhs])
+                f.call(&mut world.temp_obstacles[lhs], &mut world.projectiles[rhs])
             }
-            Index::StaticObject(rhs) => f(
+            Index::StaticObject(rhs) => f.call(
                 &mut world.temp_obstacles[lhs],
                 &mut world.static_objects[rhs],
             ),
-            Index::Shield(rhs) => f(&mut world.temp_obstacles[lhs], &mut world.shields[rhs]),
+            Index::Shield(rhs) => f.call(&mut world.temp_obstacles[lhs], &mut world.shields[rhs]),
             Index::TempObstacle(rhs) => {
                 let (left, right) = world.temp_obstacles.split_at_mut(rhs);
-                f(&mut left[lhs], &mut right[0])
+                f.call(&mut left[lhs], &mut right[0])
             }
         },
     }
 }
 
-fn apply_impact(
+struct ApplyImpact<'a> {
+    now: f64,
+    damage_factor: f64,
+    epsilon_duration: f64,
+    shape_cache: &'a ShapeCache,
+    toi: &'a TOI,
+}
+
+impl<'a> ApplyImpact<'a> {
+    fn call<L, R>(&self, lhs: &mut dyn CollidingObject<L>, rhs: &mut dyn CollidingObject<R>)
+    where
+        L: Default + PartialEq,
+        R: Default + PartialEq,
+    {
+        apply_impact(
+            self.now,
+            self.damage_factor,
+            self.epsilon_duration,
+            self.shape_cache,
+            self.toi,
+            lhs,
+            rhs,
+        );
+    }
+}
+
+fn apply_impact<L, R>(
     now: f64,
     damage_factor: f64,
     epsilon_duration: f64,
     shape_cache: &ShapeCache,
     toi: &TOI,
-    lhs: &mut dyn CollidingObject,
-    rhs: &mut dyn CollidingObject,
-) {
+    lhs: &mut dyn CollidingObject<L>,
+    rhs: &mut dyn CollidingObject<R>,
+) where
+    L: Default + PartialEq,
+    R: Default + PartialEq,
+{
     let lhs_kinetic_energy = get_kinetic_energy(lhs.mass(), lhs.velocity());
     let rhs_kinetic_energy = get_kinetic_energy(rhs.mass(), rhs.velocity());
     let delta_velocity = lhs.velocity() - rhs.velocity();
@@ -1938,19 +2015,23 @@ fn apply_impact(
             );
         }
     }
-    let new_lhs_effect = add_magick_power_to_effect(now, lhs.effect(), &rhs.magick().power);
-    let new_rhs_effect = add_magick_power_to_effect(now, rhs.effect(), &lhs.magick().power);
+    let new_lhs_effect = add_magick_to_effect(now, lhs.effect(), rhs.magick(), lhs.resistance());
+    let new_rhs_effect = add_magick_to_effect(now, rhs.effect(), lhs.magick(), rhs.resistance());
     lhs.set_effect(new_lhs_effect);
     rhs.set_effect(new_rhs_effect);
     handle_collision_damage(lhs_kinetic_energy, damage_factor, lhs_velocity, lhs);
     handle_collision_damage(rhs_kinetic_energy, damage_factor, rhs_velocity, rhs);
 }
 
-fn get_contact(
+fn get_contact<L, R>(
     shape_cache: &ShapeCache,
-    lhs: &dyn CollidingObject,
-    rhs: &dyn CollidingObject,
-) -> Option<Contact> {
+    lhs: &dyn CollidingObject<L>,
+    rhs: &dyn CollidingObject<R>,
+) -> Option<Contact>
+where
+    L: Default + PartialEq,
+    R: Default + PartialEq,
+{
     let mut contact = None;
     lhs.with_shape(shape_cache, &mut |lhs_shape| {
         rhs.with_shape(shape_cache, &mut |rhs_shape| {
@@ -1967,7 +2048,7 @@ fn get_contact(
     contact
 }
 
-impl CollidingObject for Actor {
+impl CollidingObject<bool> for Actor {
     fn material(&self) -> Material {
         self.body.material
     }
@@ -1990,6 +2071,10 @@ impl CollidingObject for Actor {
 
     fn magick(&self) -> &Magick {
         &DEFAULT_MAGICK
+    }
+
+    fn resistance(&self) -> &[bool; 11] {
+        &self.aura.elements
     }
 
     fn effect(&self) -> &Effect {
@@ -2017,7 +2102,7 @@ impl CollidingObject for Actor {
     }
 }
 
-impl CollidingObject for Projectile {
+impl CollidingObject<f64> for Projectile {
     fn material(&self) -> Material {
         self.body.material
     }
@@ -2040,6 +2125,10 @@ impl CollidingObject for Projectile {
 
     fn magick(&self) -> &Magick {
         &self.magick
+    }
+
+    fn resistance(&self) -> &[f64; 11] {
+        &self.magick.power
     }
 
     fn effect(&self) -> &Effect {
@@ -2065,7 +2154,7 @@ impl CollidingObject for Projectile {
     }
 }
 
-impl CollidingObject for StaticObject {
+impl CollidingObject<bool> for StaticObject {
     fn material(&self) -> Material {
         self.body.material
     }
@@ -2084,6 +2173,10 @@ impl CollidingObject for StaticObject {
 
     fn magick(&self) -> &Magick {
         &DEFAULT_MAGICK
+    }
+
+    fn resistance(&self) -> &[bool; 11] {
+        &DEFAULT_RESISTANCE
     }
 
     fn effect(&self) -> &Effect {
@@ -2111,7 +2204,7 @@ impl CollidingObject for StaticObject {
     }
 }
 
-impl CollidingObject for Shield {
+impl CollidingObject<bool> for Shield {
     fn material(&self) -> Material {
         self.body.material
     }
@@ -2130,6 +2223,10 @@ impl CollidingObject for Shield {
 
     fn magick(&self) -> &Magick {
         &DEFAULT_MAGICK
+    }
+
+    fn resistance(&self) -> &[bool; 11] {
+        &[true; 11]
     }
 
     fn effect(&self) -> &Effect {
@@ -2153,7 +2250,7 @@ impl CollidingObject for Shield {
     }
 }
 
-impl CollidingObject for TempObstacle {
+impl CollidingObject<f64> for TempObstacle {
     fn material(&self) -> Material {
         self.body.material
     }
@@ -2172,6 +2269,10 @@ impl CollidingObject for TempObstacle {
 
     fn magick(&self) -> &Magick {
         &self.magick
+    }
+
+    fn resistance(&self) -> &[f64; 11] {
+        &self.magick.power
     }
 
     fn effect(&self) -> &Effect {
@@ -2199,12 +2300,14 @@ impl CollidingObject for TempObstacle {
     }
 }
 
-fn handle_collision_damage(
+fn handle_collision_damage<T>(
     prev_kinetic_energy: f64,
     damage_factor: f64,
     velocity: Vec2f,
-    object: &mut dyn CollidingObject,
-) {
+    object: &mut dyn CollidingObject<T>,
+) where
+    T: Default + PartialEq,
+{
     if !can_absorb_physical_damage(&object.aura().elements) {
         let health = object.health();
         object.set_health(
