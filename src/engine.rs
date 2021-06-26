@@ -1979,10 +1979,12 @@ fn apply_impact<L, R>(
     let rhs_kinetic_energy = get_kinetic_energy(rhs.mass(), rhs.velocity());
     let delta_velocity = lhs.velocity() - rhs.velocity();
     let mass_sum = lhs.mass() + rhs.mass();
+    let lhs_material = lhs.material();
+    let rhs_material = rhs.material();
     let lhs_velocity = lhs.velocity()
-        - delta_velocity * rhs.mass() * (1.0 + lhs.material().restitution()) / mass_sum;
+        - delta_velocity * rhs.mass() * (1.0 + lhs_material.restitution()) / mass_sum;
     let rhs_velocity = rhs.velocity()
-        + delta_velocity * lhs.mass() * (1.0 + rhs.material().restitution()) / mass_sum;
+        + delta_velocity * lhs.mass() * (1.0 + rhs_material.restitution()) / mass_sum;
     lhs.set_position(lhs.position() + lhs.velocity() * toi.toi + lhs_velocity * epsilon_duration);
     rhs.set_position(rhs.position() + rhs.velocity() * toi.toi + rhs_velocity * epsilon_duration);
     lhs.set_velocity(lhs_velocity);
@@ -2018,8 +2020,21 @@ fn apply_impact<L, R>(
     let new_rhs_effect = add_magick_to_effect(now, rhs.effect(), lhs.magick(), rhs.resistance());
     lhs.set_effect(new_lhs_effect);
     rhs.set_effect(new_rhs_effect);
-    handle_collision_damage(lhs_kinetic_energy, damage_factor, lhs_velocity, lhs);
-    handle_collision_damage(rhs_kinetic_energy, damage_factor, rhs_velocity, rhs);
+    let damage_energy = ((lhs_kinetic_energy + rhs_kinetic_energy)
+        - (get_kinetic_energy(lhs.mass(), lhs_velocity)
+            + get_kinetic_energy(rhs.mass(), rhs_velocity)))
+    .max(0.0);
+    let sum_density = lhs_material.density() + rhs_material.density();
+    handle_collision_damage(
+        damage_energy * rhs_material.density() / sum_density,
+        damage_factor,
+        lhs,
+    );
+    handle_collision_damage(
+        damage_energy * lhs_material.density() / sum_density,
+        damage_factor,
+        rhs,
+    );
 }
 
 fn get_contact<L, R>(
@@ -2300,21 +2315,15 @@ impl CollidingObject<f64> for TempObstacle {
 }
 
 fn handle_collision_damage<T>(
-    prev_kinetic_energy: f64,
+    damage_energy: f64,
     damage_factor: f64,
-    velocity: Vec2f,
     object: &mut dyn CollidingObject<T>,
 ) where
     T: Default + PartialEq,
 {
     if !can_absorb_physical_damage(&object.aura().elements) {
         let health = object.health();
-        object.set_health(
-            health
-                - (get_kinetic_energy(object.mass(), velocity) - prev_kinetic_energy).abs()
-                    * damage_factor
-                    / object.mass(),
-        );
+        object.set_health(health - (damage_energy * damage_factor) / object.mass());
     }
 }
 
@@ -2706,7 +2715,7 @@ mod tests {
                     material: Material::Flesh,
                 },
                 position: Vec2f::only_x(-0.0017985051385861106),
-                health: 0.9983826896332397,
+                health: 0.6811688857655587,
                 effect: Effect::default(),
                 aura: Aura::default(),
                 velocity: Vec2f::only_x(-1.7985051385861106),
@@ -2730,7 +2739,7 @@ mod tests {
                     material: Material::Stone,
                 },
                 position: Vec2f::only_x(1.1979445655559018),
-                health: -119.20343103903285,
+                health: -25.982071155046924,
                 magick: Magick::default(),
                 velocity: Vec2f::only_x(97.94456555590159),
                 dynamic_force: Vec2f::ZERO,
