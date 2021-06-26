@@ -554,6 +554,9 @@ pub fn self_magick(actor_index: usize, world: &mut World) {
         } else {
             power
         };
+        if elements.iter().filter(|v| **v).count() > 1 {
+            elements[Element::Shield as usize] = false;
+        }
         world.actors[actor_index].aura = Aura {
             applied: world.time,
             power,
@@ -1358,13 +1361,11 @@ fn get_damage(power: &[f64; 11]) -> f64 {
 }
 
 fn can_absorb_physical_damage(elements: &[bool; 11]) -> bool {
-    let expect =
-        elements[Element::Shield as usize] as i32 + elements[Element::Earth as usize] as i32;
-    elements[Element::Shield as usize] && expect == elements.iter().map(|v| *v as i32).sum::<i32>()
+    elements[Element::Shield as usize] || elements[Element::Earth as usize]
 }
 
 fn can_reflect_beams(elements: &[bool; 11]) -> bool {
-    elements[Element::Shield as usize] && 1 == elements.iter().map(|v| *v as i32).sum::<i32>()
+    elements[Element::Shield as usize]
 }
 
 fn get_current_direction(
