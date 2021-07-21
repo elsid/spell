@@ -1016,6 +1016,7 @@ fn draw_debug_scene_text(counter: &mut usize, scene: &Scene, font: Font) {
                 scene.camera_target.x, scene.camera_target.y
             ),
             format!("Pointer: {:.3} {:.3}", scene.pointer.x, scene.pointer.y),
+            format!("Players: {}", scene.world.players.len()),
             format!("Actors: {}", scene.world.actors.len()),
             format!("Projectiles: {}", scene.world.projectiles.len()),
             format!("Static objects: {}", scene.world.static_objects.len()),
