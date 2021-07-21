@@ -235,6 +235,7 @@ pub struct Shield {
     pub actor_id: ActorId,
     pub body: Body<CircleArc>,
     pub position: Vec2f,
+    pub created: f64,
     pub power: f64,
 }
 

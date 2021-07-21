@@ -196,11 +196,13 @@ impl Engine {
         world.frame += 1;
         world.time += duration;
         let now = world.time;
+        remove_intersecting_objects(world, &self.shape_cache);
         world.bounded_areas.retain(|v| v.deadline >= now);
         world.fields.retain(|v| v.deadline >= now);
         world.beams.retain(|v| v.deadline >= now);
         world.temp_areas.retain(|v| v.deadline >= now);
         world.guns.retain(|v| v.shots_left > 0);
+        world.shields.retain(|v| v.power > 0.0);
         world.temp_obstacles.retain(|v| v.deadline >= now);
         update_actor_occupations(world);
         spawn_player_actors(world, rng);
@@ -414,7 +416,7 @@ fn cast_earth_based_shield(mut magick: Magick, actor_index: usize, world: &mut W
                 + actor
                     .current_direction
                     .rotated(i as f64 * std::f64::consts::PI / (2 * 5) as f64)
-                    * distance,
+                    * (distance + 0.1),
             health: 1.0,
             magick: magick.clone(),
             effect: Effect::default(),
@@ -439,7 +441,7 @@ fn cast_spray_based_shield(magick: Magick, actor_index: usize, world: &mut World
                 + actor
                     .current_direction
                     .rotated(i as f64 * std::f64::consts::PI / (2 * 5) as f64)
-                    * distance,
+                    * (distance + 0.1),
             magick: magick.clone(),
             deadline: world.time + world.settings.temp_area_duration,
         });
@@ -460,6 +462,7 @@ fn cast_reflecting_shield(length: f64, actor_index: usize, world: &mut World) {
             material: Material::None,
         },
         position: actor.position,
+        created: world.time,
         power: 1.0,
     });
 }
@@ -740,6 +743,128 @@ fn can_cancel_element(target: Element, element: Element) -> bool {
         || (target == Element::Poison && element == Element::Life)
 }
 
+fn remove_intersecting_objects(world: &mut World, shape_cache: &ShapeCache) {
+    if !world.temp_obstacles.is_empty() {
+        for i in 0..world.temp_obstacles.len() - 1 {
+            for j in i + 1..world.temp_obstacles.len() {
+                if intersection_test(
+                    &world.temp_obstacles[i],
+                    &world.temp_obstacles[j],
+                    shape_cache,
+                ) {
+                    world.temp_obstacles[i].deadline = 0.0;
+                    break;
+                }
+            }
+        }
+    }
+    if !world.shields.is_empty() {
+        for i in 0..world.shields.len() - 1 {
+            for j in i + 1..world.shields.len() {
+                if intersection_test(&world.shields[i], &world.shields[j], shape_cache) {
+                    world.shields[i].power = 0.0;
+                    break;
+                }
+            }
+        }
+    }
+    if !world.temp_areas.is_empty() {
+        for i in 0..world.temp_areas.len() - 1 {
+            for j in i + 1..world.temp_areas.len() {
+                if intersection_test(&world.temp_areas[i], &world.temp_areas[j], shape_cache) {
+                    world.temp_areas[i].deadline = 0.0;
+                    break;
+                }
+            }
+        }
+    }
+    for temp_obstacle in world.temp_obstacles.iter_mut() {
+        if temp_obstacle.deadline == 0.0 {
+            continue;
+        }
+        for static_object in world.static_objects.iter() {
+            if intersection_test(temp_obstacle, static_object, shape_cache) {
+                temp_obstacle.deadline = 0.0;
+                break;
+            }
+        }
+        if temp_obstacle.deadline == 0.0 {
+            continue;
+        }
+        for shield in world.shields.iter_mut() {
+            if shield.power == 0.0 {
+                continue;
+            }
+            if intersection_test(temp_obstacle, shield, shape_cache) {
+                if shield.created
+                    >= temp_obstacle.deadline - world.settings.temp_obstacle_magick_duration
+                {
+                    temp_obstacle.deadline = 0.0;
+                } else {
+                    shield.power = 0.0;
+                    break;
+                }
+            }
+        }
+        if temp_obstacle.deadline == 0.0 {
+            continue;
+        }
+        for temp_area in world.temp_areas.iter_mut() {
+            if temp_area.deadline == 0.0 {
+                continue;
+            }
+            if intersection_test(temp_obstacle, temp_area, shape_cache) {
+                if temp_area.deadline - world.settings.temp_area_duration
+                    >= temp_obstacle.deadline - world.settings.temp_obstacle_magick_duration
+                {
+                    temp_obstacle.deadline = 0.0;
+                    break;
+                } else {
+                    temp_area.deadline = 0.0;
+                }
+            }
+        }
+    }
+    for shield in world.shields.iter_mut() {
+        if shield.power == 0.0 {
+            continue;
+        }
+        for static_object in world.static_objects.iter() {
+            if intersection_test(shield, static_object, shape_cache) {
+                shield.power = 0.0;
+                break;
+            }
+        }
+        if shield.power == 0.0 {
+            continue;
+        }
+        for temp_area in world.temp_areas.iter_mut() {
+            if temp_area.deadline == 0.0 {
+                continue;
+            }
+            if intersection_test(shield, temp_area, shape_cache) {
+                if shield.created
+                    >= temp_area.deadline - world.settings.temp_obstacle_magick_duration
+                {
+                    temp_area.deadline = 0.0;
+                } else {
+                    shield.power = 0.0;
+                    break;
+                }
+            }
+        }
+        if shield.power == 0.0 {
+            continue;
+        }
+        for actor in world.actors.iter() {
+            if intersection_test(shield, actor, shape_cache) {
+                shield.power = 0.0;
+                break;
+            }
+        }
+    }
+}
+
 fn intersect_objects_with_areas(world: &mut World, shape_cache: &ShapeCache) {
     for i in 0..world.actors.len() {
         intersect_actor_with_all_bounded_areas(
@@ -976,7 +1101,7 @@ fn intersect_static_object_with_bounded_area<T>(
     T: Default + PartialEq,
 {
     let isometry = Isometry::translation(owner.position.x, owner.position.y);
-    if intersection_test(
+    if intersection_test_with_ring_sector(
         &object.isometry,
         object.shape,
         &isometry,
@@ -1048,7 +1173,7 @@ where
     S: Shape,
 {
     let isometry = Isometry::translation(object.position.x, object.position.y);
-    if intersection_test(
+    if intersection_test_with_ring_sector(
         &isometry,
         &object.shape,
         &owner.get_isometry(),
@@ -1505,6 +1630,12 @@ impl WithIsometry for TempObstacle {
     }
 }
 
+impl WithIsometry for TempArea {
+    fn get_isometry(&self) -> Isometry<Real> {
+        Isometry::translation(self.position.x, self.position.y)
+    }
+}
+
 trait WithShape {
     fn with_shape(&self, shape_cache: &ShapeCache, f: &mut dyn FnMut(&dyn Shape));
 }
@@ -1540,6 +1671,12 @@ impl WithShape for Shield {
 }
 
 impl WithShape for TempObstacle {
+    fn with_shape(&self, _: &ShapeCache, f: &mut dyn FnMut(&dyn Shape)) {
+        (*f)(&self.body.shape.as_shape())
+    }
+}
+
+impl WithShape for TempArea {
     fn with_shape(&self, _: &ShapeCache, f: &mut dyn FnMut(&dyn Shape)) {
         (*f)(&self.body.shape.as_shape())
     }
@@ -2428,7 +2565,27 @@ fn update_actor_occupations(world: &mut World) {
     }
 }
 
-fn intersection_test(
+fn intersection_test<L, R>(lhs: &L, rhs: &R, shape_cache: &ShapeCache) -> bool
+where
+    L: WithIsometry + WithShape,
+    R: WithIsometry + WithShape,
+{
+    let mut result = false;
+    lhs.with_shape(shape_cache, &mut |lhs_shape| {
+        rhs.with_shape(shape_cache, &mut |rhs_shape| {
+            result = query::intersection_test(
+                &lhs.get_isometry(),
+                lhs_shape,
+                &rhs.get_isometry(),
+                rhs_shape,
+            )
+            .unwrap();
+        });
+    });
+    result
+}
+
+fn intersection_test_with_ring_sector(
     shape_pos: &Isometry<Real>,
     shape: &dyn Shape,
     body_pos: &Isometry<Real>,
@@ -2604,6 +2761,7 @@ mod tests {
                 material: Material::None,
             },
             position: Vec2f::new(-33.23270204831895, -32.3454131103618),
+            created: 0.0,
             power: 0.0,
         };
         let projectile = Projectile {
