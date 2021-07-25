@@ -150,6 +150,7 @@ pub struct StaticObject {
     pub id: StaticObjectId,
     pub body: Body<StaticShape>,
     pub position: Vec2f,
+    pub rotation: f64,
     pub health: f64,
     pub effect: Effect,
 }
@@ -264,6 +265,7 @@ pub struct Body<Shape> {
 pub enum StaticShape {
     CircleArc(CircleArc),
     Disk(Disk),
+    Rectangle(Rectangle),
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -283,6 +285,12 @@ pub struct RingSector {
     pub min_radius: f64,
     pub max_radius: f64,
     pub angle: f64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct Rectangle {
+    pub width: f64,
+    pub height: f64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
@@ -455,7 +463,7 @@ mod tests {
             ))
             .unwrap()
             .len(),
-            224
+            232
         );
     }
 

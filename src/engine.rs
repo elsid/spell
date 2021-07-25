@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use parry2d_f64::math::{Isometry, Real};
+use parry2d_f64::math::{Isometry, Real, Vector};
 use parry2d_f64::na::{Point2, Vector2};
 use parry2d_f64::query;
 use parry2d_f64::query::{Contact, Ray, TOI};
@@ -15,9 +15,9 @@ use crate::world::PlayerId;
 use crate::world::{
     Actor, ActorId, ActorOccupation, Aura, Beam, BeamId, Body, BoundedArea, BoundedAreaId,
     CircleArc, DelayedMagick, DelayedMagickStatus, Disk, Effect, Element, Field, FieldId, Gun,
-    GunId, Magick, Material, Projectile, ProjectileId, RingSector, Shield, ShieldId, StaticArea,
-    StaticObject, StaticShape, TempArea, TempAreaId, TempObstacle, TempObstacleId, World,
-    WorldSettings,
+    GunId, Magick, Material, Projectile, ProjectileId, Rectangle, RingSector, Shield, ShieldId,
+    StaticArea, StaticObject, StaticShape, TempArea, TempAreaId, TempObstacle, TempObstacleId,
+    World, WorldSettings,
 };
 
 const RESOLUTION_FACTOR: f64 = 4.0;
@@ -625,6 +625,7 @@ impl WithVolume for StaticShape {
         match self {
             StaticShape::CircleArc(v) => v.volume(),
             StaticShape::Disk(v) => v.volume(),
+            StaticShape::Rectangle(v) => v.volume(),
         }
     }
 }
@@ -641,6 +642,12 @@ impl WithVolume for CircleArc {
     }
 }
 
+impl WithVolume for Rectangle {
+    fn volume(&self) -> f64 {
+        self.width * self.height
+    }
+}
+
 impl StaticShape {
     fn with_shape<R, F: FnMut(&dyn Shape) -> R>(&self, cache: &ShapeCache, mut f: F) -> R {
         match &self {
@@ -652,6 +659,7 @@ impl StaticShape {
                 f,
             ),
             StaticShape::Disk(disk) => f(&disk.as_shape()),
+            StaticShape::Rectangle(v) => f(&v.as_shape()),
         }
     }
 }
@@ -671,6 +679,12 @@ impl CircleArc {
             },
             f,
         )
+    }
+}
+
+impl Rectangle {
+    fn as_shape(&self) -> Cuboid {
+        Cuboid::new(Vector::new(self.width * 0.5, self.height * 0.5))
     }
 }
 
@@ -1607,10 +1621,15 @@ impl WithIsometry for Projectile {
 impl WithIsometry for StaticObject {
     fn get_isometry(&self) -> Isometry<Real> {
         match &self.body.shape {
-            StaticShape::CircleArc(v) => {
-                Isometry::new(Vector2::new(self.position.x, self.position.y), v.rotation)
-            }
+            StaticShape::CircleArc(v) => Isometry::new(
+                Vector2::new(self.position.x, self.position.y),
+                v.rotation + self.rotation,
+            ),
             StaticShape::Disk(..) => Isometry::translation(self.position.x, self.position.y),
+            StaticShape::Rectangle(..) => Isometry::new(
+                Vector2::new(self.position.x, self.position.y),
+                self.rotation,
+            ),
         }
     }
 }
@@ -2130,13 +2149,13 @@ fn apply_impact<L, R>(
         if lhs.is_static() {
             rhs.set_position(
                 rhs.position()
-                    + Vec2f::new(contact.normal2.x, contact.normal2.y)
+                    + Vec2f::from(&(rhs.get_isometry() * contact.normal2).xy())
                         * contact.dist.min(-epsilon_duration),
             );
         } else if rhs.is_static() {
             lhs.set_position(
                 lhs.position()
-                    + Vec2f::new(contact.normal1.x, contact.normal1.y)
+                    + Vec2f::from(&(lhs.get_isometry() * contact.normal1).xy())
                         * contact.dist.min(-epsilon_duration),
             );
         } else {
@@ -2144,12 +2163,12 @@ fn apply_impact<L, R>(
             let mass_sum = lhs.mass() + rhs.mass();
             lhs.set_position(
                 lhs.position()
-                    + Vec2f::new(contact.normal1.x, contact.normal1.y)
+                    + Vec2f::from(&(lhs.get_isometry() * contact.normal1).xy())
                         * (half_distance * rhs.mass() / mass_sum),
             );
             rhs.set_position(
                 rhs.position()
-                    + Vec2f::new(contact.normal2.x, contact.normal2.y)
+                    + Vec2f::from(&(rhs.get_isometry() * contact.normal2).xy())
                         * (half_distance * lhs.mass() / mass_sum),
             );
         }
@@ -2176,6 +2195,7 @@ fn apply_impact<L, R>(
 }
 
 struct MovingObject {
+    isometry: Isometry<Real>,
     velocity: Vec2f,
     mass: f64,
 }
@@ -2185,6 +2205,7 @@ where
     T: Default + PartialEq,
 {
     MovingObject {
+        isometry: colliding_object.get_isometry(),
         velocity: colliding_object.velocity(),
         mass: colliding_object.mass(),
     }
@@ -2196,8 +2217,8 @@ fn get_velocity_after_impact(
     lhs: &MovingObject,
     rhs: &MovingObject,
 ) -> (Vec2f, Vec2f) {
-    let lhs_normal = Vec2f::from(&toi.normal1.xy());
-    let rhs_normal = Vec2f::from(&toi.normal2.xy());
+    let lhs_normal = Vec2f::from(&(lhs.isometry * toi.normal1).xy());
+    let rhs_normal = Vec2f::from(&(rhs.isometry * toi.normal2).xy());
     let normal = (rhs_normal - lhs_normal).normalized();
     let lhs_velocity_components = get_velocity_components(lhs.velocity, normal);
     let rhs_velocity_components = get_velocity_components(rhs.velocity, normal);
@@ -2774,6 +2795,7 @@ mod tests {
     use parry2d_f64::query::TOIStatus;
 
     use crate::engine::*;
+    use crate::world::StaticObjectId;
 
     #[test]
     fn make_circle_arc_polyline_should_generate_vertices_along_arc_circle() {
@@ -2961,6 +2983,84 @@ mod tests {
     }
 
     #[test]
+    fn apply_impact_for_moving_projectile_and_rectangle_static_object() {
+        let duration = 1.0;
+        let shape_cache = ShapeCache::default();
+        let mut projectile = Projectile {
+            id: Default::default(),
+            body: Body {
+                shape: Disk { radius: 1.0 },
+                material: Material::Stone,
+            },
+            position: Vec2f::new(5.0, 5.0),
+            health: 1.0,
+            magick: Magick::default(),
+            velocity: Vec2f::new(-50.0, -50.0),
+            dynamic_force: Vec2f::ZERO,
+            position_z: 1.0,
+            velocity_z: 0.0,
+        };
+        let mut static_object = StaticObject {
+            id: StaticObjectId(1),
+            body: Body {
+                shape: StaticShape::Rectangle(Rectangle {
+                    width: 20.0,
+                    height: 1.0,
+                }),
+                material: Material::Stone,
+            },
+            position: Vec2f::new(0.0, 0.0),
+            rotation: std::f64::consts::FRAC_PI_6,
+            health: 1.0,
+            effect: Effect::default(),
+        };
+        let toi = time_of_impact(duration, &shape_cache, &projectile, &static_object);
+        assert!(toi.is_some());
+        ApplyImpact {
+            now: 42.0,
+            damage_factor: 1e-3,
+            epsilon_duration: 1e-3,
+            shape_cache: &shape_cache,
+            toi: &toi.unwrap(),
+        }
+        .call(&mut projectile, &mut static_object);
+        assert_eq!(
+            projectile,
+            Projectile {
+                id: Default::default(),
+                body: Body {
+                    shape: Disk { radius: 1.0 },
+                    material: Material::Stone,
+                },
+                position: Vec2f::new(4.0385862888455994, 4.064513631098341),
+                health: 0.9305278967503936,
+                magick: Magick::default(),
+                velocity: Vec2f::new(-59.49006596389085, -33.562723711148514),
+                dynamic_force: Vec2f::ZERO,
+                position_z: 1.0,
+                velocity_z: 0.0,
+            }
+        );
+        assert_eq!(
+            static_object,
+            StaticObject {
+                id: StaticObjectId(1),
+                body: Body {
+                    shape: StaticShape::Rectangle(Rectangle {
+                        width: 20.0,
+                        height: 1.0,
+                    }),
+                    material: Material::Stone,
+                },
+                position: Vec2f::new(0.0, 0.0),
+                rotation: std::f64::consts::FRAC_PI_6,
+                health: 0.9890873475400802,
+                effect: Effect::default(),
+            }
+        );
+    }
+
+    #[test]
     fn get_velocity_after_impact_for_projectiles() {
         let duration = 1.0 / 60.0;
         let shape_cache = ShapeCache::default();
@@ -3019,10 +3119,12 @@ mod tests {
         ];
         for (restitution, results) in restitutions_and_results {
             let object1 = MovingObject {
+                isometry: Isometry::identity(),
                 velocity: projectile1.velocity,
                 mass: 1.0,
             };
             let object2 = MovingObject {
+                isometry: Isometry::identity(),
                 velocity: projectile2.velocity,
                 mass: 3.0,
             };

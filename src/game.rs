@@ -30,8 +30,8 @@ use crate::protocol::{
 use crate::rect::Rectf;
 use crate::vec2::Vec2f;
 use crate::world::{
-    ActorId, Aura, DelayedMagickStatus, Disk, Element, Material, Player, PlayerId, RingSector,
-    StaticShape, World,
+    ActorId, Aura, DelayedMagickStatus, Disk, Element, Material, Player, PlayerId, Rectangle,
+    RingSector, StaticShape, World,
 };
 
 const NAME_FONT_SIZE: u16 = 24;
@@ -758,6 +758,16 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
                     v.position,
                 );
             }
+            StaticShape::Rectangle(shape) => {
+                draw_rectangle_body_and_magick(
+                    shape,
+                    v.body.material,
+                    &v.effect.power,
+                    scene.world.settings.border_width,
+                    v.position,
+                    v.rotation,
+                );
+            }
         }
     }
 
@@ -1195,6 +1205,65 @@ fn draw_triangles(matrix: Mat4, vertices: &[Vertex], indices: &[u16]) {
     context.quad_gl.texture(None);
     context.quad_gl.draw_mode(DrawMode::Triangles);
     context.quad_gl.geometry(vertices, indices);
+    context.quad_gl.pop_model_matrix();
+}
+
+fn draw_rectangle_body_and_magick(
+    shape: &Rectangle,
+    material: Material,
+    power: &[f64; 11],
+    border_width: f64,
+    position: Vec2f,
+    rotation: f64,
+) {
+    let power_color = if power.iter().sum::<f64>() > 0.0 {
+        Some(get_magick_power_color(power))
+    } else {
+        None
+    };
+    draw_rectangle_body(
+        shape,
+        material,
+        power_color,
+        border_width,
+        position,
+        rotation,
+    );
+}
+
+fn draw_rectangle_body(
+    shape: &Rectangle,
+    material: Material,
+    power_color: Option<Color>,
+    border_width: f64,
+    position: Vec2f,
+    rotation: f64,
+) {
+    let context = unsafe { get_internal_gl() };
+    context
+        .quad_gl
+        .push_model_matrix(Mat4::from_rotation_translation(
+            Quat::from_axis_angle(Vec3::new(0.0, 0.0, 1.0), rotation as f32),
+            Vec3::new(position.x as f32, position.y as f32, 0.0),
+        ));
+    if let Some(color) = power_color {
+        draw_rectangle(
+            (-shape.width * 0.5) as f32,
+            (-shape.height * 0.5) as f32,
+            shape.width as f32,
+            shape.height as f32,
+            color,
+        );
+    }
+    let width = shape.width - border_width * power_color.is_some() as i32 as f64;
+    let height = shape.height - border_width * power_color.is_some() as i32 as f64;
+    draw_rectangle(
+        (-width * 0.5) as f32,
+        (-height * 0.5) as f32,
+        width as f32,
+        height as f32,
+        get_material_color(material, 1.0),
+    );
     context.quad_gl.pop_model_matrix();
 }
 

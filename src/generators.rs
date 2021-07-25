@@ -6,7 +6,8 @@ use crate::rect::Rectf;
 use crate::vec2::Vec2f;
 use crate::world::{
     Actor, ActorId, ActorOccupation, Aura, Body, Disk, Effect, Element, Magick, Material, PlayerId,
-    StaticArea, StaticAreaId, StaticObject, StaticObjectId, StaticShape, World, WorldSettings,
+    Rectangle, StaticArea, StaticAreaId, StaticObject, StaticObjectId, StaticShape, World,
+    WorldSettings,
 };
 
 pub fn make_rng(random_seed: Option<u64>) -> SmallRng {
@@ -218,15 +219,28 @@ pub fn generate_static_object<R: Rng>(
     StaticObject {
         id,
         body: Body {
-            shape: StaticShape::Disk(Disk {
-                radius: rng.gen_range(0.8..1.2),
-            }),
+            shape: match rng.gen_range(0..2) {
+                0 => StaticShape::Disk(Disk {
+                    radius: rng.gen_range(0.8..1.2),
+                }),
+                1 => {
+                    let width = rng.gen_range(1.0..10.0);
+                    let height = if width >= 5.0 {
+                        rng.gen_range(1.0..2.5)
+                    } else {
+                        rng.gen_range(7.5..10.0)
+                    };
+                    StaticShape::Rectangle(Rectangle { width, height })
+                }
+                _ => unimplemented!(),
+            },
             material,
         },
         position: Vec2f::new(
             rng.gen_range(bounds.min.x..bounds.max.x),
             rng.gen_range(bounds.min.y..bounds.max.y),
         ),
+        rotation: rng.gen_range(-1.0..1.0) * std::f64::consts::PI,
         health: 1.0,
         effect: Effect::default(),
     }
