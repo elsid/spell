@@ -52,6 +52,7 @@ pub struct WorldSettings {
     pub gun_half_grouping_angle: f64,
     pub temp_obstacle_magick_duration: f64,
     pub temp_area_duration: f64,
+    pub max_actor_speed: f64,
 }
 
 impl Default for WorldSettings {
@@ -83,6 +84,7 @@ impl Default for WorldSettings {
             gun_half_grouping_angle: std::f64::consts::PI / 12.0,
             temp_obstacle_magick_duration: 20.0,
             temp_area_duration: 5.0,
+            max_actor_speed: 7.5,
         }
     }
 }
@@ -393,7 +395,7 @@ mod tests {
 
     #[test]
     fn serialized_default_world_size() {
-        assert_eq!(bincode::serialize(&World::default()).unwrap().len(), 346);
+        assert_eq!(bincode::serialize(&World::default()).unwrap().len(), 354);
     }
 
     #[test]

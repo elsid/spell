@@ -1218,7 +1218,7 @@ fn push_object(
 fn update_actors(now: f64, duration: f64, settings: &WorldSettings, actors: &mut Vec<Actor>) {
     for actor in actors.iter_mut() {
         update_actor_current_direction(duration, settings.max_rotation_speed, actor);
-        update_actor_dynamic_force(settings.move_force, actor);
+        update_actor_dynamic_force(settings.move_force, settings.max_actor_speed, actor);
         resist_magick(&actor.aura.elements, &mut actor.effect.power);
         damage_health(
             duration,
@@ -1330,12 +1330,15 @@ fn update_actor_current_direction(duration: f64, max_rotation_speed: f64, actor:
     );
 }
 
-fn update_actor_dynamic_force(move_force: f64, actor: &mut Actor) {
-    let moving = actor.moving
+fn update_actor_dynamic_force(move_force: f64, max_speed: f64, actor: &mut Actor) {
+    if actor.moving
         && actor.delayed_magick.is_none()
         && matches!(actor.occupation, ActorOccupation::None)
-        && !is_actor_immobilized(actor);
-    actor.dynamic_force += actor.current_direction * move_force * moving as i32 as f64;
+        && !is_actor_immobilized(actor)
+        && actor.velocity.norm() < max_speed
+    {
+        actor.dynamic_force += actor.current_direction * move_force;
+    }
 }
 
 fn add_dry_friction_force(
