@@ -2118,10 +2118,11 @@ fn apply_impact<L, R>(
     let mass_sum = lhs.mass() + rhs.mass();
     let lhs_material = lhs.material();
     let rhs_material = rhs.material();
+    let restitution = (lhs_material.restitution() + rhs_material.restitution()) * 0.5;
     let lhs_velocity = lhs.velocity()
-        - delta_velocity * rhs.mass() * (1.0 + lhs_material.restitution()) / mass_sum;
+        - delta_velocity * (rhs.mass() * (1.0 + restitution) / mass_sum);
     let rhs_velocity = rhs.velocity()
-        + delta_velocity * lhs.mass() * (1.0 + rhs_material.restitution()) / mass_sum;
+        + delta_velocity * (lhs.mass() * (1.0 + restitution) / mass_sum);
     lhs.set_position(lhs.position() + lhs.velocity() * toi.toi + lhs_velocity * epsilon_duration);
     rhs.set_position(rhs.position() + rhs.velocity() * toi.toi + rhs_velocity * epsilon_duration);
     lhs.set_velocity(lhs_velocity);
@@ -2872,11 +2873,11 @@ mod tests {
                     shape: Disk { radius: 1.0 },
                     material: Material::Flesh,
                 },
-                position: Vec2f::only_x(-0.0017985051385861106),
-                health: 0.6811688857655587,
+                position: Vec2f::only_x(-0.001926969791342261),
+                health: 0.673466826731175,
                 effect: Effect::default(),
                 aura: Aura::default(),
-                velocity: Vec2f::only_x(-1.7985051385861106),
+                velocity: Vec2f::only_x(-1.926969791342261),
                 dynamic_force: Vec2f::ZERO,
                 current_direction: Vec2f::only_x(1.0),
                 target_direction: Vec2f::only_x(1.0),
@@ -2896,10 +2897,10 @@ mod tests {
                     shape: Disk { radius: 0.1 },
                     material: Material::Stone,
                 },
-                position: Vec2f::only_x(1.1979445655559018),
-                health: -25.982071155046924,
+                position: Vec2f::only_x(1.1605730302086577),
+                health: -26.633881770849325,
                 magick: Magick::default(),
-                velocity: Vec2f::only_x(97.94456555590159),
+                velocity: Vec2f::only_x(60.573030208657656),
                 dynamic_force: Vec2f::ZERO,
                 position_z: 1.0,
                 velocity_z: 0.0,
