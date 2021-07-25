@@ -2114,15 +2114,13 @@ fn apply_impact<L, R>(
 {
     let lhs_kinetic_energy = get_kinetic_energy(lhs.mass(), lhs.velocity());
     let rhs_kinetic_energy = get_kinetic_energy(rhs.mass(), rhs.velocity());
-    let delta_velocity = lhs.velocity() - rhs.velocity();
-    let mass_sum = lhs.mass() + rhs.mass();
     let lhs_material = lhs.material();
     let rhs_material = rhs.material();
-    let restitution = (lhs_material.restitution() + rhs_material.restitution()) * 0.5;
-    let lhs_velocity = lhs.velocity()
-        - delta_velocity * (rhs.mass() * (1.0 + restitution) / mass_sum);
-    let rhs_velocity = rhs.velocity()
-        + delta_velocity * (lhs.mass() * (1.0 + restitution) / mass_sum);
+    let (lhs_velocity, rhs_velocity) = get_velocity_after_impact(
+        (lhs_material.restitution() + rhs_material.restitution()) * 0.5,
+        &make_moving_object(lhs),
+        &make_moving_object(rhs),
+    );
     lhs.set_position(lhs.position() + lhs.velocity() * toi.toi + lhs_velocity * epsilon_duration);
     rhs.set_position(rhs.position() + rhs.velocity() * toi.toi + rhs_velocity * epsilon_duration);
     lhs.set_velocity(lhs_velocity);
@@ -2142,6 +2140,7 @@ fn apply_impact<L, R>(
             );
         } else {
             let half_distance = contact.dist.min(-epsilon_duration) / 2.0;
+            let mass_sum = lhs.mass() + rhs.mass();
             lhs.set_position(
                 lhs.position()
                     + Vec2f::new(contact.normal1.x, contact.normal1.y)
@@ -2173,6 +2172,34 @@ fn apply_impact<L, R>(
         damage_factor,
         rhs,
     );
+}
+
+struct MovingObject {
+    velocity: Vec2f,
+    mass: f64,
+}
+
+fn make_moving_object<T>(colliding_object: &dyn CollidingObject<T>) -> MovingObject
+where
+    T: Default + PartialEq,
+{
+    MovingObject {
+        velocity: colliding_object.velocity(),
+        mass: colliding_object.mass(),
+    }
+}
+
+fn get_velocity_after_impact(
+    restitution: f64,
+    lhs: &MovingObject,
+    rhs: &MovingObject,
+) -> (Vec2f, Vec2f) {
+    let delta_velocity = lhs.velocity - rhs.velocity;
+    let mass_sum = lhs.mass + rhs.mass;
+    (
+        lhs.velocity - delta_velocity * (rhs.mass * (1.0 + restitution) / mass_sum),
+        rhs.velocity + delta_velocity * (lhs.mass * (1.0 + restitution) / mass_sum),
+    )
 }
 
 fn get_contact<L, R>(
@@ -2906,5 +2933,62 @@ mod tests {
                 velocity_z: 0.0,
             }
         );
+    }
+
+    #[test]
+    fn get_velocity_after_impact_for_projectiles() {
+        let duration = 1.0 / 60.0;
+        let shape_cache = ShapeCache::default();
+        let projectile1 = Projectile {
+            id: Default::default(),
+            body: Body {
+                shape: Disk { radius: 1.0 },
+                material: Material::Stone,
+            },
+            position: Vec2f::new(4.0, 4.0),
+            health: 1.0,
+            magick: Magick::default(),
+            velocity: Vec2f::new(-500.0, -400.0),
+            dynamic_force: Vec2f::ZERO,
+            position_z: 1.0,
+            velocity_z: 0.0,
+        };
+        let projectile2 = Projectile {
+            id: Default::default(),
+            body: Body {
+                shape: Disk { radius: 2.0 },
+                material: Material::Stone,
+            },
+            position: Vec2f::new(-4.0, -4.0),
+            health: 1.0,
+            magick: Magick::default(),
+            velocity: Vec2f::new(300.0, 200.0),
+            dynamic_force: Vec2f::ZERO,
+            position_z: 1.0,
+            velocity_z: 0.0,
+        };
+        let toi = time_of_impact(duration, &shape_cache, &projectile1, &projectile2);
+        assert!(toi.is_some());
+        let restitutions_and_results = &[
+            (0.0, (Vec2f::new(100.0, 50.0), Vec2f::new(100.0, 50.0))),
+            (0.5, (Vec2f::new(400.0, 275.0), Vec2f::new(0.0, -25.0))),
+            (1.0, (Vec2f::new(700.0, 500.0), Vec2f::new(-100.0, -100.0))),
+        ];
+        for (restitution, results) in restitutions_and_results {
+            let object1 = MovingObject {
+                velocity: projectile1.velocity,
+                mass: 1.0,
+            };
+            let object2 = MovingObject {
+                velocity: projectile2.velocity,
+                mass: 3.0,
+            };
+            assert_eq!(
+                get_velocity_after_impact(*restitution, &object1, &object2),
+                *results,
+                "restitution: {:?}",
+                restitution
+            )
+        }
     }
 }
