@@ -84,7 +84,7 @@ impl Default for WorldSettings {
             gun_half_grouping_angle: std::f64::consts::PI / 12.0,
             temp_obstacle_magick_duration: 20.0,
             temp_area_duration: 5.0,
-            max_actor_speed: 7.5,
+            max_actor_speed: 10.0,
         }
     }
 }

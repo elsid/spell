@@ -713,7 +713,7 @@ impl Material {
         }
     }
 
-    fn friction(self) -> f64 {
+    fn sliding_resistance(self) -> f64 {
         match self {
             Material::None => 0.0,
             Material::Flesh => 1.0,
@@ -721,6 +721,18 @@ impl Material {
             Material::Grass => 0.5,
             Material::Dirt => 1.0,
             Material::Water => 1.0,
+            Material::Ice => 0.05,
+        }
+    }
+
+    fn walking_resistance(self) -> f64 {
+        match self {
+            Material::None => 0.0,
+            Material::Flesh => 1.0,
+            Material::Stone => 0.025,
+            Material::Grass => 0.05,
+            Material::Dirt => 0.1,
+            Material::Water => 0.5,
             Material::Ice => 0.05,
         }
     }
@@ -897,7 +909,7 @@ fn intersect_objects_with_areas(world: &mut World, shape_cache: &ShapeCache) {
                 shape: &Ball::new(actor.body.shape.radius),
                 velocity: actor.velocity,
                 isometry: Isometry::translation(actor.position.x, actor.position.y),
-                levitating: (actor.position_z - actor.body.shape.radius) > f64::EPSILON,
+                movement_type: get_actor_movement_type(actor),
                 mass: actor.body.mass(),
                 resistance: &actor.aura.elements,
                 dynamic_force: &mut actor.dynamic_force,
@@ -927,7 +939,7 @@ fn intersect_objects_with_areas(world: &mut World, shape_cache: &ShapeCache) {
                 shape: &Ball::new(v.body.shape.radius),
                 velocity: v.velocity,
                 isometry: Isometry::translation(v.position.x, v.position.y),
-                levitating: (v.position_z - v.body.shape.radius) > f64::EPSILON,
+                movement_type: get_projectile_movement_type(v),
                 mass: v.body.mass(),
                 resistance: &DEFAULT_RESISTANCE,
                 dynamic_force: &mut v.dynamic_force,
@@ -970,15 +982,39 @@ fn intersect_objects_with_areas(world: &mut World, shape_cache: &ShapeCache) {
     }
 }
 
+fn get_actor_movement_type(actor: &Actor) -> MovementType {
+    if (actor.position_z - actor.body.shape.radius) > f64::EPSILON {
+        return MovementType::Flying;
+    }
+    if actor.moving {
+        MovementType::Walking
+    } else {
+        MovementType::Sliding
+    }
+}
+
+fn get_projectile_movement_type(projectile: &Projectile) -> MovementType {
+    if (projectile.position_z - projectile.body.shape.radius) > f64::EPSILON {
+        return MovementType::Flying;
+    }
+    MovementType::Sliding
+}
+
 struct IntersectingDynamicObject<'a, T: Default + PartialEq> {
     shape: &'a dyn Shape,
     velocity: Vec2f,
     isometry: Isometry<Real>,
-    levitating: bool,
+    movement_type: MovementType,
     mass: f64,
     resistance: &'a [T; 11],
     dynamic_force: &'a mut Vec2f,
     effect: &'a mut Effect,
+}
+
+enum MovementType {
+    Flying,
+    Sliding,
+    Walking,
 }
 
 fn intersect_with_temp_and_static_areas<T>(
@@ -991,7 +1027,7 @@ fn intersect_with_temp_and_static_areas<T>(
     T: Default + PartialEq,
 {
     intersect_with_temp_areas(now, temp_areas, object);
-    if !object.levitating {
+    if !matches!(object.movement_type, MovementType::Flying) {
         intersect_with_last_static_area(now, gravitational_acceleration, static_areas, object);
     }
 }
@@ -1037,15 +1073,39 @@ fn intersect_with_last_static_area<T>(
         )
         .unwrap()
     }) {
-        add_dry_friction_force(
-            object.mass,
-            object.velocity,
-            static_area.body.material,
-            gravitational_acceleration,
-            object.dynamic_force,
-        );
-        *object.effect =
-            add_magick_to_effect(now, object.effect, &static_area.magick, object.resistance);
+        match object.movement_type {
+            MovementType::Flying => (),
+            MovementType::Sliding => {
+                add_sliding_resistance(
+                    object.mass,
+                    object.velocity,
+                    static_area.body.material,
+                    gravitational_acceleration,
+                    object.dynamic_force,
+                );
+                *object.effect = add_magick_to_effect(
+                    now,
+                    object.effect,
+                    &static_area.magick,
+                    object.resistance,
+                );
+            }
+            MovementType::Walking => {
+                add_walking_resistance(
+                    object.mass,
+                    object.velocity,
+                    static_area.body.material,
+                    gravitational_acceleration,
+                    object.dynamic_force,
+                );
+                *object.effect = add_magick_to_effect(
+                    now,
+                    object.effect,
+                    &static_area.magick,
+                    object.resistance,
+                );
+            }
+        }
     }
 }
 
@@ -1218,7 +1278,12 @@ fn push_object(
 fn update_actors(now: f64, duration: f64, settings: &WorldSettings, actors: &mut Vec<Actor>) {
     for actor in actors.iter_mut() {
         update_actor_current_direction(duration, settings.max_rotation_speed, actor);
-        update_actor_dynamic_force(settings.move_force, settings.max_actor_speed, actor);
+        update_actor_dynamic_force(
+            duration,
+            settings.move_force,
+            settings.max_actor_speed,
+            actor,
+        );
         resist_magick(&actor.aura.elements, &mut actor.effect.power);
         damage_health(
             duration,
@@ -1330,18 +1395,32 @@ fn update_actor_current_direction(duration: f64, max_rotation_speed: f64, actor:
     );
 }
 
-fn update_actor_dynamic_force(move_force: f64, max_speed: f64, actor: &mut Actor) {
+fn update_actor_dynamic_force(duration: f64, move_force: f64, max_speed: f64, actor: &mut Actor) {
+    if is_actor_immobilized(actor) {
+        return;
+    }
+    let speed = actor.velocity.norm();
     if actor.moving
         && actor.delayed_magick.is_none()
         && matches!(actor.occupation, ActorOccupation::None)
-        && !is_actor_immobilized(actor)
-        && actor.velocity.norm() < max_speed
     {
-        actor.dynamic_force += actor.current_direction * move_force;
+        if speed < max_speed {
+            actor.dynamic_force +=
+                actor.current_direction * (move_force - speed * move_force / max_speed);
+        }
+    } else if speed > f64::EPSILON {
+        let force_factor = duration / (2.0 * actor.mass());
+        let base_stop_factor = 0.25 * (move_force - speed * move_force / max_speed) / speed;
+        let stop_factor = if speed > base_stop_factor * force_factor {
+            base_stop_factor
+        } else {
+            0.25 / force_factor
+        };
+        actor.dynamic_force -= actor.velocity * stop_factor;
     }
 }
 
-fn add_dry_friction_force(
+fn add_sliding_resistance(
     mass: f64,
     velocity: Vec2f,
     surface: Material,
@@ -1351,7 +1430,22 @@ fn add_dry_friction_force(
     let speed = velocity.norm();
     if speed != 0.0 {
         *dynamic_force -=
-            velocity * (mass * surface.friction() * gravitational_acceleration / speed);
+            velocity * (mass * surface.sliding_resistance() * gravitational_acceleration / speed);
+    }
+}
+
+fn add_walking_resistance(
+    mass: f64,
+    velocity: Vec2f,
+    surface: Material,
+    gravitational_acceleration: f64,
+    dynamic_force: &mut Vec2f,
+) {
+    let speed = velocity.norm();
+    if speed != 0.0 {
+        *dynamic_force -= velocity
+            * (mass * surface.walking_resistance() * gravitational_acceleration * speed.max(1.0)
+                / speed);
     }
 }
 
