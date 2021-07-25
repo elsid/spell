@@ -808,28 +808,12 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
         }
     }
 
-    for v in scene.world.projectiles.iter() {
-        draw_health(v.health, v.body.shape.radius, v.position);
-    }
-
-    for v in scene.world.static_objects.iter() {
-        let radius = match &v.body.shape {
-            StaticShape::CircleArc(v) => v.radius,
-            StaticShape::Disk(v) => v.radius,
-        };
-        draw_health(v.health, radius, v.position);
-    }
-
     for v in scene.world.shields.iter() {
         draw_aura_power(
             v.power / scene.world.settings.max_magic_power,
             v.body.shape.radius,
             v.position,
         );
-    }
-
-    for v in scene.world.temp_obstacles.iter() {
-        draw_health(v.health, v.body.shape.radius, v.position);
     }
 
     for v in scene.world.actors.iter() {
