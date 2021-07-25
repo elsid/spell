@@ -30,8 +30,8 @@ use crate::protocol::{
 use crate::rect::Rectf;
 use crate::vec2::Vec2f;
 use crate::world::{
-    ActorId, Aura, DelayedMagickStatus, Disk, Element, Material, Player, PlayerId, Rectangle,
-    RingSector, StaticShape, World,
+    Actor, ActorId, Aura, DelayedMagickStatus, Disk, Element, Material, Player, PlayerId,
+    Rectangle, RingSector, StaticShape, World,
 };
 
 const NAME_FONT_SIZE: u16 = 24;
@@ -46,6 +46,8 @@ const HUD_ELEMENT_BORDER_WIDTH: f64 = HUD_ELEMENT_RADIUS * (1.0 - BORDER_FACTOR)
 const HUD_MARGIN: f64 = 12.0;
 const HUD_FONT_SIZE: u16 = 18;
 const MESSAGE_FONT_SIZE: u16 = 32;
+const DEBUG_INFO_FONT_SIZE: u16 = 24;
+const DEBUG_INFO_FONT_SCALE: f32 = 0.01;
 
 #[derive(Clap, Debug)]
 pub struct GameSettings {
@@ -846,6 +848,12 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
         }
     }
 
+    if game_state.show_debug_hud {
+        for v in scene.world.actors.iter() {
+            draw_actor_debug_info(v, game_state.debug_hud_font);
+        }
+    }
+
     draw_rectangle_lines(
         scene.world.bounds.min.x as f32,
         scene.world.bounds.min.y as f32,
@@ -1605,6 +1613,39 @@ fn draw_name(text: &str, position: Vec2f, radius: f64, font: Font) {
             font_scale_aspect: 1.0,
         },
     );
+}
+
+fn draw_actor_debug_info(actor: &Actor, font: Font) {
+    let texts = &[
+        format!("id: {} ({})", actor.id.0, actor.player_id.0),
+        format!(
+            "position: ({:.2}, {:.2})",
+            actor.position.x, actor.position.y
+        ),
+        format!(
+            "velocity: ({:.2}, {:.2})",
+            actor.velocity.x, actor.velocity.y
+        ),
+        format!("speed: {:.2}", actor.velocity.norm()),
+    ];
+    let font_size = scaled_u16(DEBUG_INFO_FONT_SIZE);
+    for (n, text) in texts.iter().enumerate() {
+        let text_dimensions = measure_text(text, Some(font), font_size, DEBUG_INFO_FONT_SCALE);
+        draw_text_ex(
+            text,
+            (actor.position.x + actor.body.shape.radius * 1.5) as f32,
+            (actor.position.y - actor.body.shape.radius) as f32
+                + text_dimensions.height
+                + DEBUG_INFO_FONT_SCALE * n as f32 * font_size as f32,
+            TextParams {
+                font,
+                font_size,
+                font_scale: DEBUG_INFO_FONT_SCALE,
+                color: Color::new(1.0, 1.0, 1.0, 0.8),
+                font_scale_aspect: 1.0,
+            },
+        );
+    }
 }
 
 fn make_server_address(address: &str, port: u16) -> Option<SocketAddr> {
