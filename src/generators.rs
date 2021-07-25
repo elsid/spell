@@ -82,15 +82,17 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
         position: Vec2f::ZERO,
         magick: Magick::default(),
     }];
-    generate_static_areas(
-        Material::Grass,
-        Magick::default(),
-        rng.gen_range(8..12),
-        &bounds,
-        &mut id_counter,
-        &mut static_areas,
-        rng,
-    );
+    for material in &[Material::Grass, Material::Ice] {
+        generate_static_areas(
+            *material,
+            Magick::default(),
+            rng.gen_range(8..12),
+            &bounds,
+            &mut id_counter,
+            &mut static_areas,
+            rng,
+        );
+    }
     let water_magick = {
         let mut v = Magick::default();
         v.power[Element::Water as usize] = 1.0;
