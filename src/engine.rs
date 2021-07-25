@@ -2117,6 +2117,7 @@ fn apply_impact<L, R>(
     let lhs_material = lhs.material();
     let rhs_material = rhs.material();
     let (lhs_velocity, rhs_velocity) = get_velocity_after_impact(
+        toi,
         (lhs_material.restitution() + rhs_material.restitution()) * 0.5,
         &make_moving_object(lhs),
         &make_moving_object(rhs),
@@ -2190,16 +2191,40 @@ where
 }
 
 fn get_velocity_after_impact(
+    toi: &TOI,
     restitution: f64,
     lhs: &MovingObject,
     rhs: &MovingObject,
 ) -> (Vec2f, Vec2f) {
-    let delta_velocity = lhs.velocity - rhs.velocity;
+    let lhs_normal = Vec2f::from(&toi.normal1.xy());
+    let rhs_normal = Vec2f::from(&toi.normal2.xy());
+    let normal = (rhs_normal - lhs_normal).normalized();
+    let lhs_velocity_components = get_velocity_components(lhs.velocity, normal);
+    let rhs_velocity_components = get_velocity_components(rhs.velocity, normal);
+    let delta_normal_velocity = lhs_velocity_components.normal - rhs_velocity_components.normal;
     let mass_sum = lhs.mass + rhs.mass;
+    let lhs_axis_velocity = lhs_velocity_components.normal
+        - delta_normal_velocity * (rhs.mass * (1.0 + restitution) / mass_sum);
+    let rhs_axis_velocity = rhs_velocity_components.normal
+        + delta_normal_velocity * (lhs.mass * (1.0 + restitution) / mass_sum);
     (
-        lhs.velocity - delta_velocity * (rhs.mass * (1.0 + restitution) / mass_sum),
-        rhs.velocity + delta_velocity * (lhs.mass * (1.0 + restitution) / mass_sum),
+        normal * lhs_axis_velocity + lhs_velocity_components.tangent,
+        normal * rhs_axis_velocity + rhs_velocity_components.tangent,
     )
+}
+
+#[derive(Debug)]
+struct VelocityComponents {
+    normal: f64,
+    tangent: Vec2f,
+}
+
+fn get_velocity_components(velocity: Vec2f, normal: Vec2f) -> VelocityComponents {
+    let normal_velocity = velocity.dot(normal);
+    VelocityComponents {
+        normal: normal_velocity,
+        tangent: velocity - normal * normal_velocity,
+    }
 }
 
 fn get_contact<L, R>(
@@ -2970,9 +2995,27 @@ mod tests {
         let toi = time_of_impact(duration, &shape_cache, &projectile1, &projectile2);
         assert!(toi.is_some());
         let restitutions_and_results = &[
-            (0.0, (Vec2f::new(100.0, 50.0), Vec2f::new(100.0, 50.0))),
-            (0.5, (Vec2f::new(400.0, 275.0), Vec2f::new(0.0, -25.0))),
-            (1.0, (Vec2f::new(700.0, 500.0), Vec2f::new(-100.0, -100.0))),
+            (
+                0.0,
+                (
+                    Vec2f::new(-273.68390731385875, 192.6896541962566),
+                    Vec2f::new(224.56130243795292, 2.4367819345810915),
+                ),
+            ),
+            (
+                0.5,
+                (
+                    Vec2f::new(-160.5258609707881, 489.03448129438505),
+                    Vec2f::new(186.84195365692938, -96.34482709812832),
+                ),
+            ),
+            (
+                1.0,
+                (
+                    Vec2f::new(-47.367814627717536, 785.3793083925132),
+                    Vec2f::new(149.12260487590584, -195.1264361308378),
+                ),
+            ),
         ];
         for (restitution, results) in restitutions_and_results {
             let object1 = MovingObject {
@@ -2984,7 +3027,7 @@ mod tests {
                 mass: 3.0,
             };
             assert_eq!(
-                get_velocity_after_impact(*restitution, &object1, &object2),
+                get_velocity_after_impact(toi.as_ref().unwrap(), *restitution, &object1, &object2),
                 *results,
                 "restitution: {:?}",
                 restitution

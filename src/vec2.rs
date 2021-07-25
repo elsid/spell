@@ -1,5 +1,6 @@
 #[cfg(feature = "client")]
 use macroquad::math::Vec2;
+use parry2d_f64::na::Vector2;
 use serde::{Deserialize, Serialize};
 
 pub trait Square: std::ops::Mul + Copy {
@@ -199,6 +200,15 @@ impl From<Vec2> for Vec2f {
         Self {
             x: value.x as f64,
             y: value.y as f64,
+        }
+    }
+}
+
+impl From<&Vector2<f64>> for Vec2f {
+    fn from(value: &Vector2<f64>) -> Self {
+        Self {
+            x: value.x,
+            y: value.y,
         }
     }
 }
