@@ -34,6 +34,10 @@ impl Vec2f {
         Self { x, y: 0.0 }
     }
 
+    pub const fn only_y(y: f64) -> Self {
+        Self { x: 0.0, y }
+    }
+
     pub fn norm(&self) -> f64 {
         (self.x.square() + self.y.square()).sqrt()
     }

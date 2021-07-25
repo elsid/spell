@@ -31,6 +31,36 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
         rng,
     );
     let mut static_objects = Vec::new();
+    let borders = &[
+        Vec2f::only_x(bounds.width()),
+        Vec2f::only_x(-bounds.width()),
+        Vec2f::only_y(bounds.height()),
+        Vec2f::only_y(-bounds.height()),
+    ];
+    for border in borders {
+        static_objects.push(StaticObject {
+            id: StaticObjectId(get_next_id(&mut id_counter)),
+            body: Body {
+                shape: StaticShape::Rectangle(Rectangle {
+                    width: if border.x == 0.0 {
+                        1.0
+                    } else {
+                        border.x.abs() + 1.0
+                    },
+                    height: if border.y == 0.0 {
+                        1.0
+                    } else {
+                        border.y.abs() + 1.0
+                    },
+                }),
+                material: Material::Stone,
+            },
+            position: *border * 0.5,
+            rotation: std::f64::consts::FRAC_PI_2,
+            health: 1.0,
+            effect: Effect::default(),
+        });
+    }
     for material in &[Material::Ice, Material::Stone] {
         generate_static_objects(
             *material,
