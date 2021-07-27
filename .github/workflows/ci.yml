@@ -3,8 +3,8 @@ on: [push, pull_request]
 name: CI
 
 jobs:
-  build_server:
-    name: Build server
+  build_server_linux:
+    name: Build server for Linux
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -16,10 +16,15 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --features=server --bins
+          args: --release --features=server --bins
+      - run: mv target/release/spell_server .
+      - uses: actions/upload-artifact@v2
+        with:
+          name: spell_server_linux
+          path: spell_server
 
-  build_client:
-    name: Build client
+  build_client_linux:
+    name: Build client for Linux
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -32,7 +37,58 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --features=client --bins
+          args: --release --features=client --bins
+      - run: mv target/release/spell .
+      - uses: actions/upload-artifact@v2
+        with:
+          name: spell_client_linux
+          path: |
+            spell
+            fonts/
+
+  build_client_macos_10_15:
+    name: Build client for macOS 10.15
+    runs-on: macos-10.15
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --features=client --bins
+      - run: mv target/release/spell .
+      - uses: actions/upload-artifact@v2
+        with:
+          name: spell_client_macos_10.15
+          path: |
+            spell
+            fonts/
+
+  build_client_windows:
+    name: Build client for Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --features=client --bins
+      - run: mv target/release/spell.exe .
+      - uses: actions/upload-artifact@v2
+        with:
+          name: spell_client_windows
+          path: |
+            spell.exe
+            fonts/
 
   build_all:
     name: Build all
