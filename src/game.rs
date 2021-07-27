@@ -146,7 +146,9 @@ struct Multiplayer {
 }
 
 pub async fn run_game(settings: GameSettings) {
-    let ubuntu_mono = load_ttf_font("fonts/UbuntuMono-R.ttf").await.unwrap();
+    let ubuntu_mono = load_ttf_font("assets/fonts/UbuntuMono-R.ttf")
+        .await
+        .unwrap();
     let mut game_state = GameState {
         rng: make_rng(settings.random_seed),
         fps: FpsMovingAverage::new(100, Duration::from_secs(1)),
