@@ -15,7 +15,7 @@ use crate::world::PlayerId;
 use crate::world::{
     Actor, ActorId, ActorOccupation, Aura, Beam, BeamId, Body, BoundedArea, BoundedAreaId,
     CircleArc, DelayedMagick, DelayedMagickStatus, Disk, Effect, Element, Field, FieldId, Gun,
-    GunId, Magick, Material, Projectile, ProjectileId, Rectangle, RingSector, Shield, ShieldId,
+    GunId, Magick, MaterialType, Projectile, ProjectileId, Rectangle, RingSector, Shield, ShieldId,
     StaticArea, StaticObject, StaticShape, TempArea, TempAreaId, TempObstacle, TempObstacleId,
     World, WorldSettings,
 };
@@ -410,7 +410,7 @@ fn cast_earth_based_shield(mut magick: Magick, actor_index: usize, world: &mut W
                 shape: Disk {
                     radius: distance * std::f64::consts::PI / (2 * 5 * 2) as f64,
                 },
-                material: Material::Stone,
+                material_type: MaterialType::Stone,
             },
             position: actor.position
                 + actor
@@ -435,7 +435,7 @@ fn cast_spray_based_shield(magick: Magick, actor_index: usize, world: &mut World
                 shape: Disk {
                     radius: distance * std::f64::consts::PI / (2 * 5 * 2) as f64,
                 },
-                material: Material::Dirt,
+                material_type: MaterialType::Dirt,
             },
             position: actor.position
                 + actor
@@ -459,7 +459,7 @@ fn cast_reflecting_shield(length: f64, actor_index: usize, world: &mut World) {
                 length,
                 rotation: normalize_angle(actor.current_direction.angle()),
             },
-            material: Material::None,
+            material_type: MaterialType::None,
         },
         position: actor.position,
         created: world.time,
@@ -612,7 +612,7 @@ trait WithMass {
 
 impl<Shape: WithVolume> WithMass for Body<Shape> {
     fn mass(&self) -> f64 {
-        self.shape.volume() * self.material.density()
+        self.shape.volume() * self.material_type.density()
     }
 }
 
@@ -688,52 +688,52 @@ impl Rectangle {
     }
 }
 
-impl Material {
+impl MaterialType {
     fn density(self) -> f64 {
         match self {
-            Material::None => 1.0,
-            Material::Flesh => 800.0,
-            Material::Stone => 2750.0,
-            Material::Grass => 500.0,
-            Material::Dirt => 1500.0,
-            Material::Water => 1000.0,
-            Material::Ice => 900.0,
+            MaterialType::None => 1.0,
+            MaterialType::Flesh => 800.0,
+            MaterialType::Stone => 2750.0,
+            MaterialType::Grass => 500.0,
+            MaterialType::Dirt => 1500.0,
+            MaterialType::Water => 1000.0,
+            MaterialType::Ice => 900.0,
         }
     }
 
     fn restitution(self) -> f64 {
         match self {
-            Material::None => 1.0,
-            Material::Flesh => 0.05,
-            Material::Stone => 0.2,
-            Material::Grass => 0.01,
-            Material::Dirt => 0.01,
-            Material::Water => 0.0,
-            Material::Ice => 0.01,
+            MaterialType::None => 1.0,
+            MaterialType::Flesh => 0.05,
+            MaterialType::Stone => 0.2,
+            MaterialType::Grass => 0.01,
+            MaterialType::Dirt => 0.01,
+            MaterialType::Water => 0.0,
+            MaterialType::Ice => 0.01,
         }
     }
 
     fn sliding_resistance(self) -> f64 {
         match self {
-            Material::None => 0.0,
-            Material::Flesh => 1.0,
-            Material::Stone => 1.0,
-            Material::Grass => 0.5,
-            Material::Dirt => 1.0,
-            Material::Water => 1.0,
-            Material::Ice => 0.05,
+            MaterialType::None => 0.0,
+            MaterialType::Flesh => 1.0,
+            MaterialType::Stone => 1.0,
+            MaterialType::Grass => 0.5,
+            MaterialType::Dirt => 1.0,
+            MaterialType::Water => 1.0,
+            MaterialType::Ice => 0.05,
         }
     }
 
     fn walking_resistance(self) -> f64 {
         match self {
-            Material::None => 0.0,
-            Material::Flesh => 1.0,
-            Material::Stone => 0.025,
-            Material::Grass => 0.05,
-            Material::Dirt => 0.1,
-            Material::Water => 0.5,
-            Material::Ice => 0.05,
+            MaterialType::None => 0.0,
+            MaterialType::Flesh => 1.0,
+            MaterialType::Stone => 0.025,
+            MaterialType::Grass => 0.05,
+            MaterialType::Dirt => 0.1,
+            MaterialType::Water => 0.5,
+            MaterialType::Ice => 0.05,
         }
     }
 }
@@ -1079,7 +1079,7 @@ fn intersect_with_last_static_area<T>(
                 add_sliding_resistance(
                     object.mass,
                     object.velocity,
-                    static_area.body.material,
+                    static_area.body.material_type,
                     gravitational_acceleration,
                     object.dynamic_force,
                 );
@@ -1094,7 +1094,7 @@ fn intersect_with_last_static_area<T>(
                 add_walking_resistance(
                     object.mass,
                     object.velocity,
-                    static_area.body.material,
+                    static_area.body.material_type,
                     gravitational_acceleration,
                     object.dynamic_force,
                 );
@@ -1423,7 +1423,7 @@ fn update_actor_dynamic_force(duration: f64, move_force: f64, max_speed: f64, ac
 fn add_sliding_resistance(
     mass: f64,
     velocity: Vec2f,
-    surface: Material,
+    surface: MaterialType,
     gravitational_acceleration: f64,
     dynamic_force: &mut Vec2f,
 ) {
@@ -1437,7 +1437,7 @@ fn add_sliding_resistance(
 fn add_walking_resistance(
     mass: f64,
     velocity: Vec2f,
-    surface: Material,
+    surface: MaterialType,
     gravitational_acceleration: f64,
     dynamic_force: &mut Vec2f,
 ) {
@@ -2090,7 +2090,7 @@ fn update_earliest_collision(lhs: Index, rhs: Index, toi: TOI, collision: &mut O
 }
 
 trait CollidingObject<T: Default + PartialEq>: WithVelocity + WithShape + WithIsometry {
-    fn material(&self) -> Material;
+    fn material_type(&self) -> MaterialType;
     fn mass(&self) -> f64;
     fn position(&self) -> Vec2f;
     fn set_position(&mut self, value: Vec2f);
@@ -2230,8 +2230,8 @@ fn apply_impact<L, R>(
 {
     let lhs_kinetic_energy = get_kinetic_energy(lhs.mass(), lhs.velocity());
     let rhs_kinetic_energy = get_kinetic_energy(rhs.mass(), rhs.velocity());
-    let lhs_material = lhs.material();
-    let rhs_material = rhs.material();
+    let lhs_material = lhs.material_type();
+    let rhs_material = rhs.material_type();
     let (lhs_velocity, rhs_velocity) = get_velocity_after_impact(
         toi,
         (lhs_material.restitution() + rhs_material.restitution()) * 0.5,
@@ -2371,8 +2371,8 @@ where
 }
 
 impl CollidingObject<bool> for Actor {
-    fn material(&self) -> Material {
-        self.body.material
+    fn material_type(&self) -> MaterialType {
+        self.body.material_type
     }
 
     fn mass(&self) -> f64 {
@@ -2425,8 +2425,8 @@ impl CollidingObject<bool> for Actor {
 }
 
 impl CollidingObject<f64> for Projectile {
-    fn material(&self) -> Material {
-        self.body.material
+    fn material_type(&self) -> MaterialType {
+        self.body.material_type
     }
 
     fn mass(&self) -> f64 {
@@ -2477,8 +2477,8 @@ impl CollidingObject<f64> for Projectile {
 }
 
 impl CollidingObject<bool> for StaticObject {
-    fn material(&self) -> Material {
-        self.body.material
+    fn material_type(&self) -> MaterialType {
+        self.body.material_type
     }
 
     fn mass(&self) -> f64 {
@@ -2527,8 +2527,8 @@ impl CollidingObject<bool> for StaticObject {
 }
 
 impl CollidingObject<bool> for Shield {
-    fn material(&self) -> Material {
-        self.body.material
+    fn material_type(&self) -> MaterialType {
+        self.body.material_type
     }
 
     fn mass(&self) -> f64 {
@@ -2573,8 +2573,8 @@ impl CollidingObject<bool> for Shield {
 }
 
 impl CollidingObject<f64> for TempObstacle {
-    fn material(&self) -> Material {
-        self.body.material
+    fn material_type(&self) -> MaterialType {
+        self.body.material_type
     }
 
     fn mass(&self) -> f64 {
@@ -2661,14 +2661,13 @@ fn handle_completed_magicks(world: &mut World) {
                 let delayed_magick = actor.delayed_magick.take().unwrap();
                 let radius = delayed_magick.power.iter().sum::<f64>() * actor.body.shape.radius
                     / world.settings.max_magic_power;
-                let material = Material::Stone;
                 let mut power = delayed_magick.power;
                 power[Element::Earth as usize] = 0.0;
                 world.projectiles.push(Projectile {
                     id: ProjectileId(get_next_id(&mut world.id_counter)),
                     body: Body {
                         shape: Disk { radius },
-                        material,
+                        material_type: MaterialType::Stone,
                     },
                     position: actor.position
                         + actor.current_direction
@@ -2836,7 +2835,7 @@ fn shoot_from_guns<R: Rng>(world: &mut World, rng: &mut R) {
                 id: ProjectileId(get_next_id(&mut world.id_counter)),
                 body: Body {
                     shape: Disk { radius },
-                    material: Material::Ice,
+                    material_type: MaterialType::Ice,
                 },
                 position: actor.position
                     + actor.current_direction
@@ -2930,7 +2929,7 @@ mod tests {
                     length: FRAC_PI_2,
                     rotation: -2.6539321938108684,
                 },
-                material: Material::None,
+                material_type: MaterialType::None,
             },
             position: Vec2f::new(-33.23270204831895, -32.3454131103618),
             created: 0.0,
@@ -2940,7 +2939,7 @@ mod tests {
             id: ProjectileId(2),
             body: Body {
                 shape: Disk { radius: 0.2 },
-                material: Material::Stone,
+                material_type: MaterialType::Stone,
             },
             position: Vec2f::new(-34.41147614376544, -32.89358428062188),
             health: 1.0,
@@ -2992,7 +2991,7 @@ mod tests {
             name: String::new(),
             body: Body {
                 shape: Disk { radius: 1.0 },
-                material: Material::Flesh,
+                material_type: MaterialType::Flesh,
             },
             position: Vec2f::new(0.0, 0.0),
             health: 1.0,
@@ -3013,7 +3012,7 @@ mod tests {
             id: Default::default(),
             body: Body {
                 shape: Disk { radius: 0.1 },
-                material: Material::Stone,
+                material_type: MaterialType::Stone,
             },
             position: Vec2f::only_x(2.0),
             health: 1.0,
@@ -3042,7 +3041,7 @@ mod tests {
                 name: String::new(),
                 body: Body {
                     shape: Disk { radius: 1.0 },
-                    material: Material::Flesh,
+                    material_type: MaterialType::Flesh,
                 },
                 position: Vec2f::only_x(-0.001926969791342261),
                 health: 0.673466826731175,
@@ -3066,7 +3065,7 @@ mod tests {
                 id: Default::default(),
                 body: Body {
                     shape: Disk { radius: 0.1 },
-                    material: Material::Stone,
+                    material_type: MaterialType::Stone,
                 },
                 position: Vec2f::only_x(1.1605730302086577),
                 health: -26.633881770849325,
@@ -3087,7 +3086,7 @@ mod tests {
             id: Default::default(),
             body: Body {
                 shape: Disk { radius: 1.0 },
-                material: Material::Stone,
+                material_type: MaterialType::Stone,
             },
             position: Vec2f::new(5.0, 5.0),
             health: 1.0,
@@ -3104,7 +3103,7 @@ mod tests {
                     width: 20.0,
                     height: 1.0,
                 }),
-                material: Material::Stone,
+                material_type: MaterialType::Stone,
             },
             position: Vec2f::new(0.0, 0.0),
             rotation: std::f64::consts::FRAC_PI_6,
@@ -3127,7 +3126,7 @@ mod tests {
                 id: Default::default(),
                 body: Body {
                     shape: Disk { radius: 1.0 },
-                    material: Material::Stone,
+                    material_type: MaterialType::Stone,
                 },
                 position: Vec2f::new(4.0385862888455994, 4.064513631098341),
                 health: 0.9305278967503936,
@@ -3147,7 +3146,7 @@ mod tests {
                         width: 20.0,
                         height: 1.0,
                     }),
-                    material: Material::Stone,
+                    material_type: MaterialType::Stone,
                 },
                 position: Vec2f::new(0.0, 0.0),
                 rotation: std::f64::consts::FRAC_PI_6,
@@ -3165,7 +3164,7 @@ mod tests {
             id: Default::default(),
             body: Body {
                 shape: Disk { radius: 1.0 },
-                material: Material::Stone,
+                material_type: MaterialType::Stone,
             },
             position: Vec2f::new(4.0, 4.0),
             health: 1.0,
@@ -3179,7 +3178,7 @@ mod tests {
             id: Default::default(),
             body: Body {
                 shape: Disk { radius: 2.0 },
-                material: Material::Stone,
+                material_type: MaterialType::Stone,
             },
             position: Vec2f::new(-4.0, -4.0),
             health: 1.0,

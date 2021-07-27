@@ -5,9 +5,9 @@ use crate::engine::get_next_id;
 use crate::rect::Rectf;
 use crate::vec2::Vec2f;
 use crate::world::{
-    Actor, ActorId, ActorOccupation, Aura, Body, Disk, Effect, Element, Magick, Material, PlayerId,
-    Rectangle, StaticArea, StaticAreaId, StaticObject, StaticObjectId, StaticShape, World,
-    WorldSettings,
+    Actor, ActorId, ActorOccupation, Aura, Body, Disk, Effect, Element, Magick, MaterialType,
+    PlayerId, Rectangle, StaticArea, StaticAreaId, StaticObject, StaticObjectId, StaticShape,
+    World, WorldSettings,
 };
 
 pub fn make_rng(random_seed: Option<u64>) -> SmallRng {
@@ -23,7 +23,7 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
     let mut id_counter = 1;
     let mut actors = Vec::new();
     generate_actors(
-        Material::Flesh,
+        MaterialType::Flesh,
         rng.gen_range(8..12),
         &bounds,
         &mut id_counter,
@@ -53,7 +53,7 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
                         border.y.abs() + 1.0
                     },
                 }),
-                material: Material::Stone,
+                material_type: MaterialType::Stone,
             },
             position: *border * 0.5,
             rotation: std::f64::consts::FRAC_PI_2,
@@ -61,9 +61,9 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
             effect: Effect::default(),
         });
     }
-    for material in &[Material::Ice, Material::Stone] {
+    for material_type in &[MaterialType::Ice, MaterialType::Stone] {
         generate_static_objects(
-            *material,
+            *material_type,
             rng.gen_range(8..12),
             &bounds,
             &mut id_counter,
@@ -77,14 +77,14 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
             shape: Disk {
                 radius: bounds.min.distance(bounds.max) * 0.5,
             },
-            material: Material::Dirt,
+            material_type: MaterialType::Dirt,
         },
         position: Vec2f::ZERO,
         magick: Magick::default(),
     }];
-    for material in &[Material::Grass, Material::Ice] {
+    for material_type in &[MaterialType::Grass, MaterialType::Ice] {
         generate_static_areas(
-            *material,
+            *material_type,
             Magick::default(),
             rng.gen_range(8..12),
             &bounds,
@@ -99,7 +99,7 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
         v
     };
     generate_static_areas(
-        Material::Water,
+        MaterialType::Water,
         water_magick,
         rng.gen_range(8..12),
         &bounds,
@@ -135,7 +135,6 @@ pub fn generate_player_actor<R: Rng>(
     bounds: &Rectf,
     rng: &mut R,
 ) -> Actor {
-    let material = Material::Flesh;
     let delta = bounds.max - bounds.min;
     let middle = (bounds.max + bounds.min) / 2.0;
     let radius = 1.0;
@@ -146,7 +145,7 @@ pub fn generate_player_actor<R: Rng>(
         name,
         body: Body {
             shape: Disk { radius },
-            material,
+            material_type: MaterialType::Flesh,
         },
         position: Vec2f::new(
             rng.gen_range(middle.x - delta.x * 0.25..middle.x + delta.x * 0.25),
@@ -169,7 +168,7 @@ pub fn generate_player_actor<R: Rng>(
 }
 
 pub fn generate_actors<R: Rng>(
-    material: Material,
+    material_type: MaterialType,
     number: usize,
     bounds: &Rectf,
     id_counter: &mut u64,
@@ -178,7 +177,7 @@ pub fn generate_actors<R: Rng>(
 ) {
     for _ in 0..number {
         actors.push(generate_actor(
-            material,
+            material_type,
             ActorId(get_next_id(id_counter)),
             bounds,
             rng,
@@ -187,7 +186,7 @@ pub fn generate_actors<R: Rng>(
 }
 
 pub fn generate_actor<R: Rng>(
-    material: Material,
+    material_type: MaterialType,
     id: ActorId,
     bounds: &Rectf,
     rng: &mut R,
@@ -200,7 +199,7 @@ pub fn generate_actor<R: Rng>(
         name: format!("bot {}", id.0),
         body: Body {
             shape: Disk { radius },
-            material,
+            material_type,
         },
         position: Vec2f::new(
             rng.gen_range(bounds.min.x..bounds.max.x),
@@ -225,7 +224,7 @@ pub fn generate_actor<R: Rng>(
 }
 
 pub fn generate_static_objects<R: Rng>(
-    material: Material,
+    material_type: MaterialType,
     number: usize,
     bounds: &Rectf,
     id_counter: &mut u64,
@@ -234,7 +233,7 @@ pub fn generate_static_objects<R: Rng>(
 ) {
     for _ in 0..number {
         static_objects.push(generate_static_object(
-            material,
+            material_type,
             StaticObjectId(get_next_id(id_counter)),
             bounds,
             rng,
@@ -243,7 +242,7 @@ pub fn generate_static_objects<R: Rng>(
 }
 
 pub fn generate_static_object<R: Rng>(
-    material: Material,
+    material_type: MaterialType,
     id: StaticObjectId,
     bounds: &Rectf,
     rng: &mut R,
@@ -266,7 +265,7 @@ pub fn generate_static_object<R: Rng>(
                 }
                 _ => unimplemented!(),
             },
-            material,
+            material_type,
         },
         position: Vec2f::new(
             rng.gen_range(bounds.min.x..bounds.max.x),
@@ -279,7 +278,7 @@ pub fn generate_static_object<R: Rng>(
 }
 
 pub fn generate_static_areas<R: Rng>(
-    material: Material,
+    material_type: MaterialType,
     magick: Magick,
     number: usize,
     bounds: &Rectf,
@@ -289,7 +288,7 @@ pub fn generate_static_areas<R: Rng>(
 ) {
     for _ in 0..number {
         static_areas.push(generate_static_area(
-            material,
+            material_type,
             magick.clone(),
             StaticAreaId(get_next_id(id_counter)),
             bounds,
@@ -299,7 +298,7 @@ pub fn generate_static_areas<R: Rng>(
 }
 
 pub fn generate_static_area<R: Rng>(
-    material: Material,
+    material_type: MaterialType,
     magick: Magick,
     id: StaticAreaId,
     bounds: &Rectf,
@@ -311,7 +310,7 @@ pub fn generate_static_area<R: Rng>(
             shape: Disk {
                 radius: rng.gen_range(10.0..15.0),
             },
-            material,
+            material_type,
         },
         position: Vec2f::new(
             rng.gen_range(bounds.min.x..bounds.max.x),

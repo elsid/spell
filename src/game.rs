@@ -30,7 +30,7 @@ use crate::protocol::{
 use crate::rect::Rectf;
 use crate::vec2::Vec2f;
 use crate::world::{
-    Actor, ActorId, Aura, DelayedMagickStatus, Disk, Element, Material, Player, PlayerId,
+    Actor, ActorId, Aura, DelayedMagickStatus, Disk, Element, MaterialType, Player, PlayerId,
     Rectangle, RingSector, StaticShape, World,
 };
 
@@ -643,7 +643,7 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
     for v in scene.world.static_areas.iter() {
         draw_disk_body_and_magick(
             &v.body.shape,
-            v.body.material,
+            v.body.material_type,
             &v.magick.power,
             scene.world.settings.border_width,
             v.position,
@@ -653,7 +653,7 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
     for v in scene.world.temp_areas.iter() {
         draw_disk_body_and_magick(
             &v.body.shape,
-            v.body.material,
+            v.body.material_type,
             &v.magick.power,
             scene.world.settings.border_width,
             v.position,
@@ -719,7 +719,7 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
     for v in scene.world.actors.iter() {
         draw_disk_body_and_magick(
             &v.body.shape,
-            v.body.material,
+            v.body.material_type,
             &v.effect.power,
             scene.world.settings.border_width,
             v.position,
@@ -729,7 +729,7 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
     for v in scene.world.projectiles.iter() {
         draw_disk_body_and_magick(
             &v.body.shape,
-            v.body.material,
+            v.body.material_type,
             &v.magick.power,
             scene.world.settings.border_width,
             v.position,
@@ -754,7 +754,7 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
             StaticShape::Disk(shape) => {
                 draw_disk_body_and_magick(
                     shape,
-                    v.body.material,
+                    v.body.material_type,
                     &v.effect.power,
                     scene.world.settings.border_width,
                     v.position,
@@ -763,7 +763,7 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
             StaticShape::Rectangle(shape) => {
                 draw_rectangle_body_and_magick(
                     shape,
-                    v.body.material,
+                    v.body.material_type,
                     &v.effect.power,
                     scene.world.settings.border_width,
                     v.position,
@@ -789,7 +789,7 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
     for v in scene.world.temp_obstacles.iter() {
         draw_disk_body_and_magick(
             &v.body.shape,
-            v.body.material,
+            v.body.material_type,
             &v.magick.power,
             scene.world.settings.border_width,
             v.position,
@@ -1103,7 +1103,7 @@ where
 
 fn draw_disk_body_and_magick(
     shape: &Disk,
-    material: Material,
+    material_type: MaterialType,
     power: &[f64; 11],
     border_width: f64,
     position: Vec2f,
@@ -1113,12 +1113,12 @@ fn draw_disk_body_and_magick(
     } else {
         None
     };
-    draw_disk_body(shape, material, power_color, border_width, position);
+    draw_disk_body(shape, material_type, power_color, border_width, position);
 }
 
 fn draw_disk_body(
     shape: &Disk,
-    material: Material,
+    material_type: MaterialType,
     power_color: Option<Color>,
     border_width: f64,
     position: Vec2f,
@@ -1139,7 +1139,7 @@ fn draw_disk_body(
         75,
         (shape.radius - border_width * power_color.is_some() as i32 as f64) as f32,
         0.0,
-        get_material_color(material, 1.0),
+        get_material_color(material_type, 1.0),
     );
 }
 
@@ -1218,7 +1218,7 @@ fn draw_triangles(matrix: Mat4, vertices: &[Vertex], indices: &[u16]) {
 
 fn draw_rectangle_body_and_magick(
     shape: &Rectangle,
-    material: Material,
+    material_type: MaterialType,
     power: &[f64; 11],
     border_width: f64,
     position: Vec2f,
@@ -1231,7 +1231,7 @@ fn draw_rectangle_body_and_magick(
     };
     draw_rectangle_body(
         shape,
-        material,
+        material_type,
         power_color,
         border_width,
         position,
@@ -1241,7 +1241,7 @@ fn draw_rectangle_body_and_magick(
 
 fn draw_rectangle_body(
     shape: &Rectangle,
-    material: Material,
+    material_type: MaterialType,
     power_color: Option<Color>,
     border_width: f64,
     position: Vec2f,
@@ -1270,20 +1270,20 @@ fn draw_rectangle_body(
         (-height * 0.5) as f32,
         width as f32,
         height as f32,
-        get_material_color(material, 1.0),
+        get_material_color(material_type, 1.0),
     );
     context.quad_gl.pop_model_matrix();
 }
 
-fn get_material_color(material: Material, alpha: f32) -> Color {
-    match material {
-        Material::None => Color::new(0.0, 0.0, 0.0, alpha),
-        Material::Flesh => Color::new(0.93, 0.89, 0.69, alpha),
-        Material::Stone => Color::new(0.76, 0.76, 0.76, alpha),
-        Material::Dirt => Color::new(0.5, 0.38, 0.26, alpha),
-        Material::Grass => Color::new(0.44, 0.69, 0.15, alpha),
-        Material::Water => Color::new(0.1, 0.1, 0.9, alpha),
-        Material::Ice => Color::new(0.83, 0.94, 0.97, alpha),
+fn get_material_color(material_type: MaterialType, alpha: f32) -> Color {
+    match material_type {
+        MaterialType::None => Color::new(0.0, 0.0, 0.0, alpha),
+        MaterialType::Flesh => Color::new(0.93, 0.89, 0.69, alpha),
+        MaterialType::Stone => Color::new(0.76, 0.76, 0.76, alpha),
+        MaterialType::Dirt => Color::new(0.5, 0.38, 0.26, alpha),
+        MaterialType::Grass => Color::new(0.44, 0.69, 0.15, alpha),
+        MaterialType::Water => Color::new(0.1, 0.1, 0.9, alpha),
+        MaterialType::Ice => Color::new(0.83, 0.94, 0.97, alpha),
     }
 }
 

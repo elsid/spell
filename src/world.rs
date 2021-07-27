@@ -260,7 +260,7 @@ pub struct TempObstacle {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Body<Shape> {
     pub shape: Shape,
-    pub material: Material,
+    pub material_type: MaterialType,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -340,7 +340,7 @@ pub enum ActorOccupation {
 }
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Deserialize, Serialize)]
-pub enum Material {
+pub enum MaterialType {
     None,
     Flesh,
     Stone,
@@ -408,7 +408,7 @@ mod tests {
                 name: String::from("actor"),
                 body: Body {
                     shape: Disk { radius: 1.0 },
-                    material: Material::Flesh,
+                    material_type: MaterialType::Flesh,
                 },
                 position: Vec2f::ZERO,
                 health: 1.0,
@@ -438,7 +438,7 @@ mod tests {
                 id: ProjectileId(1),
                 body: Body {
                     shape: Disk { radius: 1.0 },
-                    material: Material::Stone,
+                    material_type: MaterialType::Stone,
                 },
                 position: Vec2f::ZERO,
                 health: 1.0,
@@ -458,7 +458,7 @@ mod tests {
     fn serialized_static_object_size() {
         assert_eq!(
             bincode::serialize(&generate_static_object(
-                Material::Flesh,
+                MaterialType::Flesh,
                 StaticObjectId(1),
                 &Rectf::new(Vec2f::ZERO, Vec2f::new(1.0, 1.0)),
                 &mut SmallRng::seed_from_u64(42),
@@ -478,7 +478,7 @@ mod tests {
     fn serialized_static_area_size() {
         assert_eq!(
             bincode::serialize(&generate_static_area(
-                Material::Flesh,
+                MaterialType::Flesh,
                 Magick::default(),
                 StaticAreaId(1),
                 &Rectf::new(Vec2f::ZERO, Vec2f::new(1.0, 1.0)),
