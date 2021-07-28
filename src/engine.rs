@@ -302,7 +302,7 @@ pub fn start_directed_magick(actor_index: usize, world: &mut World) {
     )
     .cast();
     if magick.power[Element::Shield as usize] > 0.0 {
-        cast_shield(magick, actor_index, world);
+        cast_shield(std::f64::consts::FRAC_PI_2, magick, actor_index, world);
     } else if magick.power[Element::Earth as usize] > 0.0
         || magick.power[Element::Ice as usize] > 0.0
     {
@@ -341,7 +341,7 @@ pub fn start_area_of_effect_magick(actor_index: usize, world: &mut World) {
     )
     .cast();
     if magick.power[Element::Shield as usize] > 0.0 {
-        return;
+        cast_shield(std::f64::consts::TAU, magick, actor_index, world);
     } else if magick.power[Element::Earth as usize] > 0.0 {
         return;
     } else if magick.power[Element::Ice as usize] > 0.0 {
@@ -376,9 +376,10 @@ pub fn start_area_of_effect_magick(actor_index: usize, world: &mut World) {
 
 #[allow(clippy::needless_return)]
 #[allow(clippy::if_same_then_else)]
-fn cast_shield(magick: Magick, actor_index: usize, world: &mut World) {
+fn cast_shield(angle: f64, magick: Magick, actor_index: usize, world: &mut World) {
     if magick.power[Element::Earth as usize] > 0.0 {
         cast_obstacle_based_shield(
+            angle,
             magick,
             Element::Earth,
             MaterialType::Stone,
@@ -386,7 +387,14 @@ fn cast_shield(magick: Magick, actor_index: usize, world: &mut World) {
             world,
         );
     } else if magick.power[Element::Ice as usize] > 0.0 {
-        cast_obstacle_based_shield(magick, Element::Ice, MaterialType::Ice, actor_index, world);
+        cast_obstacle_based_shield(
+            angle,
+            magick,
+            Element::Ice,
+            MaterialType::Ice,
+            actor_index,
+            world,
+        );
     } else if magick.power[Element::Arcane as usize] > 0.0
         || magick.power[Element::Life as usize] > 0.0
     {
@@ -399,13 +407,14 @@ fn cast_shield(magick: Magick, actor_index: usize, world: &mut World) {
         || magick.power[Element::Steam as usize] > 0.0
         || magick.power[Element::Poison as usize] > 0.0
     {
-        cast_spray_based_shield(magick, actor_index, world);
+        cast_spray_based_shield(angle, magick, actor_index, world);
     } else {
-        cast_reflecting_shield(std::f64::consts::FRAC_PI_2, actor_index, world);
+        cast_reflecting_shield(angle, actor_index, world);
     }
 }
 
 fn cast_obstacle_based_shield(
+    angle: f64,
     mut magick: Magick,
     element: Element,
     material_type: MaterialType,
@@ -416,7 +425,9 @@ fn cast_obstacle_based_shield(
     let distance = 5.0;
     magick.power[Element::Shield as usize] = 0.0;
     magick.power[element as usize] = 0.0;
-    for i in -2..=2 {
+    let number = get_number_of_shield_objects(angle);
+    let half = number / 2;
+    for i in -half..number - half {
         world.temp_obstacles.push(TempObstacle {
             id: TempObstacleId(get_next_id(&mut world.id_counter)),
             actor_id: actor.id,
@@ -439,11 +450,13 @@ fn cast_obstacle_based_shield(
     }
 }
 
-fn cast_spray_based_shield(mut magick: Magick, actor_index: usize, world: &mut World) {
+fn cast_spray_based_shield(angle: f64, mut magick: Magick, actor_index: usize, world: &mut World) {
     let actor = &world.actors[actor_index];
     let distance = 5.0;
     magick.power[Element::Shield as usize] = 0.0;
-    for i in -2..=2 {
+    let number = get_number_of_shield_objects(angle);
+    let half = number / 2;
+    for i in -half..number - half {
         world.temp_areas.push(TempArea {
             id: TempAreaId(get_next_id(&mut world.id_counter)),
             body: Body {
@@ -2897,6 +2910,10 @@ fn remove_inactive_actors_occupation_results(world: &mut World) {
             ActorOccupation::Beaming(beam_id) => world.beams.retain(|v| v.id != beam_id),
         }
     }
+}
+
+fn get_number_of_shield_objects(angle: f64) -> i32 {
+    (angle / (std::f64::consts::FRAC_PI_2 / 5.0)).round() as i32
 }
 
 #[cfg(test)]
