@@ -1313,16 +1313,16 @@ fn get_magick_power_color<T: Default + PartialEq>(power: &[T; 11]) -> Color {
 
 fn get_element_color(element: Element) -> [f32; 4] {
     match element {
-        Element::Water => [0.0, 0.0, 1.0, 0.8],
+        Element::Water => [0.1, 0.1, 0.9, 0.8],
         Element::Lightning => [1.0, 0.0, 1.0, 0.8],
         Element::Life => [0.0, 1.0, 0.0, 1.0],
         Element::Arcane => [1.0, 0.0, 0.0, 1.0],
         Element::Shield => [1.0, 1.0, 0.0, 0.5],
-        Element::Earth => [0.7, 0.7, 0.7, 1.0],
+        Element::Earth => [0.76, 0.76, 0.76, 1.0],
         Element::Cold => [0.5, 0.75, 1.0, 0.8],
         Element::Fire => [1.0, 0.5, 0.0, 0.8],
         Element::Steam => [0.7, 0.7, 0.7, 0.5],
-        Element::Ice => [0.0, 0.75, 1.0, 0.8],
+        Element::Ice => [0.83, 0.94, 0.97, 0.8],
         Element::Poison => [0.5, 1.0, 0.0, 0.8],
     }
 }
