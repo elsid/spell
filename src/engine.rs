@@ -436,7 +436,7 @@ fn cast_spray_based_shield(mut magick: Magick, actor_index: usize, world: &mut W
                 shape: Disk {
                     radius: distance * std::f64::consts::PI / (2 * 5 * 2) as f64,
                 },
-                material_type: MaterialType::Dirt,
+                material_type: MaterialType::None,
             },
             position: actor.position
                 + actor

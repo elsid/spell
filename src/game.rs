@@ -1135,14 +1135,16 @@ fn draw_disk_body(
             color,
         );
     }
-    draw_poly(
-        position.x as f32,
-        position.y as f32,
-        75,
-        (shape.radius - border_width * power_color.is_some() as i32 as f64) as f32,
-        0.0,
-        get_material_color(material_type, 1.0),
-    );
+    if material_type != MaterialType::None {
+        draw_poly(
+            position.x as f32,
+            position.y as f32,
+            75,
+            (shape.radius - border_width * power_color.is_some() as i32 as f64) as f32,
+            0.0,
+            get_material_color(material_type, 1.0),
+        );
+    }
 }
 
 fn draw_ring_sector_body_and_magick<T>(
