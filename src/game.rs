@@ -8,11 +8,13 @@ use std::time::{Duration, Instant, SystemTime};
 use clap::Clap;
 use egui::{Color32, CtxRef};
 use macroquad::prelude::{
-    clear_background, draw_line, draw_poly, draw_rectangle, draw_rectangle_lines, draw_text_ex,
-    get_internal_gl, is_key_down, is_key_pressed, is_mouse_button_down, load_ttf_font,
-    measure_text, mouse_position_local, mouse_wheel, next_frame, screen_height, screen_width,
-    set_camera, set_default_camera, vec2, Camera2D, Color, DrawMode, Font, KeyCode, Mat4,
-    MouseButton, Quat, TextParams, Vec3, Vertex, BLACK, WHITE,
+    clear_background, draw_line, draw_rectangle, draw_rectangle_lines, draw_text_ex,
+    get_internal_gl, gl_use_default_material, gl_use_material, is_key_down, is_key_pressed,
+    is_mouse_button_down, load_material, load_string, load_ttf_font, measure_text,
+    mouse_position_local, mouse_wheel, next_frame, screen_height, screen_width, set_camera,
+    set_default_camera, vec2, vec4, Camera2D, Color, DrawMode, Font, KeyCode, Mat4, Material,
+    MaterialParams, MouseButton, PipelineParams, Quat, TextParams, UniformType, Vec3, Vertex,
+    BLACK, WHITE,
 };
 use rand::prelude::SmallRng;
 use rand::Rng;
@@ -34,6 +36,7 @@ use crate::world::{
     load_world, Actor, ActorId, Aura, DelayedMagickStatus, Disk, Element, MaterialType, Player,
     PlayerId, Rectangle, RingSector, StaticAreaShape, StaticShape, World,
 };
+use macroquad::prelude::miniquad::{BlendFactor, BlendState, BlendValue, Equation};
 
 const NAME_FONT_SIZE: u16 = 24;
 const NAME_FONT_SCALE: f32 = 0.03;
@@ -103,6 +106,11 @@ struct GameState {
     player_list_font: Font,
     prev_menu: Menu,
     world_paths: Vec<PathBuf>,
+    disk_shape_material: Material,
+    disk_effect_material: Material,
+    rectangle_effect_material: Material,
+    aura_material: Material,
+    element_material: Material,
 }
 
 #[derive(Clone)]
@@ -200,6 +208,135 @@ pub async fn run_game(settings: GameSettings) {
         player_list_font: ubuntu_mono,
         prev_menu: Menu::None,
         world_paths: Vec::new(),
+        disk_shape_material: load_material(
+            load_string("assets/shaders/disk_shape/vertex.glsl")
+                .await
+                .unwrap()
+                .as_str(),
+            load_string("assets/shaders/disk_shape/fragment.glsl")
+                .await
+                .unwrap()
+                .as_str(),
+            MaterialParams {
+                uniforms: vec![
+                    ("scale".to_string(), UniformType::Float1),
+                    ("color".to_string(), UniformType::Float4),
+                ],
+                pipeline_params: PipelineParams {
+                    color_blend: Some(BlendState::new(
+                        Equation::Add,
+                        BlendFactor::Value(BlendValue::SourceAlpha),
+                        BlendFactor::OneMinusValue(BlendValue::SourceAlpha),
+                    )),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+        disk_effect_material: load_material(
+            load_string("assets/shaders/disk_effect/vertex.glsl")
+                .await
+                .unwrap()
+                .as_str(),
+            load_string("assets/shaders/disk_effect/fragment.glsl")
+                .await
+                .unwrap()
+                .as_str(),
+            MaterialParams {
+                uniforms: vec![
+                    ("time".to_string(), UniformType::Float1),
+                    ("scale".to_string(), UniformType::Float1),
+                    ("color".to_string(), UniformType::Float4),
+                ],
+                pipeline_params: PipelineParams {
+                    color_blend: Some(BlendState::new(
+                        Equation::Add,
+                        BlendFactor::Value(BlendValue::SourceAlpha),
+                        BlendFactor::OneMinusValue(BlendValue::SourceAlpha),
+                    )),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+        rectangle_effect_material: load_material(
+            load_string("assets/shaders/rectangle_effect/vertex.glsl")
+                .await
+                .unwrap()
+                .as_str(),
+            load_string("assets/shaders/rectangle_effect/fragment.glsl")
+                .await
+                .unwrap()
+                .as_str(),
+            MaterialParams {
+                uniforms: vec![
+                    ("time".to_string(), UniformType::Float1),
+                    ("scale".to_string(), UniformType::Float1),
+                    ("color".to_string(), UniformType::Float4),
+                ],
+                pipeline_params: PipelineParams {
+                    color_blend: Some(BlendState::new(
+                        Equation::Add,
+                        BlendFactor::Value(BlendValue::SourceAlpha),
+                        BlendFactor::OneMinusValue(BlendValue::SourceAlpha),
+                    )),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+        aura_material: load_material(
+            load_string("assets/shaders/aura/vertex.glsl")
+                .await
+                .unwrap()
+                .as_str(),
+            load_string("assets/shaders/aura/fragment.glsl")
+                .await
+                .unwrap()
+                .as_str(),
+            MaterialParams {
+                uniforms: vec![
+                    ("scale".to_string(), UniformType::Float1),
+                    ("color".to_string(), UniformType::Float4),
+                ],
+                pipeline_params: PipelineParams {
+                    color_blend: Some(BlendState::new(
+                        Equation::Add,
+                        BlendFactor::Value(BlendValue::SourceAlpha),
+                        BlendFactor::OneMinusValue(BlendValue::SourceAlpha),
+                    )),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+        element_material: load_material(
+            load_string("assets/shaders/element/vertex.glsl")
+                .await
+                .unwrap()
+                .as_str(),
+            load_string("assets/shaders/element/fragment.glsl")
+                .await
+                .unwrap()
+                .as_str(),
+            MaterialParams {
+                uniforms: vec![("color".to_string(), UniformType::Float4)],
+                pipeline_params: PipelineParams {
+                    color_blend: Some(BlendState::new(
+                        Equation::Add,
+                        BlendFactor::Value(BlendValue::SourceAlpha),
+                        BlendFactor::OneMinusValue(BlendValue::SourceAlpha),
+                    )),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap(),
     };
     let mut frame_type = FrameType::Initial;
     while !matches!(frame_type, FrameType::None) {
@@ -818,16 +955,19 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
                 shape,
                 v.body.material_type,
                 &v.magick.power,
-                scene.world.settings.border_width,
                 v.position,
+                v.rotation,
+                game_state,
+                scene.world.time + v.id.0 as f64,
             ),
             StaticAreaShape::Rectangle(shape) => draw_rectangle_body_and_magick(
                 shape,
                 v.body.material_type,
                 &v.magick.power,
-                scene.world.settings.border_width,
                 v.position,
                 v.rotation,
+                game_state.rectangle_effect_material,
+                scene.world.time + v.id.0 as f64,
             ),
         }
     }
@@ -837,8 +977,10 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
             &v.body.shape,
             v.body.material_type,
             &v.magick.power,
-            scene.world.settings.border_width,
             v.position,
+            0.0,
+            game_state,
+            v.deadline - scene.world.time + v.id.0 as f64,
         );
     }
 
@@ -903,8 +1045,11 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
             &v.body.shape,
             v.body.material_type,
             &v.effect.power,
-            scene.world.settings.border_width,
             v.position,
+            v.current_direction.angle(),
+            game_state,
+            scene.world.time - v.effect.applied.iter().sum::<f64>() / v.effect.applied.len() as f64
+                + v.id.0 as f64,
         );
     }
 
@@ -913,8 +1058,10 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
             &v.body.shape,
             v.body.material_type,
             &v.magick.power,
-            scene.world.settings.border_width,
             v.position,
+            0.0,
+            game_state,
+            scene.world.time + v.id.0 as f64,
         );
     }
 
@@ -938,8 +1085,10 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
                     shape,
                     v.body.material_type,
                     &v.effect.power,
-                    scene.world.settings.border_width,
                     v.position,
+                    v.rotation,
+                    game_state,
+                    scene.world.time + v.id.0 as f64,
                 );
             }
             StaticShape::Rectangle(shape) => {
@@ -947,9 +1096,10 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
                     shape,
                     v.body.material_type,
                     &v.effect.power,
-                    scene.world.settings.border_width,
                     v.position,
                     v.rotation,
+                    game_state.rectangle_effect_material,
+                    scene.world.time + v.id.0 as f64,
                 );
             }
         }
@@ -973,13 +1123,20 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
             &v.body.shape,
             v.body.material_type,
             &v.magick.power,
-            scene.world.settings.border_width,
             v.position,
+            0.0,
+            game_state,
+            v.deadline - scene.world.time + v.id.0 as f64,
         );
     }
 
     for v in scene.world.actors.iter() {
-        draw_aura(&v.aura, v.position);
+        draw_aura(
+            &v.aura,
+            v.position,
+            v.current_direction.angle(),
+            game_state.aura_material,
+        );
     }
 
     for v in scene.world.actors.iter() {
@@ -1016,6 +1173,7 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
             v.position + Vec2f::new(-HALF_WIDTH, v.body.shape.radius + 0.2),
             HALF_HEIGHT,
             (2.0 * HALF_WIDTH) / 5.0,
+            game_state.element_material,
         );
     }
 
@@ -1051,7 +1209,11 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
         } else {
             &[]
         };
-        draw_control_hud(spell_elements, game_state.control_hud_font);
+        draw_control_hud(
+            spell_elements,
+            game_state.control_hud_font,
+            game_state.element_material,
+        );
     }
 
     if scene.actor_index.is_none() {
@@ -1288,44 +1450,51 @@ fn draw_disk_body_and_magick(
     shape: &Disk,
     material_type: MaterialType,
     power: &[f64; 11],
-    border_width: f64,
     position: Vec2f,
+    rotation: f64,
+    game_state: &GameState,
+    time: f64,
 ) {
-    let power_color = if power.iter().sum::<f64>() > 0.0 {
-        Some(get_magick_power_color(power))
-    } else {
-        None
-    };
-    draw_disk_body(shape, material_type, power_color, border_width, position);
-}
-
-fn draw_disk_body(
-    shape: &Disk,
-    material_type: MaterialType,
-    power_color: Option<Color>,
-    border_width: f64,
-    position: Vec2f,
-) {
-    if let Some(color) = power_color {
-        draw_poly(
-            position.x as f32,
-            position.y as f32,
-            75,
-            shape.radius as f32,
-            0.0,
-            color,
-        );
-    }
+    let context = unsafe { get_internal_gl() };
+    context
+        .quad_gl
+        .push_model_matrix(Mat4::from_rotation_translation(
+            Quat::from_axis_angle(Vec3::new(0.0, 0.0, 1.0), rotation as f32),
+            Vec3::new(position.x as f32, position.y as f32, 0.0),
+        ));
+    let half_size = 2.0 * shape.radius;
     if material_type != MaterialType::None {
-        draw_poly(
-            position.x as f32,
-            position.y as f32,
-            75,
-            (shape.radius - border_width * power_color.is_some() as i32 as f64) as f32,
-            0.0,
-            get_material_color(material_type, 1.0),
+        let shape_material = game_state.disk_shape_material;
+        gl_use_material(shape_material);
+        shape_material.set_uniform("scale", shape.radius as f32);
+        let color = get_material_color(material_type, 1.0);
+        shape_material.set_uniform("color", vec4(color.r, color.g, color.b, color.a));
+        draw_rectangle(
+            -half_size as f32,
+            -half_size as f32,
+            2.0 * half_size as f32,
+            2.0 * half_size as f32,
+            BLACK,
         );
+        gl_use_default_material();
     }
+    if power.iter().sum::<f64>() > 0.0 {
+        let effect_material = game_state.disk_effect_material;
+        gl_use_material(effect_material);
+        effect_material.set_uniform("time", time as f32);
+        effect_material.set_uniform("scale", shape.radius as f32);
+        let color = get_magick_power_color(power);
+        effect_material.set_uniform("color", vec4(color.r, color.g, color.b, color.a));
+        draw_rectangle(
+            -half_size as f32,
+            -half_size as f32,
+            2.0 * half_size as f32,
+            2.0 * half_size as f32,
+            BLACK,
+        );
+        gl_use_default_material();
+    }
+    context.quad_gl.pop_model_matrix();
 }
 
 fn draw_ring_sector_body_and_magick<T>(
@@ -1405,9 +1574,10 @@ fn draw_rectangle_body_and_magick(
     shape: &Rectangle,
     material_type: MaterialType,
     power: &[f64; 11],
-    border_width: f64,
     position: Vec2f,
     rotation: f64,
+    effect_material: Material,
+    time: f64,
 ) {
     let power_color = if power.iter().sum::<f64>() > 0.0 {
         Some(get_magick_power_color(power))
@@ -1418,9 +1588,10 @@ fn draw_rectangle_body_and_magick(
         shape,
         material_type,
         power_color,
-        border_width,
         position,
         rotation,
+        effect_material,
+        time,
     );
 }
 
@@ -1428,9 +1599,10 @@ fn draw_rectangle_body(
     shape: &Rectangle,
     material_type: MaterialType,
     power_color: Option<Color>,
-    border_width: f64,
     position: Vec2f,
     rotation: f64,
+    effect_material: Material,
+    time: f64,
 ) {
     let context = unsafe { get_internal_gl() };
     context
@@ -1439,24 +1611,27 @@ fn draw_rectangle_body(
             Quat::from_axis_angle(Vec3::new(0.0, 0.0, 1.0), rotation as f32),
             Vec3::new(position.x as f32, position.y as f32, 0.0),
         ));
+    draw_rectangle(
+        (-shape.width * 0.5) as f32,
+        (-shape.height * 0.5) as f32,
+        shape.width as f32,
+        shape.height as f32,
+        get_material_color(material_type, 1.0),
+    );
     if let Some(color) = power_color {
+        gl_use_material(effect_material);
+        effect_material.set_uniform("time", time as f32);
+        effect_material.set_uniform("scale", shape.height.max(shape.width) as f32);
+        effect_material.set_uniform("color", vec4(color.r, color.g, color.b, color.a));
         draw_rectangle(
             (-shape.width * 0.5) as f32,
             (-shape.height * 0.5) as f32,
             shape.width as f32,
             shape.height as f32,
-            color,
+            BLACK,
         );
+        gl_use_default_material();
     }
-    let width = shape.width - border_width * power_color.is_some() as i32 as f64;
-    let height = shape.height - border_width * power_color.is_some() as i32 as f64;
-    draw_rectangle(
-        (-width * 0.5) as f32,
-        (-height * 0.5) as f32,
-        width as f32,
-        height as f32,
-        get_material_color(material_type, 1.0),
-    );
     context.quad_gl.pop_model_matrix();
 }
 
@@ -1510,15 +1685,28 @@ fn get_element_color(element: Element) -> [f32; 4] {
     }
 }
 
-fn draw_aura(aura: &Aura, position: Vec2f) {
-    draw_poly(
-        position.x as f32,
-        position.y as f32,
-        75,
-        aura.radius as f32,
-        0.0,
-        get_magick_power_color(&aura.elements),
+fn draw_aura(aura: &Aura, position: Vec2f, rotation: f64, material: Material) {
+    let color = get_magick_power_color(&aura.elements);
+    let context = unsafe { get_internal_gl() };
+    context
+        .quad_gl
+        .push_model_matrix(Mat4::from_rotation_translation(
+            Quat::from_axis_angle(Vec3::new(0.0, 0.0, 1.0), rotation as f32),
+            Vec3::new(position.x as f32, position.y as f32, 0.0),
+        ));
+    gl_use_material(material);
+    material.set_uniform("scale", aura.radius as f32);
+    material.set_uniform("color", vec4(color.r, color.g, color.b, color.a));
+    let half_size = 2.0 * aura.radius;
+    draw_rectangle(
+        -half_size as f32,
+        -half_size as f32,
+        2.0 * half_size as f32,
+        2.0 * half_size as f32,
+        BLACK,
     );
+    gl_use_default_material();
+    context.quad_gl.pop_model_matrix();
 }
 
 fn draw_health(value: f64, radius: f64, position: Vec2f) {
@@ -1550,7 +1738,7 @@ fn draw_meter(value: f64, radius: f64, position: Vec2f, y: f64, color: Color) {
     );
 }
 
-fn draw_control_hud(spell_elements: &[Element], font: Font) {
+fn draw_control_hud(spell_elements: &[Element], font: Font, element_material: Material) {
     let hud_element_width = scaled_f64(HUD_ELEMENT_WIDTH);
     let hud_element_radius = scaled_f64(HUD_ELEMENT_RADIUS);
     let hud_margin = scaled_f64(HUD_MARGIN);
@@ -1563,6 +1751,7 @@ fn draw_control_hud(spell_elements: &[Element], font: Font) {
         ),
         hud_element_radius,
         hud_element_width,
+        element_material,
     );
     let elements_position = Vec2f::new(
         (screen_width() as f64 - 8.0 * hud_element_width) / 2.0,
@@ -1572,7 +1761,12 @@ fn draw_control_hud(spell_elements: &[Element], font: Font) {
     for (i, name) in ELEMENT_KEYS.iter().enumerate() {
         let element_position =
             elements_position + Vec2f::only_x((i as f64 + 0.5) * hud_element_width);
-        draw_element(Element::from(i), element_position, hud_element_radius);
+        draw_element(
+            Element::from(i),
+            element_position,
+            hud_element_radius,
+            element_material,
+        );
         draw_keyboard_button(
             name,
             hud_element_radius,
@@ -1754,35 +1948,39 @@ fn draw_spell_elements(
     position: Vec2f,
     element_radius: f64,
     element_width: f64,
+    material: Material,
 ) {
     for (i, element) in spell_elements.iter().enumerate() {
         draw_element(
             *element,
             position + Vec2f::only_x((i as f64 + 0.5) * element_width),
             element_radius,
+            material,
         );
     }
 }
 
-fn draw_element(element: Element, position: Vec2f, radius: f64) {
-    draw_poly(
-        position.x as f32,
-        position.y as f32,
-        20,
-        radius as f32,
-        0.0,
+fn draw_element(element: Element, position: Vec2f, radius: f64, material: Material) {
+    let color = get_element_color(element);
+    let context = unsafe { get_internal_gl() };
+    context
+        .quad_gl
+        .push_model_matrix(Mat4::from_translation(Vec3::new(
+            position.x as f32,
+            position.y as f32,
+            0.0,
+        )));
+    gl_use_material(material);
+    material.set_uniform("color", vec4(color[0], color[1], color[2], 1.0));
+    draw_rectangle(
+        -radius as f32,
+        -radius as f32,
+        2.0 * radius as f32,
+        2.0 * radius as f32,
         BLACK,
     );
-    let mut color = get_element_color(element);
-    color[3] = 1.0;
-    draw_poly(
-        position.x as f32,
-        position.y as f32,
-        20,
-        (radius * BORDER_FACTOR) as f32,
-        0.0,
-        Color::from(color),
-    );
+    gl_use_default_material();
+    context.quad_gl.pop_model_matrix();
 }
 
 fn draw_name(text: &str, position: Vec2f, radius: f64, font: Font) {
