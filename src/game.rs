@@ -1590,13 +1590,15 @@ fn draw_element(element: Element, position: Vec2f, radius: f64) {
         0.0,
         BLACK,
     );
+    let mut color = get_element_color(element);
+    color[3] = 1.0;
     draw_poly(
         position.x as f32,
         position.y as f32,
         20,
         (radius * BORDER_FACTOR) as f32,
         0.0,
-        Color::from(get_element_color(element)),
+        Color::from(color),
     );
 }
 
