@@ -425,9 +425,10 @@ fn cast_earth_based_shield(mut magick: Magick, actor_index: usize, world: &mut W
     }
 }
 
-fn cast_spray_based_shield(magick: Magick, actor_index: usize, world: &mut World) {
+fn cast_spray_based_shield(mut magick: Magick, actor_index: usize, world: &mut World) {
     let actor = &world.actors[actor_index];
     let distance = 5.0;
+    magick.power[Element::Shield as usize] = 0.0;
     for i in -2..=2 {
         world.temp_areas.push(TempArea {
             id: TempAreaId(get_next_id(&mut world.id_counter)),
