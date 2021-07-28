@@ -378,7 +378,15 @@ pub fn start_area_of_effect_magick(actor_index: usize, world: &mut World) {
 #[allow(clippy::if_same_then_else)]
 fn cast_shield(magick: Magick, actor_index: usize, world: &mut World) {
     if magick.power[Element::Earth as usize] > 0.0 {
-        cast_earth_based_shield(magick, actor_index, world);
+        cast_obstacle_based_shield(
+            magick,
+            Element::Earth,
+            MaterialType::Stone,
+            actor_index,
+            world,
+        );
+    } else if magick.power[Element::Ice as usize] > 0.0 {
+        cast_obstacle_based_shield(magick, Element::Ice, MaterialType::Ice, actor_index, world);
     } else if magick.power[Element::Arcane as usize] > 0.0
         || magick.power[Element::Life as usize] > 0.0
     {
@@ -397,11 +405,17 @@ fn cast_shield(magick: Magick, actor_index: usize, world: &mut World) {
     }
 }
 
-fn cast_earth_based_shield(mut magick: Magick, actor_index: usize, world: &mut World) {
+fn cast_obstacle_based_shield(
+    mut magick: Magick,
+    element: Element,
+    material_type: MaterialType,
+    actor_index: usize,
+    world: &mut World,
+) {
     let actor = &world.actors[actor_index];
     let distance = 5.0;
     magick.power[Element::Shield as usize] = 0.0;
-    magick.power[Element::Earth as usize] = 0.0;
+    magick.power[element as usize] = 0.0;
     for i in -2..=2 {
         world.temp_obstacles.push(TempObstacle {
             id: TempObstacleId(get_next_id(&mut world.id_counter)),
@@ -410,7 +424,7 @@ fn cast_earth_based_shield(mut magick: Magick, actor_index: usize, world: &mut W
                 shape: Disk {
                     radius: distance * std::f64::consts::PI / (2 * 5 * 2) as f64,
                 },
-                material_type: MaterialType::Stone,
+                material_type,
             },
             position: actor.position
                 + actor
