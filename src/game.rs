@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -30,8 +31,8 @@ use crate::protocol::{
 use crate::rect::Rectf;
 use crate::vec2::Vec2f;
 use crate::world::{
-    Actor, ActorId, Aura, DelayedMagickStatus, Disk, Element, MaterialType, Player, PlayerId,
-    Rectangle, RingSector, StaticAreaShape, StaticShape, World,
+    load_world, Actor, ActorId, Aura, DelayedMagickStatus, Disk, Element, MaterialType, Player,
+    PlayerId, Rectangle, RingSector, StaticAreaShape, StaticShape, World,
 };
 
 const NAME_FONT_SIZE: u16 = 24;
@@ -100,14 +101,18 @@ struct GameState {
     message_font: Font,
     show_player_list: bool,
     player_list_font: Font,
+    prev_menu: Menu,
+    world_paths: Vec<PathBuf>,
 }
 
+#[derive(Clone)]
 enum Menu {
     None,
     Main,
     Multiplayer,
     Joining,
     Error(String),
+    SinglePlayer,
 }
 
 enum FrameType {
@@ -184,6 +189,8 @@ pub async fn run_game(settings: GameSettings) {
         message_font: ubuntu_mono,
         show_player_list: false,
         player_list_font: ubuntu_mono,
+        prev_menu: Menu::None,
+        world_paths: Vec::new(),
     };
     let mut frame_type = FrameType::Initial;
     while !matches!(frame_type, FrameType::None) {
@@ -322,6 +329,7 @@ fn update_ui(game_state: &mut GameState, frame_type: &mut FrameType) {
             Menu::Multiplayer => multiplayer_menu(ctx, game_state, frame_type),
             Menu::Joining => joining_menu(ctx, game_state, frame_type),
             Menu::Error(message) => error_menu(ctx, message.clone(), game_state),
+            Menu::SinglePlayer => single_player_menu(ctx, game_state, frame_type),
         }
     });
     game_state.draw_ui = true;
@@ -348,10 +356,8 @@ fn main_menu(ctx: &CtxRef, game_state: &mut GameState, frame_type: &mut FrameTyp
                 *frame_type = FrameType::Initial;
             }
             if ui.button("Single player").clicked() {
-                *frame_type = FrameType::SinglePlayer(Box::new(make_single_player_scene(
-                    &mut game_state.rng,
-                )));
-                game_state.menu = Menu::None;
+                game_state.world_paths = get_world_paths();
+                game_state.menu = Menu::SinglePlayer;
             }
             if ui.button("Multiplayer").clicked() {
                 game_state.menu = Menu::Multiplayer;
@@ -439,7 +445,51 @@ fn error_menu(ctx: &CtxRef, message: String, game_state: &mut GameState) {
         ui.vertical_centered(|ui| {
             ui.heading(message);
             if ui.button("Back").clicked() {
-                game_state.menu = Menu::Multiplayer;
+                game_state.menu = game_state.prev_menu.clone();
+            }
+        });
+    });
+}
+
+fn single_player_menu(ctx: &CtxRef, game_state: &mut GameState, frame_type: &mut FrameType) {
+    egui::CentralPanel::default().show(ctx, |ui| {
+        ui.vertical_centered(|ui| {
+            ui.heading("Single player");
+            ui.separator();
+            if ui.button("Generate map").clicked() {
+                *frame_type =
+                    FrameType::SinglePlayer(Box::new(make_single_player_scene(generate_world(
+                        Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)),
+                        &mut game_state.rng,
+                    ))));
+                game_state.menu = Menu::None;
+            }
+            for world_path in game_state.world_paths.iter() {
+                if ui
+                    .button(format!(
+                        "Load {} map",
+                        world_path.file_stem().unwrap().to_str().unwrap()
+                    ))
+                    .clicked()
+                {
+                    match load_world(world_path) {
+                        Ok(v) => {
+                            *frame_type =
+                                FrameType::SinglePlayer(Box::new(make_single_player_scene(v)));
+                            game_state.menu = Menu::None;
+                        }
+                        Err(e) => {
+                            game_state.prev_menu = game_state.menu.clone();
+                            game_state.menu = Menu::Error(format!(
+                                "Failed to load world from file {:?}: {}",
+                                world_path, e
+                            ));
+                        }
+                    };
+                }
+            }
+            if ui.button("Back").clicked() {
+                game_state.menu = Menu::Main;
             }
         });
     });
@@ -467,8 +517,7 @@ fn draw(game_state: &GameState, frame_type: &mut FrameType) {
     }
 }
 
-fn make_single_player_scene<R: Rng>(rng: &mut R) -> Scene {
-    let mut world = generate_world(Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)), rng);
+fn make_single_player_scene(mut world: World) -> Scene {
     let player_id = PlayerId(get_next_id(&mut world.id_counter));
     world.players.push(Player {
         id: player_id,
@@ -517,6 +566,7 @@ fn update_multiplayer(game_state: &mut GameState, data: &mut Multiplayer) -> Opt
         match update {
             GameUpdate::GameOver(message) => {
                 data.scene.player_id = None;
+                game_state.prev_menu = game_state.menu.clone();
                 game_state.menu = Menu::Error(format!("Disconnected from server: {}", message));
                 return Some(FrameType::Initial);
             }
@@ -562,6 +612,7 @@ fn update_multiplayer(game_state: &mut GameState, data: &mut Multiplayer) -> Opt
     }
     if data.client.is_done() && matches!(game_state.menu, Menu::None | Menu::Joining) {
         if let Err(e) = data.client.join() {
+            game_state.prev_menu = game_state.menu.clone();
             game_state.menu = Menu::Error(e);
         } else {
             game_state.menu = Menu::Multiplayer;
@@ -1841,4 +1892,17 @@ fn scaled_f64(size: f64) -> f64 {
 
 fn get_dpi_scale() -> f32 {
     unsafe { get_internal_gl() }.quad_context.dpi_scale()
+}
+
+fn get_world_paths() -> Vec<PathBuf> {
+    match std::fs::read_dir("./assets/worlds") {
+        Ok(dir) => dir
+            .filter_map(|v| v.map(|e| e.path()).ok())
+            .filter(|v| v.file_stem().is_some())
+            .collect(),
+        Err(e) => {
+            warn!("Failed to read ./assets/worlds: {}", e);
+            Vec::new()
+        }
+    }
 }
