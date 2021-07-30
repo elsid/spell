@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use clap::Clap;
 use egui::{Color32, CtxRef};
@@ -113,12 +113,14 @@ enum Menu {
     Joining,
     Error(String),
     SinglePlayer,
+    WorldView,
 }
 
 enum FrameType {
     Initial,
     SinglePlayer(Box<Scene>),
     Multiplayer(Box<Multiplayer>),
+    WorldView(Box<WorldView>),
     None,
 }
 
@@ -148,6 +150,13 @@ struct Multiplayer {
     ack_cast_action_world_frame: u64,
     actor_action: ActorAction,
     delayed_cast_actions: VecDeque<CastAction>,
+}
+
+struct WorldView {
+    world_path: PathBuf,
+    scene: Scene,
+    last_mouse_position: Vec2f,
+    file_modified: SystemTime,
 }
 
 pub async fn run_game(settings: GameSettings) {
@@ -265,9 +274,33 @@ fn handle_input(game_state: &mut GameState, frame_type: &mut FrameType) {
                 actor_action.cast_action = delayed_cast_actions.pop_front();
             }
         }
+        FrameType::WorldView(v) => {
+            if matches!(game_state.menu, Menu::None) {
+                let mouse_position = Vec2f::from(mouse_position_local());
+                if is_mouse_button_down(MouseButton::Left) {
+                    v.scene.camera_target +=
+                        (v.last_mouse_position - mouse_position) / v.scene.camera_zoom;
+                }
+                v.scene.camera_zoom *= 1.0 + mouse_wheel().1 as f64 * 0.1;
+                v.last_mouse_position = mouse_position;
+            }
+        }
         _ => (),
     }
-    if is_key_pressed(KeyCode::F1) {
+    if !matches!(frame_type, FrameType::None | FrameType::Initial)
+        && is_key_pressed(KeyCode::Escape)
+    {
+        game_state.menu = if matches!(game_state.menu, Menu::None) {
+            Menu::Main
+        } else {
+            Menu::None
+        };
+    }
+    if matches!(
+        frame_type,
+        FrameType::SinglePlayer(..) | FrameType::Multiplayer(..)
+    ) && is_key_pressed(KeyCode::F1)
+    {
         game_state.show_control_hud = !game_state.show_control_hud;
     }
     if is_key_pressed(KeyCode::F2) {
@@ -291,13 +324,6 @@ fn handle_scene_input<F>(
                 scene.camera_zoom * (screen_width() / screen_height()) as f64,
             );
         handle_actor_input(scene, actor_action, apply_cast_action);
-    }
-    if is_key_pressed(KeyCode::Escape) {
-        game_state.menu = if matches!(game_state.menu, Menu::None) {
-            Menu::Main
-        } else {
-            Menu::None
-        };
     }
 }
 
@@ -330,6 +356,7 @@ fn update_ui(game_state: &mut GameState, frame_type: &mut FrameType) {
             Menu::Joining => joining_menu(ctx, game_state, frame_type),
             Menu::Error(message) => error_menu(ctx, message.clone(), game_state),
             Menu::SinglePlayer => single_player_menu(ctx, game_state, frame_type),
+            Menu::WorldView => world_view_menu(ctx, game_state, frame_type),
         }
     });
     game_state.draw_ui = true;
@@ -361,6 +388,10 @@ fn main_menu(ctx: &CtxRef, game_state: &mut GameState, frame_type: &mut FrameTyp
             }
             if ui.button("Multiplayer").clicked() {
                 game_state.menu = Menu::Multiplayer;
+            }
+            if ui.button("World view").clicked() {
+                game_state.world_paths = get_world_paths();
+                game_state.menu = Menu::WorldView;
             }
             if ui.button("Quit").clicked() {
                 *frame_type = FrameType::None;
@@ -419,6 +450,7 @@ fn multiplayer_menu(ctx: &CtxRef, game_state: &mut GameState, frame_type: &mut F
                     }));
                     game_state.next_client_id += 1;
                     game_state.menu = Menu::Joining;
+                    game_state.show_control_hud = true;
                 }
             }
             if ui.button("Back").clicked() {
@@ -463,6 +495,7 @@ fn single_player_menu(ctx: &CtxRef, game_state: &mut GameState, frame_type: &mut
                         &mut game_state.rng,
                     ))));
                 game_state.menu = Menu::None;
+                game_state.show_control_hud = true;
             }
             for world_path in game_state.world_paths.iter() {
                 if ui
@@ -477,6 +510,48 @@ fn single_player_menu(ctx: &CtxRef, game_state: &mut GameState, frame_type: &mut
                             *frame_type =
                                 FrameType::SinglePlayer(Box::new(make_single_player_scene(v)));
                             game_state.menu = Menu::None;
+                            game_state.show_control_hud = true;
+                        }
+                        Err(e) => {
+                            game_state.prev_menu = game_state.menu.clone();
+                            game_state.menu = Menu::Error(format!(
+                                "Failed to load world from file {:?}: {}",
+                                world_path, e
+                            ));
+                        }
+                    };
+                }
+            }
+            if ui.button("Back").clicked() {
+                game_state.menu = Menu::Main;
+            }
+        });
+    });
+}
+
+fn world_view_menu(ctx: &CtxRef, game_state: &mut GameState, frame_type: &mut FrameType) {
+    egui::CentralPanel::default().show(ctx, |ui| {
+        ui.vertical_centered(|ui| {
+            ui.heading("World view");
+            ui.separator();
+            for world_path in game_state.world_paths.iter() {
+                if ui
+                    .button(format!(
+                        "View {} map",
+                        world_path.file_stem().unwrap().to_str().unwrap()
+                    ))
+                    .clicked()
+                {
+                    match load_world(world_path) {
+                        Ok(v) => {
+                            *frame_type = FrameType::WorldView(Box::new(WorldView {
+                                world_path: world_path.clone(),
+                                scene: make_world_view_scene(v),
+                                last_mouse_position: Vec2f::ZERO,
+                                file_modified: SystemTime::now(),
+                            }));
+                            game_state.menu = Menu::None;
+                            game_state.show_control_hud = false;
                         }
                         Err(e) => {
                             game_state.prev_menu = game_state.menu.clone();
@@ -502,6 +577,10 @@ fn update(game_state: &mut GameState, frame_type: &mut FrameType) {
             None
         }
         FrameType::Multiplayer(v) => update_multiplayer(game_state, v),
+        FrameType::WorldView(v) => {
+            update_world_view(v);
+            None
+        }
         _ => None,
     };
     if let Some(v) = new_frame_type {
@@ -513,6 +592,7 @@ fn draw(game_state: &GameState, frame_type: &mut FrameType) {
     match frame_type {
         FrameType::SinglePlayer(scene) => draw_scene(game_state, scene),
         FrameType::Multiplayer(v) => draw_scene(game_state, &mut v.scene),
+        FrameType::WorldView(v) => draw_scene(game_state, &mut v.scene),
         _ => (),
     }
 }
@@ -531,6 +611,20 @@ fn make_single_player_scene(mut world: World) -> Scene {
         time_step: 1.0 / 60.0,
         engine: Engine::default(),
         player_id: Some(player_id),
+        actor_id: None,
+        actor_index: None,
+        camera_zoom: 0.05,
+        camera_target: Vec2f::ZERO,
+        pointer: Vec2f::ZERO,
+        world: Box::new(world),
+    }
+}
+
+fn make_world_view_scene(world: World) -> Scene {
+    Scene {
+        time_step: 1.0 / 60.0,
+        engine: Engine::default(),
+        player_id: None,
         actor_id: None,
         actor_index: None,
         camera_zoom: 0.05,
@@ -664,6 +758,31 @@ fn update_multiplayer(game_state: &mut GameState, data: &mut Multiplayer) -> Opt
     }
     data.scene.engine.update_visual(&mut data.scene.world);
     None
+}
+
+fn update_world_view(world_view: &mut WorldView) {
+    if let Ok(metadata) = std::fs::metadata(&world_view.world_path) {
+        let should_load = metadata
+            .modified()
+            .map(|v| {
+                if world_view.file_modified < v {
+                    world_view.file_modified = v;
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(true);
+        if should_load {
+            match load_world(&world_view.world_path) {
+                Ok(v) => world_view.scene.world = Box::new(v),
+                Err(e) => error!(
+                    "Failed to load world from file {:?}: {}",
+                    world_view.world_path, e
+                ),
+            }
+        }
+    }
 }
 
 fn ack_actor_action(
@@ -966,6 +1085,7 @@ fn draw_debug_hud(game_state: &GameState, frame_type: &FrameType) {
                 FrameType::Initial => "Initial",
                 FrameType::SinglePlayer(..) => "SinglePlayer",
                 FrameType::Multiplayer { .. } => "Multiplayer",
+                FrameType::WorldView { .. } => "WorldView",
                 FrameType::None => "None",
             }
         )
