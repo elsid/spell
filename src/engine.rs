@@ -496,6 +496,9 @@ fn cast_reflecting_shield(length: f64, actor_index: usize, world: &mut World) {
 }
 
 fn add_delayed_magick(magick: Magick, actor_index: usize, world: &mut World) {
+    if is_actor_in_panic(&world.actors[actor_index]) {
+        return;
+    }
     world.actors[actor_index].delayed_magick = Some(DelayedMagick {
         started: world.time,
         status: DelayedMagickStatus::Started,
@@ -504,6 +507,9 @@ fn add_delayed_magick(magick: Magick, actor_index: usize, world: &mut World) {
 }
 
 fn add_beam(mut magick: Magick, actor_index: usize, world: &mut World) {
+    if is_actor_in_panic(&world.actors[actor_index]) {
+        return;
+    }
     let beam_id = BeamId(get_next_id(&mut world.id_counter));
     magick
         .power
@@ -603,6 +609,9 @@ pub fn self_magick(actor_index: usize, world: &mut World) {
 }
 
 fn cast_spray(angle: f64, duration: f64, magick: Magick, actor_index: usize, world: &mut World) {
+    if is_actor_in_panic(&world.actors[actor_index]) {
+        return;
+    }
     let actor = &world.actors[actor_index];
     let total_power = magick.power.iter().sum::<f64>();
     let body = RingSector {
@@ -1324,7 +1333,7 @@ fn push_object(
 
 fn update_actors(now: f64, duration: f64, settings: &WorldSettings, actors: &mut Vec<Actor>) {
     for actor in actors.iter_mut() {
-        update_actor_current_direction(duration, settings.max_rotation_speed, actor);
+        update_actor_current_direction(now, duration, settings.max_rotation_speed, actor);
         update_actor_dynamic_force(
             duration,
             settings.move_force,
@@ -1430,13 +1439,25 @@ fn update_temp_obstacles(
     }
 }
 
-fn update_actor_current_direction(duration: f64, max_rotation_speed: f64, actor: &mut Actor) {
+fn update_actor_current_direction(
+    now: f64,
+    duration: f64,
+    max_rotation_speed: f64,
+    actor: &mut Actor,
+) {
     if is_actor_immobilized(actor) {
         return;
     }
+    let target_direction = if is_actor_in_panic(actor) {
+        actor
+            .current_direction
+            .rotated((0.075_f64).copysign((0.25 * now).sin()))
+    } else {
+        actor.target_direction
+    };
     actor.current_direction = get_current_direction(
         actor.current_direction,
-        actor.target_direction,
+        target_direction,
         duration,
         max_rotation_speed,
     );
@@ -1447,7 +1468,7 @@ fn update_actor_dynamic_force(duration: f64, move_force: f64, max_speed: f64, ac
         return;
     }
     let speed = actor.velocity.norm();
-    if actor.moving
+    if (actor.moving || is_actor_in_panic(actor))
         && actor.delayed_magick.is_none()
         && matches!(actor.occupation, ActorOccupation::None)
     {
@@ -2936,6 +2957,10 @@ fn shoot_from_guns<R: Rng>(world: &mut World, rng: &mut R) {
 
 fn is_actor_immobilized(actor: &Actor) -> bool {
     actor.effect.power[Element::Ice as usize] > 0.0
+}
+
+fn is_actor_in_panic(actor: &Actor) -> bool {
+    actor.effect.power[Element::Fire as usize] > 0.0
 }
 
 fn remove_inactive_actors_occupation_results(world: &mut World) {
