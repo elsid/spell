@@ -31,7 +31,7 @@ use crate::rect::Rectf;
 use crate::vec2::Vec2f;
 use crate::world::{
     Actor, ActorId, Aura, DelayedMagickStatus, Disk, Element, MaterialType, Player, PlayerId,
-    Rectangle, RingSector, StaticShape, World,
+    Rectangle, RingSector, StaticAreaShape, StaticShape, World,
 };
 
 const NAME_FONT_SIZE: u16 = 24;
@@ -643,13 +643,23 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
     });
 
     for v in scene.world.static_areas.iter() {
-        draw_disk_body_and_magick(
-            &v.body.shape,
-            v.body.material_type,
-            &v.magick.power,
-            scene.world.settings.border_width,
-            v.position,
-        );
+        match &v.body.shape {
+            StaticAreaShape::Disk(shape) => draw_disk_body_and_magick(
+                shape,
+                v.body.material_type,
+                &v.magick.power,
+                scene.world.settings.border_width,
+                v.position,
+            ),
+            StaticAreaShape::Rectangle(shape) => draw_rectangle_body_and_magick(
+                shape,
+                v.body.material_type,
+                &v.magick.power,
+                scene.world.settings.border_width,
+                v.position,
+                v.rotation,
+            ),
+        }
     }
 
     for v in scene.world.temp_areas.iter() {

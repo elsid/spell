@@ -6,8 +6,8 @@ use crate::rect::Rectf;
 use crate::vec2::Vec2f;
 use crate::world::{
     Actor, ActorId, ActorOccupation, Aura, Body, Disk, Effect, Element, Magick, MaterialType,
-    PlayerId, Rectangle, StaticArea, StaticAreaId, StaticObject, StaticObjectId, StaticShape,
-    World, WorldSettings,
+    PlayerId, Rectangle, StaticArea, StaticAreaId, StaticAreaShape, StaticObject, StaticObjectId,
+    StaticShape, World, WorldSettings,
 };
 
 pub fn make_rng(random_seed: Option<u64>) -> SmallRng {
@@ -74,12 +74,13 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
     let mut static_areas = vec![StaticArea {
         id: StaticAreaId(get_next_id(&mut id_counter)),
         body: Body {
-            shape: Disk {
+            shape: StaticAreaShape::Disk(Disk {
                 radius: bounds.min.distance(bounds.max) * 0.5,
-            },
+            }),
             material_type: MaterialType::Dirt,
         },
         position: Vec2f::ZERO,
+        rotation: 0.0,
         magick: Magick::default(),
     }];
     for material_type in &[MaterialType::Grass, MaterialType::Ice] {
@@ -254,15 +255,7 @@ pub fn generate_static_object<R: Rng>(
                 0 => StaticShape::Disk(Disk {
                     radius: rng.gen_range(0.8..1.2),
                 }),
-                1 => {
-                    let width = rng.gen_range(1.0..10.0);
-                    let height = if width >= 5.0 {
-                        rng.gen_range(1.0..2.5)
-                    } else {
-                        rng.gen_range(7.5..10.0)
-                    };
-                    StaticShape::Rectangle(Rectangle { width, height })
-                }
+                1 => StaticShape::Rectangle(generate_rectangle(rng)),
                 _ => unimplemented!(),
             },
             material_type,
@@ -307,8 +300,12 @@ pub fn generate_static_area<R: Rng>(
     StaticArea {
         id,
         body: Body {
-            shape: Disk {
-                radius: rng.gen_range(10.0..15.0),
+            shape: match rng.gen_range(0..2) {
+                0 => StaticAreaShape::Disk(Disk {
+                    radius: rng.gen_range(10.0..15.0),
+                }),
+                1 => StaticAreaShape::Rectangle(generate_rectangle(rng)),
+                _ => unimplemented!(),
             },
             material_type,
         },
@@ -316,6 +313,17 @@ pub fn generate_static_area<R: Rng>(
             rng.gen_range(bounds.min.x..bounds.max.x),
             rng.gen_range(bounds.min.y..bounds.max.y),
         ),
+        rotation: rng.gen_range(-1.0..1.0) * std::f64::consts::PI,
         magick,
     }
+}
+
+pub fn generate_rectangle<R: Rng>(rng: &mut R) -> Rectangle {
+    let width = rng.gen_range(1.0..10.0);
+    let height = if width >= 5.0 {
+        rng.gen_range(1.0..2.5)
+    } else {
+        rng.gen_range(7.5..10.0)
+    };
+    Rectangle { width, height }
 }

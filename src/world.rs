@@ -174,8 +174,9 @@ pub struct StaticAreaId(pub u64);
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct StaticArea {
     pub id: StaticAreaId,
-    pub body: Body<Disk>,
+    pub body: Body<StaticAreaShape>,
     pub position: Vec2f,
+    pub rotation: f64,
     pub magick: Magick,
 }
 
@@ -266,6 +267,12 @@ pub struct Body<Shape> {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub enum StaticShape {
     CircleArc(CircleArc),
+    Disk(Disk),
+    Rectangle(Rectangle),
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub enum StaticAreaShape {
     Disk(Disk),
     Rectangle(Rectangle),
 }
@@ -486,7 +493,7 @@ mod tests {
             ))
             .unwrap()
             .len(),
-            124
+            136
         );
     }
 }

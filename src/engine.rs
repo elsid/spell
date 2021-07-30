@@ -16,8 +16,8 @@ use crate::world::{
     Actor, ActorId, ActorOccupation, Aura, Beam, BeamId, Body, BoundedArea, BoundedAreaId,
     CircleArc, DelayedMagick, DelayedMagickStatus, Disk, Effect, Element, Field, FieldId, Gun,
     GunId, Magick, MaterialType, Projectile, ProjectileId, Rectangle, RingSector, Shield, ShieldId,
-    StaticArea, StaticObject, StaticShape, TempArea, TempAreaId, TempObstacle, TempObstacleId,
-    World, WorldSettings,
+    StaticArea, StaticAreaShape, StaticObject, StaticShape, TempArea, TempAreaId, TempObstacle,
+    TempObstacleId, World, WorldSettings,
 };
 
 const RESOLUTION_FACTOR: f64 = 4.0;
@@ -692,6 +692,15 @@ impl StaticShape {
     }
 }
 
+impl StaticAreaShape {
+    fn with_shape<R, F: FnMut(&dyn Shape) -> R>(&self, _: &ShapeCache, mut f: F) -> R {
+        match &self {
+            StaticAreaShape::Disk(v) => f(&v.as_shape()),
+            StaticAreaShape::Rectangle(v) => f(&v.as_shape()),
+        }
+    }
+}
+
 impl Disk {
     fn as_shape(&self) -> Ball {
         Ball::new(self.radius)
@@ -943,6 +952,7 @@ fn intersect_objects_with_areas(world: &mut World, shape_cache: &ShapeCache) {
                 dynamic_force: &mut actor.dynamic_force,
                 effect: &mut actor.effect,
             },
+            shape_cache,
         );
     }
     for v in world.projectiles.iter_mut() {
@@ -973,6 +983,7 @@ fn intersect_objects_with_areas(world: &mut World, shape_cache: &ShapeCache) {
                 dynamic_force: &mut v.dynamic_force,
                 effect: &mut effect,
             },
+            shape_cache,
         );
     }
     for i in 0..world.static_objects.len() {
@@ -1051,12 +1062,19 @@ fn intersect_with_temp_and_static_areas<T>(
     temp_areas: &[TempArea],
     static_areas: &[StaticArea],
     object: &mut IntersectingDynamicObject<T>,
+    shape_cache: &ShapeCache,
 ) where
     T: Default + PartialEq,
 {
     intersect_with_temp_areas(now, temp_areas, object);
     if !matches!(object.movement_type, MovementType::Flying) {
-        intersect_with_last_static_area(now, gravitational_acceleration, static_areas, object);
+        intersect_with_last_static_area(
+            now,
+            gravitational_acceleration,
+            static_areas,
+            object,
+            shape_cache,
+        );
     }
 }
 
@@ -1088,19 +1106,15 @@ fn intersect_with_last_static_area<T>(
     gravitational_acceleration: f64,
     static_areas: &[StaticArea],
     object: &mut IntersectingDynamicObject<T>,
+    shape_cache: &ShapeCache,
 ) where
     T: Default + PartialEq,
 {
-    if let Some(static_area) = static_areas.iter().rev().find(|v| {
-        let isometry = Isometry::translation(v.position.x, v.position.y);
-        query::intersection_test(
-            &object.isometry,
-            object.shape,
-            &isometry,
-            &Ball::new(v.body.shape.radius),
-        )
-        .unwrap()
-    }) {
+    if let Some(static_area) = static_areas
+        .iter()
+        .rev()
+        .find(|v| intersection_test(object, *v, shape_cache))
+    {
         match object.movement_type {
             MovementType::Flying => (),
             MovementType::Sliding => {
@@ -1780,6 +1794,18 @@ impl WithIsometry for TempArea {
     }
 }
 
+impl WithIsometry for StaticArea {
+    fn get_isometry(&self) -> Isometry<Real> {
+        Isometry::translation(self.position.x, self.position.y)
+    }
+}
+
+impl<'a, T: Default + PartialEq> WithIsometry for IntersectingDynamicObject<'a, T> {
+    fn get_isometry(&self) -> Isometry<Real> {
+        self.isometry
+    }
+}
+
 trait WithShape {
     fn with_shape(&self, shape_cache: &ShapeCache, f: &mut dyn FnMut(&dyn Shape));
 }
@@ -1823,6 +1849,21 @@ impl WithShape for TempObstacle {
 impl WithShape for TempArea {
     fn with_shape(&self, _: &ShapeCache, f: &mut dyn FnMut(&dyn Shape)) {
         (*f)(&self.body.shape.as_shape())
+    }
+}
+
+impl WithShape for StaticArea {
+    fn with_shape(&self, shape_cache: &ShapeCache, f: &mut dyn FnMut(&dyn Shape)) {
+        self.body
+            .shape
+            .clone()
+            .with_shape(shape_cache, |shape| (*f)(shape))
+    }
+}
+
+impl<'a, T: Default + PartialEq> WithShape for IntersectingDynamicObject<'a, T> {
+    fn with_shape(&self, _: &ShapeCache, f: &mut dyn FnMut(&dyn Shape)) {
+        (*f)(self.shape)
     }
 }
 
