@@ -27,7 +27,7 @@ use crate::protocol::{
 };
 use crate::rect::Rectf;
 use crate::vec2::Vec2f;
-use crate::world::{Player, PlayerId, World};
+use crate::world::{load_world, Player, PlayerId, World};
 
 const MAX_SESSION_MESSAGES_PER_FRAME: u8 = 3;
 const MAX_DELAYED_MESSAGES_PER_SESSION: usize = 10;
@@ -57,6 +57,8 @@ pub struct ServerParams {
     pub http_port: u16,
     #[clap(long, default_value = "10")]
     pub http_max_connections: usize,
+    #[clap(long)]
+    pub world: Option<String>,
 }
 
 pub fn run_server(params: ServerParams, stop: Arc<AtomicBool>) {
@@ -94,10 +96,20 @@ pub fn run_server(params: ServerParams, stop: Arc<AtomicBool>) {
         stop_udp_server.clone(),
     );
     let mut world_rng = make_rng(params.random_seed);
-    let world = generate_world(
-        Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)),
-        &mut world_rng,
-    );
+    let world = if let Some(world_path) = params.world.as_ref() {
+        match load_world(world_path) {
+            Ok(v) => v,
+            Err(e) => {
+                error!("Failed to read world from \"{}\": {}", world_path, e);
+                return;
+            }
+        }
+    } else {
+        generate_world(
+            Rectf::new(Vec2f::both(-1e2), Vec2f::both(1e2)),
+            &mut world_rng,
+        )
+    };
     run_game_server(
         world,
         world_rng,

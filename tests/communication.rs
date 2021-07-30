@@ -35,6 +35,7 @@ fn server_should_terminate() {
         http_address: String::from("127.0.0.2"),
         http_port: pick_unused_port().unwrap(),
         http_max_connections: 1,
+        world: None,
     };
     run_background_server(server_params, stop).join().unwrap();
 }
@@ -54,6 +55,7 @@ fn server_should_provide_player_id() {
         http_address: String::from("127.0.0.3"),
         http_port: pick_unused_port().unwrap(),
         http_max_connections: 1,
+        world: None,
     };
     with_background_server_and_client(
         server_params,
@@ -91,6 +93,7 @@ fn server_should_move_player() {
         http_address: String::from("127.0.0.4"),
         http_port: pick_unused_port().unwrap(),
         http_max_connections: 1,
+        world: None,
     };
     with_background_server_and_client(
         server_params,
@@ -153,6 +156,7 @@ fn server_should_limit_number_of_sessions() {
         http_address: String::from("127.0.0.5"),
         http_port: pick_unused_port().unwrap(),
         http_max_connections: 1,
+        world: None,
     };
     let mut game_client_settings = GameClientSettings {
         id: 1,
@@ -227,6 +231,7 @@ fn server_should_limit_number_of_players() {
         http_address: String::from("127.0.0.6"),
         http_port: pick_unused_port().unwrap(),
         http_max_connections: 1,
+        world: None,
     };
     let mut game_client_settings = GameClientSettings {
         id: 1,
@@ -302,6 +307,7 @@ fn server_should_support_multiple_players() {
         http_address: String::from("127.0.0.7"),
         http_port: pick_unused_port().unwrap(),
         http_max_connections: 1,
+        world: None,
     };
     let game_client_settings = GameClientSettings {
         id: 1,
@@ -367,6 +373,7 @@ fn server_should_send_world_update_after_ack() {
         http_address: String::from("127.0.0.8"),
         http_port: pick_unused_port().unwrap(),
         http_max_connections: 1,
+        world: None,
     };
     with_background_server_and_client(
         server_params,
@@ -428,6 +435,7 @@ fn server_should_response_to_http_ping() {
         http_address: String::from("127.0.0.9"),
         http_port: pick_unused_port().unwrap(),
         http_max_connections: 1,
+        world: None,
     };
     with_background_server(server_params, |http_client| {
         assert_eq!(http_client.ping(), HttpMessage::Ok);
@@ -449,6 +457,7 @@ fn server_should_response_to_http_status() {
         http_address: String::from("127.0.0.10"),
         http_port: pick_unused_port().unwrap(),
         http_max_connections: 1,
+        world: None,
     };
     with_background_server(server_params, |http_client| {
         let result = http_client.status();
@@ -480,6 +489,7 @@ fn server_should_response_to_http_sessions() {
         http_address: String::from("127.0.0.11"),
         http_port: pick_unused_port().unwrap(),
         http_max_connections: 1,
+        world: None,
     };
     with_background_server(server_params, |http_client| {
         assert_eq!(
@@ -506,6 +516,7 @@ fn server_should_response_to_http_remove_session() {
         http_address: String::from("127.0.0.12"),
         http_port: pick_unused_port().unwrap(),
         http_max_connections: 1,
+        world: None,
     };
     with_background_server(server_params, |http_client| {
         assert_eq!(
@@ -532,6 +543,7 @@ fn server_should_response_to_http_world() {
         http_address: String::from("127.0.0.12"),
         http_port: pick_unused_port().unwrap(),
         http_max_connections: 1,
+        world: None,
     };
     with_background_server(server_params, |http_client| {
         let result = http_client.world();
@@ -554,6 +566,7 @@ fn server_should_response_to_http_stop() {
         http_address: String::from("127.0.0.13"),
         http_port: pick_unused_port().unwrap(),
         http_max_connections: 1,
+        world: None,
     };
     with_background_server(server_params, |http_client| {
         assert_eq!(http_client.stop(), HttpMessage::Ok);
@@ -575,6 +588,7 @@ fn server_should_add_spell_on_client_request() {
         http_address: String::from("127.0.0.14"),
         http_port: pick_unused_port().unwrap(),
         http_max_connections: 1,
+        world: None,
     };
     with_background_server_and_client(
         server_params,

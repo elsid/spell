@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 
 use crate::rect::Rectf;
@@ -388,6 +390,17 @@ impl From<usize> for Element {
             10 => Element::Poison,
             _ => unimplemented!(),
         }
+    }
+}
+
+pub fn load_world<P: AsRef<Path>>(path: P) -> Result<World, String> {
+    let file = match std::fs::File::open(path) {
+        Ok(v) => v,
+        Err(e) => return Err(format!("{}", e)),
+    };
+    match serde_json::from_reader(file) {
+        Ok(v) => Ok(v),
+        Err(e) => return Err(format!("{}", e)),
     }
 }
 
