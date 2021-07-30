@@ -179,6 +179,7 @@ impl ShapeCache {
 pub struct Engine {
     beam_collider: BeamCollider,
     shape_cache: ShapeCache,
+    events: Vec<EngineEvent>,
 }
 
 impl Engine {
@@ -204,23 +205,37 @@ impl Engine {
         world.guns.retain(|v| v.shots_left > 0);
         world.shields.retain(|v| v.power > 0.0);
         world.temp_obstacles.retain(|v| v.deadline >= now);
+        self.events.clear();
         update_actor_occupations(world);
         spawn_player_actors(world, rng);
         shoot_from_guns(world, rng);
         intersect_objects_with_areas(world, &self.shape_cache);
         intersect_objects_with_all_fields(world);
-        update_actors(world.time, duration, &world.settings, &mut world.actors);
+        update_actors(
+            world.time,
+            duration,
+            &world.settings,
+            &mut world.actors,
+            &mut self.events,
+        );
         update_projectiles(duration, &world.settings, &mut world.projectiles);
         update_static_objects(
             world.time,
             duration,
             &world.settings,
             &mut world.static_objects,
+            &mut self.events,
         );
         update_shields(duration, &world.settings, &mut world.shields);
-        update_temp_obstacles(duration, &world.settings, &mut world.temp_obstacles);
+        update_temp_obstacles(
+            duration,
+            &world.settings,
+            &mut world.temp_obstacles,
+            &mut self.events,
+        );
         self.update_beams(world);
-        move_objects(duration, world, &self.shape_cache);
+        move_objects(duration, world, &self.shape_cache, &mut self.events);
+        handle_events(&self.events, world);
         world
             .actors
             .iter_mut()
@@ -1331,8 +1346,14 @@ fn push_object(
     *dynamic_force += to_position * ((1.0 / to_position.norm() - 1.0 / max_distance) * force);
 }
 
-fn update_actors(now: f64, duration: f64, settings: &WorldSettings, actors: &mut Vec<Actor>) {
-    for actor in actors.iter_mut() {
+fn update_actors(
+    now: f64,
+    duration: f64,
+    settings: &WorldSettings,
+    actors: &mut Vec<Actor>,
+    events: &mut Vec<EngineEvent>,
+) {
+    for (index, actor) in actors.iter_mut().enumerate() {
         update_actor_current_direction(now, duration, settings.max_rotation_speed, actor);
         update_actor_dynamic_force(
             duration,
@@ -1341,12 +1362,13 @@ fn update_actors(now: f64, duration: f64, settings: &WorldSettings, actors: &mut
             actor,
         );
         resist_magick(&actor.aura.elements, &mut actor.effect.power);
-        damage_health(
+        add_damage(
+            Index::Actor(index),
             duration,
             settings.magical_damage_factor,
             actor.body.mass(),
             &actor.effect.power,
-            &mut actor.health,
+            events,
         );
         decay_effect(now, &mut actor.effect);
         decay_aura(duration, settings.decay_factor, &mut actor.aura);
@@ -1403,15 +1425,17 @@ fn update_static_objects(
     duration: f64,
     settings: &WorldSettings,
     static_objects: &mut Vec<StaticObject>,
+    events: &mut Vec<EngineEvent>,
 ) {
-    for object in static_objects.iter_mut() {
+    for (index, object) in static_objects.iter_mut().enumerate() {
         decay_effect(now, &mut object.effect);
-        damage_health(
+        add_damage(
+            Index::StaticObject(index),
             duration,
             settings.magical_damage_factor,
             object.body.mass(),
             &object.effect.power,
-            &mut object.health,
+            events,
         );
     }
 }
@@ -1426,15 +1450,17 @@ fn update_temp_obstacles(
     duration: f64,
     settings: &WorldSettings,
     temp_obstacles: &mut Vec<TempObstacle>,
+    events: &mut Vec<EngineEvent>,
 ) {
-    for temp_obstacle in temp_obstacles.iter_mut() {
+    for (index, temp_obstacle) in temp_obstacles.iter_mut().enumerate() {
         resist_magick(&temp_obstacle.magick.power, &mut temp_obstacle.effect.power);
-        damage_health(
+        add_damage(
+            Index::TempObstacle(index),
             duration,
             settings.magical_damage_factor,
             temp_obstacle.mass(),
             &temp_obstacle.effect.power,
-            &mut temp_obstacle.health,
+            events,
         );
     }
 }
@@ -1549,14 +1575,18 @@ fn decay_aura(duration: f64, decay_factor: f64, aura: &mut Aura) {
     }
 }
 
-fn damage_health(
+fn add_damage(
+    target: Index,
     duration: f64,
     damage_factor: f64,
     mass: f64,
     power: &[f64; 11],
-    health: &mut f64,
+    events: &mut Vec<EngineEvent>,
 ) {
-    *health = (*health - get_damage(power) * damage_factor * duration / mass).min(1.0);
+    let damage = get_damage(power) * damage_factor * duration / mass;
+    if damage != 0.0 {
+        events.push(EngineEvent::Damage { target, damage })
+    }
 }
 
 fn update_position(duration: f64, velocity: Vec2f, position: &mut Vec2f) {
@@ -1937,7 +1967,12 @@ where
     nearest
 }
 
-fn move_objects(duration: f64, world: &mut World, shape_cache: &ShapeCache) {
+fn move_objects(
+    duration: f64,
+    world: &mut World,
+    shape_cache: &ShapeCache,
+    events: &mut Vec<EngineEvent>,
+) {
     let mut earliest_collision = None;
     let mut duration_left = duration;
     loop {
@@ -2081,7 +2116,20 @@ fn move_objects(duration: f64, world: &mut World, shape_cache: &ShapeCache) {
                 epsilon_duration: duration / 100.0,
                 toi: &collision.toi,
             };
-            collide_objects(collision.lhs, collision.rhs, &apply_impact, world);
+            let (lhs_damage, rhs_damage) =
+                collide_objects(collision.lhs, collision.rhs, &apply_impact, world);
+            if lhs_damage != 0.0 {
+                events.push(EngineEvent::Damage {
+                    target: collision.lhs,
+                    damage: lhs_damage,
+                });
+            }
+            if rhs_damage != 0.0 {
+                events.push(EngineEvent::Damage {
+                    target: collision.rhs,
+                    damage: rhs_damage,
+                });
+            }
             for (i, actor) in world.actors.iter_mut().enumerate() {
                 if Index::Actor(i) != collision.lhs && Index::Actor(i) != collision.rhs {
                     update_position(collision.toi.toi, actor.velocity, &mut actor.position)
@@ -2194,21 +2242,30 @@ trait CollidingObject<T: Default + PartialEq>: WithVelocity + WithShape + WithIs
     fn resistance(&self) -> &[T; 11];
     fn effect(&self) -> &Effect;
     fn set_effect(&mut self, value: Effect);
-    fn health(&self) -> f64;
-    fn set_health(&mut self, value: f64);
     fn aura(&self) -> &Aura;
     fn is_static(&self) -> bool;
 }
 
-fn collide_objects(lhs: Index, rhs: Index, apply_impact: &ApplyImpact, world: &mut World) {
+fn collide_objects(
+    lhs: Index,
+    rhs: Index,
+    apply_impact: &ApplyImpact,
+    world: &mut World,
+) -> (f64, f64) {
     if lhs > rhs {
-        collide_ordered_objects(rhs, lhs, apply_impact, world)
+        let (rhs_damage, lhs_damage) = collide_ordered_objects(rhs, lhs, apply_impact, world);
+        (lhs_damage, rhs_damage)
     } else {
         collide_ordered_objects(lhs, rhs, apply_impact, world)
     }
 }
 
-fn collide_ordered_objects(lhs: Index, rhs: Index, f: &ApplyImpact, world: &mut World) {
+fn collide_ordered_objects(
+    lhs: Index,
+    rhs: Index,
+    f: &ApplyImpact,
+    world: &mut World,
+) -> (f64, f64) {
     match lhs {
         Index::Actor(lhs) => match rhs {
             Index::Actor(rhs) => {
@@ -2294,7 +2351,11 @@ struct ApplyImpact<'a> {
 }
 
 impl<'a> ApplyImpact<'a> {
-    fn call<L, R>(&self, lhs: &mut dyn CollidingObject<L>, rhs: &mut dyn CollidingObject<R>)
+    fn call<L, R>(
+        &self,
+        lhs: &mut dyn CollidingObject<L>,
+        rhs: &mut dyn CollidingObject<R>,
+    ) -> (f64, f64)
     where
         L: Default + PartialEq,
         R: Default + PartialEq,
@@ -2307,7 +2368,7 @@ impl<'a> ApplyImpact<'a> {
             self.toi,
             lhs,
             rhs,
-        );
+        )
     }
 }
 
@@ -2319,7 +2380,8 @@ fn apply_impact<L, R>(
     toi: &TOI,
     lhs: &mut dyn CollidingObject<L>,
     rhs: &mut dyn CollidingObject<R>,
-) where
+) -> (f64, f64)
+where
     L: Default + PartialEq,
     R: Default + PartialEq,
 {
@@ -2374,16 +2436,18 @@ fn apply_impact<L, R>(
             + get_kinetic_energy(rhs.mass(), rhs_velocity)))
     .max(0.0);
     let sum_density = lhs_material.density() + rhs_material.density();
-    handle_collision_damage(
-        damage_energy * rhs_material.density() / sum_density,
-        damage_factor,
-        lhs,
-    );
-    handle_collision_damage(
-        damage_energy * lhs_material.density() / sum_density,
-        damage_factor,
-        rhs,
-    );
+    (
+        get_collision_damage(
+            damage_energy * rhs_material.density() / sum_density,
+            damage_factor,
+            lhs,
+        ),
+        get_collision_damage(
+            damage_energy * lhs_material.density() / sum_density,
+            damage_factor,
+            rhs,
+        ),
+    )
 }
 
 struct MovingObject {
@@ -2502,14 +2566,6 @@ impl CollidingObject<bool> for Actor {
         self.effect = value;
     }
 
-    fn health(&self) -> f64 {
-        self.health
-    }
-
-    fn set_health(&mut self, value: f64) {
-        self.health = value;
-    }
-
     fn aura(&self) -> &Aura {
         &self.aura
     }
@@ -2554,14 +2610,6 @@ impl CollidingObject<f64> for Projectile {
 
     fn set_effect(&mut self, _: Effect) {}
 
-    fn health(&self) -> f64 {
-        self.health
-    }
-
-    fn set_health(&mut self, value: f64) {
-        self.health = value;
-    }
-
     fn aura(&self) -> &Aura {
         &DEFAULT_AURA
     }
@@ -2604,14 +2652,6 @@ impl CollidingObject<bool> for StaticObject {
         self.effect = value;
     }
 
-    fn health(&self) -> f64 {
-        self.health
-    }
-
-    fn set_health(&mut self, value: f64) {
-        self.health = value;
-    }
-
     fn aura(&self) -> &Aura {
         &DEFAULT_AURA
     }
@@ -2651,12 +2691,6 @@ impl CollidingObject<bool> for Shield {
     }
 
     fn set_effect(&mut self, _: Effect) {}
-
-    fn health(&self) -> f64 {
-        0.0
-    }
-
-    fn set_health(&mut self, _: f64) {}
 
     fn aura(&self) -> &Aura {
         &DEFAULT_AURA
@@ -2700,14 +2734,6 @@ impl CollidingObject<f64> for TempObstacle {
         self.effect = value;
     }
 
-    fn health(&self) -> f64 {
-        self.health
-    }
-
-    fn set_health(&mut self, value: f64) {
-        self.health = value;
-    }
-
     fn aura(&self) -> &Aura {
         &DEFAULT_AURA
     }
@@ -2717,17 +2743,18 @@ impl CollidingObject<f64> for TempObstacle {
     }
 }
 
-fn handle_collision_damage<T>(
+fn get_collision_damage<T>(
     damage_energy: f64,
     damage_factor: f64,
     object: &mut dyn CollidingObject<T>,
-) where
+) -> f64
+where
     T: Default + PartialEq,
 {
-    if !can_absorb_physical_damage(&object.aura().elements) {
-        let health = object.health();
-        object.set_health(health - (damage_energy * damage_factor) / object.mass());
+    if can_absorb_physical_damage(&object.aura().elements) {
+        return 0.0;
     }
+    (damage_energy * damage_factor) / object.mass()
 }
 
 fn get_kinetic_energy(mass: f64, velocity: Vec2f) -> f64 {
@@ -2987,6 +3014,36 @@ fn get_number_of_shield_objects(angle: f64) -> i32 {
     (angle / (std::f64::consts::FRAC_PI_2 / 5.0)).round() as i32
 }
 
+enum EngineEvent {
+    Damage { target: Index, damage: f64 },
+}
+
+fn handle_events(events: &[EngineEvent], world: &mut World) {
+    for event in events {
+        match event {
+            EngineEvent::Damage { target, damage } => match target {
+                Index::Actor(i) => {
+                    world.actors[*i].delayed_magick = None;
+                    complete_directed_magick(*i, world);
+                    damage_health(*damage, &mut world.actors[*i].health)
+                }
+                Index::Projectile(i) => damage_health(*damage, &mut world.projectiles[*i].health),
+                Index::StaticObject(i) => {
+                    damage_health(*damage, &mut world.static_objects[*i].health)
+                }
+                Index::Shield(..) => (),
+                Index::TempObstacle(i) => {
+                    damage_health(*damage, &mut world.temp_obstacles[*i].health)
+                }
+            },
+        }
+    }
+}
+
+fn damage_health(damage: f64, health: &mut f64) {
+    *health = (*health - damage).clamp(0.0, 1.0);
+}
+
 #[cfg(test)]
 mod tests {
     use nalgebra::distance;
@@ -3127,7 +3184,7 @@ mod tests {
         };
         let toi = time_of_impact(duration, &shape_cache, &actor, &projectile);
         assert!(toi.is_some());
-        ApplyImpact {
+        let damage = ApplyImpact {
             now: 42.0,
             damage_factor: 1e-3,
             epsilon_duration: 1e-3,
@@ -3135,6 +3192,7 @@ mod tests {
             toi: &toi.unwrap(),
         }
         .call(&mut actor, &mut projectile);
+        assert_eq!(damage, (0.326533173268825, 27.633881770849325));
         assert_eq!(
             actor,
             Actor {
@@ -3147,7 +3205,7 @@ mod tests {
                     material_type: MaterialType::Flesh,
                 },
                 position: Vec2f::only_x(-0.001926969791342261),
-                health: 0.673466826731175,
+                health: 1.0,
                 effect: Effect::default(),
                 aura: Aura::default(),
                 velocity: Vec2f::only_x(-1.926969791342261),
@@ -3171,7 +3229,7 @@ mod tests {
                     material_type: MaterialType::Stone,
                 },
                 position: Vec2f::only_x(1.1605730302086577),
-                health: -26.633881770849325,
+                health: 1.0,
                 magick: Magick::default(),
                 velocity: Vec2f::only_x(60.573030208657656),
                 dynamic_force: Vec2f::ZERO,
@@ -3215,7 +3273,7 @@ mod tests {
         };
         let toi = time_of_impact(duration, &shape_cache, &projectile, &static_object);
         assert!(toi.is_some());
-        ApplyImpact {
+        let damage = ApplyImpact {
             now: 42.0,
             damage_factor: 1e-3,
             epsilon_duration: 1e-3,
@@ -3223,6 +3281,7 @@ mod tests {
             toi: &toi.unwrap(),
         }
         .call(&mut projectile, &mut static_object);
+        assert_eq!(damage, (0.06947210324960644, 0.010912652459919757));
         assert_eq!(
             projectile,
             Projectile {
@@ -3232,7 +3291,7 @@ mod tests {
                     material_type: MaterialType::Stone,
                 },
                 position: Vec2f::new(4.0385862888455994, 4.064513631098341),
-                health: 0.9305278967503936,
+                health: 1.0,
                 magick: Magick::default(),
                 velocity: Vec2f::new(-59.49006596389085, -33.562723711148514),
                 dynamic_force: Vec2f::ZERO,
@@ -3253,7 +3312,7 @@ mod tests {
                 },
                 position: Vec2f::new(0.0, 0.0),
                 rotation: std::f64::consts::FRAC_PI_6,
-                health: 0.9890873475400802,
+                health: 1.0,
                 effect: Effect::default(),
             }
         );
