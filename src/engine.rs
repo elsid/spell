@@ -503,8 +503,13 @@ fn add_delayed_magick(magick: Magick, actor_index: usize, world: &mut World) {
     });
 }
 
-fn add_beam(magick: Magick, actor_index: usize, world: &mut World) {
+fn add_beam(mut magick: Magick, actor_index: usize, world: &mut World) {
     let beam_id = BeamId(get_next_id(&mut world.id_counter));
+    magick
+        .power
+        .iter_mut()
+        .enumerate()
+        .for_each(|(e, v)| *v *= get_element_duration(Element::from(e)));
     world.beams.push(Beam {
         id: beam_id,
         actor_id: world.actors[actor_index].id,
