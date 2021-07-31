@@ -111,6 +111,8 @@ struct GameState {
     rectangle_effect_material: Material,
     aura_material: Material,
     element_material: Material,
+    actor_shape_material: Material,
+    staff_material: Material,
 }
 
 #[derive(Clone)]
@@ -325,6 +327,56 @@ pub async fn run_game(settings: GameSettings) {
                 .as_str(),
             MaterialParams {
                 uniforms: vec![("color".to_string(), UniformType::Float4)],
+                pipeline_params: PipelineParams {
+                    color_blend: Some(BlendState::new(
+                        Equation::Add,
+                        BlendFactor::Value(BlendValue::SourceAlpha),
+                        BlendFactor::OneMinusValue(BlendValue::SourceAlpha),
+                    )),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+        actor_shape_material: load_material(
+            load_string("assets/shaders/actor_shape/vertex.glsl")
+                .await
+                .unwrap()
+                .as_str(),
+            load_string("assets/shaders/actor_shape/fragment.glsl")
+                .await
+                .unwrap()
+                .as_str(),
+            MaterialParams {
+                uniforms: vec![
+                    ("scale".to_string(), UniformType::Float1),
+                    ("base_color".to_string(), UniformType::Float4),
+                    ("border_color".to_string(), UniformType::Float4),
+                ],
+                pipeline_params: PipelineParams {
+                    color_blend: Some(BlendState::new(
+                        Equation::Add,
+                        BlendFactor::Value(BlendValue::SourceAlpha),
+                        BlendFactor::OneMinusValue(BlendValue::SourceAlpha),
+                    )),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+        staff_material: load_material(
+            load_string("assets/shaders/staff/vertex.glsl")
+                .await
+                .unwrap()
+                .as_str(),
+            load_string("assets/shaders/staff/fragment.glsl")
+                .await
+                .unwrap()
+                .as_str(),
+            MaterialParams {
+                uniforms: vec![("scale".to_string(), UniformType::Float1)],
                 pipeline_params: PipelineParams {
                     color_blend: Some(BlendState::new(
                         Equation::Add,
@@ -999,28 +1051,6 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
         );
     }
 
-    if let Some(actor_index) = scene.actor_index {
-        let actor = &scene.world.actors[actor_index];
-        draw_line(
-            actor.position.x as f32,
-            actor.position.y as f32,
-            (actor.position.x + scene.pointer.x) as f32,
-            (actor.position.y + scene.pointer.y) as f32,
-            0.1,
-            Color::new(0.0, 0.0, 0.0, 0.5),
-        );
-        let current_target =
-            actor.position + actor.current_direction * actor.body.shape.radius * 2.0;
-        draw_line(
-            actor.position.x as f32,
-            actor.position.y as f32,
-            current_target.x as f32,
-            current_target.y as f32,
-            0.1,
-            Color::new(0.0, 0.0, 0.0, 0.5),
-        );
-    }
-
     for beam in scene
         .engine
         .initial_emitted_beams()
@@ -1041,16 +1071,11 @@ fn draw_scene(game_state: &GameState, scene: &mut Scene) {
     }
 
     for v in scene.world.actors.iter() {
-        draw_disk_body_and_magick(
-            &v.body.shape,
-            v.body.material_type,
-            &v.effect.power,
-            v.position,
-            v.current_direction.angle(),
-            game_state,
-            scene.world.time - v.effect.applied.iter().sum::<f64>() / v.effect.applied.len() as f64
-                + v.id.0 as f64,
-        );
+        draw_actor_staff(game_state, v);
+    }
+
+    for v in scene.world.actors.iter() {
+        draw_actor(game_state, scene, v);
     }
 
     for v in scene.world.projectiles.iter() {
@@ -1444,6 +1469,88 @@ where
     if is_key_pressed(KeyCode::F) {
         f(CastAction::AddSpellElement(Element::Fire));
     }
+}
+
+fn draw_actor_staff(game_state: &GameState, actor: &Actor) {
+    let context = unsafe { get_internal_gl() };
+    context.quad_gl.push_model_matrix(
+        Mat4::from_rotation_translation(
+            Quat::from_axis_angle(
+                Vec3::new(0.0, 0.0, 1.0),
+                actor.current_direction.angle() as f32,
+            ),
+            Vec3::new(actor.position.x as f32, actor.position.y as f32, 0.0),
+        ) * Mat4::from_rotation_translation(
+            Quat::from_axis_angle(Vec3::new(0.0, 0.0, 1.0), -0.1 as f32),
+            Vec3::new(
+                (actor.body.shape.radius * 0.33) as f32,
+                (actor.body.shape.radius * 0.66) as f32,
+                0.0,
+            ),
+        ),
+    );
+    gl_use_material(game_state.staff_material);
+    game_state
+        .staff_material
+        .set_uniform("scale", actor.body.shape.radius as f32);
+    draw_rectangle(
+        -2.0 * actor.body.shape.radius as f32,
+        -2.0 * actor.body.shape.radius as f32,
+        4.0 * actor.body.shape.radius as f32,
+        4.0 * actor.body.shape.radius as f32,
+        BLACK,
+    );
+    gl_use_default_material();
+    context.quad_gl.pop_model_matrix();
+}
+
+fn draw_actor(game_state: &GameState, scene: &Scene, actor: &Actor) {
+    let context = unsafe { get_internal_gl() };
+    let time = scene.world.time as f64
+        - actor.effect.applied.iter().sum::<f64>() / actor.effect.applied.len() as f64
+        + actor.id.0 as f64;
+    context
+        .quad_gl
+        .push_model_matrix(Mat4::from_rotation_translation(
+            Quat::from_axis_angle(
+                Vec3::new(0.0, 0.0, 1.0),
+                actor.current_direction.angle() as f32,
+            ),
+            Vec3::new(actor.position.x as f32, actor.position.y as f32, 0.0),
+        ));
+    let shape_material = game_state.actor_shape_material;
+    gl_use_material(shape_material);
+    shape_material.set_uniform("scale", actor.body.shape.radius as f32);
+    {
+        let (base, border) = get_actor_colors(actor);
+        shape_material.set_uniform("base_color", vec4(base.r, base.g, base.b, base.a));
+        shape_material.set_uniform("border_color", vec4(border.r, border.g, border.b, border.a));
+    }
+    draw_rectangle(
+        -2.0 * actor.body.shape.radius as f32,
+        -2.0 * actor.body.shape.radius as f32,
+        4.0 * actor.body.shape.radius as f32,
+        4.0 * actor.body.shape.radius as f32,
+        BLACK,
+    );
+    gl_use_default_material();
+    if actor.effect.power.iter().sum::<f64>() > 0.0 {
+        let effect_material = game_state.disk_effect_material;
+        gl_use_material(effect_material);
+        effect_material.set_uniform("time", time as f32);
+        effect_material.set_uniform("scale", actor.body.shape.radius as f32);
+        let color = get_magick_power_color(&actor.effect.power);
+        effect_material.set_uniform("color", vec4(color.r, color.g, color.b, color.a));
+        draw_rectangle(
+            -2.0 * actor.body.shape.radius as f32,
+            -2.0 * actor.body.shape.radius as f32,
+            4.0 * actor.body.shape.radius as f32,
+            4.0 * actor.body.shape.radius as f32,
+            BLACK,
+        );
+        gl_use_default_material();
+    }
+    context.quad_gl.pop_model_matrix();
 }
 
 fn draw_disk_body_and_magick(
@@ -2223,4 +2330,30 @@ fn get_world_paths() -> Vec<PathBuf> {
             Vec::new()
         }
     }
+}
+
+fn get_actor_colors(actor: &Actor) -> (Color, Color) {
+    let name_hash = get_actor_name_hash(actor);
+    (
+        Color::from_rgba(
+            ((name_hash & (0xFF << 4)) >> 4) as u8,
+            ((name_hash & (0xFF << 2)) >> 2) as u8,
+            (name_hash & 0xFF) as u8,
+            u8::MAX,
+        ),
+        Color::from_rgba(
+            ((name_hash & (0xFF << 10)) >> 10) as u8,
+            ((name_hash & (0xFF << 8)) >> 8) as u8,
+            ((name_hash & (0xFF << 6)) >> 6) as u8,
+            u8::MAX,
+        ),
+    )
+}
+
+fn get_actor_name_hash(actor: &Actor) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    actor.name.hash(&mut hasher);
+    hasher.finish()
 }
