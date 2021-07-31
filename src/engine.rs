@@ -246,9 +246,11 @@ impl Engine {
             .for_each(|v| v.dynamic_force = Vec2f::ZERO);
         let bounds = world.bounds.clone();
         world.actors.iter_mut().for_each(|v| {
-            v.active = is_active(&bounds, &v.body.shape.as_shape(), v.position, v.health)
+            v.active =
+                v.active && is_active(&bounds, &v.body.shape.as_shape(), v.position, v.health)
         });
         remove_inactive_actors_occupation_results(world);
+        world.players.retain(|v| v.active);
         world.actors.retain(|v| v.active);
         world.projectiles.retain(|v| {
             (v.velocity_z > f64::EPSILON || v.velocity.norm() > f64::EPSILON)
@@ -285,6 +287,9 @@ pub fn get_next_id(counter: &mut u64) -> u64 {
 pub fn remove_player(player_id: PlayerId, world: &mut World) {
     if let Some(player) = world.players.iter_mut().find(|v| v.id == player_id) {
         player.active = false;
+        if let Some(actor) = world.actors.iter_mut().find(|v| v.player_id == player_id) {
+            actor.active = false;
+        }
     }
 }
 
