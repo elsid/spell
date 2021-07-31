@@ -1481,7 +1481,7 @@ fn draw_actor_staff(game_state: &GameState, actor: &Actor) {
             ),
             Vec3::new(actor.position.x as f32, actor.position.y as f32, 0.0),
         ) * Mat4::from_rotation_translation(
-            Quat::from_axis_angle(Vec3::new(0.0, 0.0, 1.0), -0.1 as f32),
+            Quat::from_axis_angle(Vec3::new(0.0, 0.0, 1.0), -0.1),
             Vec3::new(
                 (actor.body.shape.radius * 0.33) as f32,
                 (actor.body.shape.radius * 0.66) as f32,

@@ -74,8 +74,9 @@ pub fn generate_world<R: Rng>(bounds: Rectf, rng: &mut R) -> World {
     let mut static_areas = vec![StaticArea {
         id: StaticAreaId(get_next_id(&mut id_counter)),
         body: Body {
-            shape: StaticAreaShape::Disk(Disk {
-                radius: bounds.min.distance(bounds.max) * 0.5,
+            shape: StaticAreaShape::Rectangle(Rectangle {
+                width: (bounds.max - bounds.min).x,
+                height: (bounds.max - bounds.min).y,
             }),
             material_type: MaterialType::Dirt,
         },
