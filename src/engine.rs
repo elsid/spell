@@ -289,7 +289,9 @@ pub fn remove_player(player_id: PlayerId, world: &mut World) {
 }
 
 pub fn add_actor_spell_element(actor_index: usize, element: Element, world: &mut World) {
-    if !matches!(world.actors[actor_index].occupation, ActorOccupation::None) {
+    if !matches!(world.actors[actor_index].occupation, ActorOccupation::None)
+        || is_actor_flying(&world.actors[actor_index])
+    {
         return;
     }
     if matches!(element, Element::Lightning)
@@ -308,7 +310,9 @@ pub fn add_actor_spell_element(actor_index: usize, element: Element, world: &mut
 
 #[allow(clippy::needless_return)]
 pub fn start_directed_magick(actor_index: usize, world: &mut World) {
-    if !matches!(world.actors[actor_index].occupation, ActorOccupation::None) {
+    if !matches!(world.actors[actor_index].occupation, ActorOccupation::None)
+        || is_actor_flying(&world.actors[actor_index])
+    {
         return;
     }
     let magick = Spell::on(
@@ -347,7 +351,9 @@ pub fn start_directed_magick(actor_index: usize, world: &mut World) {
 #[allow(clippy::needless_return)]
 #[allow(clippy::if_same_then_else)]
 pub fn start_area_of_effect_magick(actor_index: usize, world: &mut World) {
-    if !matches!(world.actors[actor_index].occupation, ActorOccupation::None) {
+    if !matches!(world.actors[actor_index].occupation, ActorOccupation::None)
+        || is_actor_flying(&world.actors[actor_index])
+    {
         return;
     }
     let magick = Spell::on(
@@ -1051,7 +1057,7 @@ fn intersect_objects_with_areas(world: &mut World, shape_cache: &ShapeCache) {
 }
 
 fn get_actor_movement_type(actor: &Actor) -> MovementType {
-    if (actor.position_z - actor.body.shape.radius) > f64::EPSILON {
+    if is_actor_flying(actor) {
         return MovementType::Flying;
     }
     if actor.moving {
@@ -1490,7 +1496,7 @@ fn update_actor_current_direction(
 }
 
 fn update_actor_dynamic_force(duration: f64, move_force: f64, max_speed: f64, actor: &mut Actor) {
-    if is_actor_immobilized(actor) {
+    if is_actor_immobilized(actor) || is_actor_flying(actor) {
         return;
     }
     let speed = actor.velocity.norm();
@@ -2988,6 +2994,10 @@ fn is_actor_immobilized(actor: &Actor) -> bool {
 
 fn is_actor_in_panic(actor: &Actor) -> bool {
     actor.effect.power[Element::Fire as usize] > 0.0
+}
+
+fn is_actor_flying(actor: &Actor) -> bool {
+    (actor.position_z - actor.body.shape.radius) > f64::EPSILON
 }
 
 fn remove_inactive_actors_occupation_results(world: &mut World) {
