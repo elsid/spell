@@ -1691,7 +1691,7 @@ fn intersect_beam(
                 world.actors[i].effect = add_magick_to_effect(
                     world.time,
                     &world.actors[i].effect,
-                    &magick,
+                    magick,
                     &world.actors[i].aura.elements,
                 );
                 can_reflect_beams(&world.actors[i].aura.elements)
@@ -1701,7 +1701,7 @@ fn intersect_beam(
                 world.static_objects[i].effect = add_magick_to_effect(
                     world.time,
                     &world.static_objects[i].effect,
-                    &magick,
+                    magick,
                     &DEFAULT_RESISTANCE,
                 );
                 false
@@ -2935,13 +2935,13 @@ mod tests {
         assert_eq!(polyline.num_segments(), 8);
         assert!(
             distance(
-                &polyline.vertices().first().unwrap(),
+                polyline.vertices().first().unwrap(),
                 &Point2::new(SQRT_2, -SQRT_2),
             ) <= f64::EPSILON
         );
         assert!(
             distance(
-                &polyline.vertices().last().unwrap(),
+                polyline.vertices().last().unwrap(),
                 &Point2::new(SQRT_2, SQRT_2),
             ) <= f64::EPSILON
         );

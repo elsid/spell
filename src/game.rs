@@ -228,7 +228,7 @@ fn prepare_frame(game_state: &mut GameState, frame_type: &mut FrameType) {
     }));
     let debug_hud_duration = measure(|| {
         if game_state.show_debug_hud {
-            draw_debug_hud(game_state, &frame_type);
+            draw_debug_hud(game_state, frame_type);
         }
     });
     game_state.debug_hud_duration.add(debug_hud_duration);

@@ -417,7 +417,7 @@ async fn send_client_messages(
                 data,
             };
             let buffer = bincode::serialize(&client_message).unwrap();
-            if let Err(e) = send_with_retries(&socket, &buffer, 3).await {
+            if let Err(e) = send_with_retries(socket, &buffer, 3).await {
                 error!(
                     "[{}] UDP client has failed to send message to server: {}",
                     settings.id, e
@@ -438,7 +438,7 @@ async fn send_with_retries(
 ) -> std::io::Result<usize> {
     let mut retries: usize = 0;
     loop {
-        match socket.send(&buffer).await {
+        match socket.send(buffer).await {
             Err(e) => {
                 if retries >= max_retries {
                     break Err(e);

@@ -326,7 +326,7 @@ impl UdpServer {
             send_server_message(
                 &self.socket,
                 session,
-                &make_server_message(session.session_id, self.message_counter, &data),
+                &make_server_message(session.session_id, self.message_counter, data),
             )
             .await;
         }
@@ -988,7 +988,7 @@ fn send_world_messages(
             continue;
         }
         let mut world_update =
-            make_world_update(&world_history[world_history.len() - offset], &world);
+            make_world_update(&world_history[world_history.len() - offset], world);
         add_all_removed(
             world_updates_history
                 .iter()

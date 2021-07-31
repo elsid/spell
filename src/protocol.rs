@@ -1018,7 +1018,7 @@ pub fn deserialize_server_message(input: &[u8]) -> Result<ServerMessage, Deseria
             input.len(),
         ));
     }
-    match bincode::deserialize(&input) {
+    match bincode::deserialize(input) {
         Ok(v) => Ok(v),
         Err(e) => Err(DeserializeError::DeserializeError(e)),
     }
