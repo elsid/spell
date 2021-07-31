@@ -951,15 +951,6 @@ fn remove_intersecting_objects(world: &mut World, shape_cache: &ShapeCache) {
                 }
             }
         }
-        if shield.power == 0.0 {
-            continue;
-        }
-        for actor in world.actors.iter() {
-            if intersection_test(shield, actor, shape_cache) {
-                shield.power = 0.0;
-                break;
-            }
-        }
     }
 }
 
