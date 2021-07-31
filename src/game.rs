@@ -702,7 +702,7 @@ fn single_player_menu(ctx: &CtxRef, game_state: &mut GameState, frame_type: &mut
                             game_state.show_control_hud = true;
                         }
                         Err(e) => {
-                            game_state.prev_menu = game_state.menu.clone();
+                            game_state.prev_menu = Menu::SinglePlayer;
                             game_state.menu = Menu::Error(format!(
                                 "Failed to load world from file {:?}: {}",
                                 world_path, e
@@ -743,7 +743,7 @@ fn world_view_menu(ctx: &CtxRef, game_state: &mut GameState, frame_type: &mut Fr
                             game_state.show_control_hud = false;
                         }
                         Err(e) => {
-                            game_state.prev_menu = game_state.menu.clone();
+                            game_state.prev_menu = Menu::WorldView;
                             game_state.menu = Menu::Error(format!(
                                 "Failed to load world from file {:?}: {}",
                                 world_path, e
@@ -849,7 +849,7 @@ fn update_multiplayer(game_state: &mut GameState, data: &mut Multiplayer) -> Opt
         match update {
             GameUpdate::GameOver(message) => {
                 data.scene.player_id = None;
-                game_state.prev_menu = game_state.menu.clone();
+                game_state.prev_menu = Menu::Multiplayer;
                 game_state.menu = Menu::Error(format!("Disconnected from server: {}", message));
                 return Some(FrameType::Initial);
             }
@@ -895,7 +895,7 @@ fn update_multiplayer(game_state: &mut GameState, data: &mut Multiplayer) -> Opt
     }
     if data.client.is_done() && matches!(game_state.menu, Menu::None | Menu::Joining) {
         if let Err(e) = data.client.join() {
-            game_state.prev_menu = game_state.menu.clone();
+            game_state.prev_menu = Menu::Multiplayer;
             game_state.menu = Menu::Error(e);
         } else {
             game_state.menu = Menu::Multiplayer;
