@@ -1272,7 +1272,10 @@ fn intersect_objects_with_all_fields(world: &mut World) {
             &mut PushedObject {
                 shape: Ball::new(right[0].body.shape.radius),
                 position: right[0].position,
+                gravity_force: right[0].mass() * world.settings.gravitational_acceleration,
+                height: 2.0 * right[0].body.shape.radius,
                 dynamic_force: &mut right[0].dynamic_force,
+                position_z: &mut right[0].position_z,
             },
         );
         let (left, right) = world.actors.split_at_mut(i + 1);
@@ -1282,7 +1285,10 @@ fn intersect_objects_with_all_fields(world: &mut World) {
             &mut PushedObject {
                 shape: Ball::new(left[i].body.shape.radius),
                 position: left[i].position,
+                gravity_force: left[i].mass() * world.settings.gravitational_acceleration,
+                height: 2.0 * left[i].body.shape.radius,
                 dynamic_force: &mut left[i].dynamic_force,
+                position_z: &mut left[i].position_z,
             },
         );
     }
@@ -1293,7 +1299,10 @@ fn intersect_objects_with_all_fields(world: &mut World) {
             &mut PushedObject {
                 shape: Ball::new(v.body.shape.radius),
                 position: v.position,
+                gravity_force: v.mass() * world.settings.gravitational_acceleration,
+                height: 2.0 * v.body.shape.radius,
                 dynamic_force: &mut v.dynamic_force,
+                position_z: &mut v.position_z,
             },
         );
     }
@@ -1302,7 +1311,10 @@ fn intersect_objects_with_all_fields(world: &mut World) {
 struct PushedObject<'a, S: Shape> {
     shape: S,
     position: Vec2f,
+    gravity_force: f64,
+    height: f64,
     dynamic_force: &'a mut Vec2f,
+    position_z: &'a mut f64,
 }
 
 fn intersect_object_with_all_fields<S>(
@@ -1331,25 +1343,17 @@ where
         &field.body,
         owner.current_direction,
     ) {
-        push_object(
-            owner.position,
-            field.force,
-            field.body.max_radius,
-            object.position,
-            object.dynamic_force,
-        );
+        push_object(owner.position, field.force, field.body.max_radius, object);
     }
 }
 
-fn push_object(
-    from: Vec2f,
-    force: f64,
-    max_distance: f64,
-    position: Vec2f,
-    dynamic_force: &mut Vec2f,
-) {
-    let to_position = position - from;
-    *dynamic_force += to_position * ((1.0 / to_position.norm() - 1.0 / max_distance) * force);
+fn push_object<S: Shape>(from: Vec2f, force: f64, max_distance: f64, object: &mut PushedObject<S>) {
+    let to_position = object.position - from;
+    let add_force = to_position * ((1.0 / to_position.norm() - 1.0 / max_distance) * force);
+    if add_force.norm() > object.gravity_force {
+        *object.position_z = 1.1 * object.height;
+    }
+    *object.dynamic_force += add_force;
 }
 
 fn update_actors(
